@@ -11,6 +11,7 @@ vi.mock('../src/agent/gemini.js', () => {
     constructor(public config: any) {}
     setGitBranch() {}
     setSkills() {}
+    setExtraTools() {}
     initChat() {}
     refresh() {}
     getHistory() { return []; }
@@ -259,5 +260,24 @@ describe('AgentLoop', () => {
       expect(ask).not.toHaveBeenCalledWith(expect.objectContaining({ toolCall: expect.anything() }));
       expect(calls[1].responses[0].output).toMatch(/Not in plan mode/);
     });
+  });
+
+  describe('MCP', () => {
+    it('exposes MCP tools, asks for permission and calls the server', async () => {
+      const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'mcp-echo.mjs');
+      fs.writeFileSync(path.join(cwd, '.mcp.json'), JSON.stringify({ mcpServers: { echo: { command: process.execPath, args: [fixture] } } }));
+      script = [{ functionCalls: [{ name: 'mcp__echo__echo', args: { text: 'salut' } }] }, { text: 'done' }];
+      let asked: any = null;
+      const { cb, items } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) { asked = c; c.onDecide({ kind: 'yes' }); } } });
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+      await loop.mcpReady();
+      expect(loop.mcpStatuses()[0]).toMatchObject({ name: 'echo', status: 'connected', toolCount: 3 });
+      expect(items.some((i) => i.kind === 'system' && /MCP echo connected · 3 tools/.test(i.message.content))).toBe(true);
+      await loop.handleUserInput('echo');
+      expect(asked.title).toMatch(/call the MCP tool echo \(server echo\)/);
+      expect(asked.options[1].rule).toBe('mcp__echo__echo');
+      expect(calls[1].responses[0].output).toBe('echo: salut');
+      await loop.flush();
+    }, 30000);
   });
 });

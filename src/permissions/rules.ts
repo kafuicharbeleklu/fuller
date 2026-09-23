@@ -56,7 +56,11 @@ export interface RuleTarget {
 }
 
 export function ruleMatches(rule: PermissionRule, t: RuleTarget): boolean {
-  if (rule.tool !== t.tool) return false;
+  if (rule.tool !== t.tool) {
+    // "mcp__server" (no spec) covers every tool of that MCP server.
+    if (rule.tool.startsWith('mcp__') && rule.spec === undefined && t.tool.startsWith(`${rule.tool}__`)) return true;
+    return false;
+  }
   if (rule.spec === undefined || rule.spec === '' || rule.spec === '*') return true;
   const spec = rule.spec;
   if (t.tool === 'Bash') {
@@ -125,7 +129,7 @@ export function baseRisk(name: string, args: Record<string, any>, cwd: string): 
     case 'web_fetch':
       return { risk: 'exec', reason: 'accès réseau' };
     default:
-      return { risk: 'exec', reason: 'outil inconnu' };
+      return { risk: 'exec', reason: name.startsWith('mcp__') ? 'outil MCP' : 'outil inconnu' };
   }
 }
 
@@ -173,7 +177,7 @@ function buildTitle(name: string, args: Record<string, any>): string {
     case 'write_file': return `Do you want to create ${args.file_path}?`;
     case 'execute_bash': return 'Do you want to proceed?';
     case 'web_fetch': return `Do you want to fetch ${args.url}?`;
-    default: return `Do you want to run ${TOOL_DISPLAY[name] ?? name}?`;
+    default: return name.startsWith('mcp__') ? `Do you want to call the MCP tool ${name.split('__').slice(2).join('__')} (server ${name.split('__')[1]})?` : `Do you want to run ${TOOL_DISPLAY[name] ?? name}?`;
   }
 }
 
@@ -206,11 +210,14 @@ function buildOptions(name: string, args: Record<string, any>, cwd: string, proj
         no,
       ];
     }
-    default:
+    default: {
+      const display = TOOL_DISPLAY[name] ?? name;
+      const server = name.startsWith('mcp__') ? name.split('__')[1] : undefined;
       return [
         { value: 'yes', label: 'Yes' },
-        { value: 'always', label: `Yes, and don't ask again for ${TOOL_DISPLAY[name] ?? name}`, rule: TOOL_DISPLAY[name] ?? name },
+        { value: 'always', label: server ? `Yes, and don't ask again for ${display} (MCP ${server})` : `Yes, and don't ask again for ${display}`, rule: display },
         no,
       ];
+    }
   }
 }

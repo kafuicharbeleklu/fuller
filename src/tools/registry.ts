@@ -372,7 +372,7 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
     }
 
     default:
-      throw new Error(`Unknown tool: ${name}`);
+      throw new Error(name.startsWith('mcp__') ? `MCP tool ${name} is not available (server not connected). Check /mcp.` : `Unknown tool: ${name}`);
   }
 }
 

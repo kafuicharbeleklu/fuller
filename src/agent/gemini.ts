@@ -1,4 +1,4 @@
-import { GoogleGenAI, type Content, type GenerateContentConfig, type Part } from '@google/genai';
+import { GoogleGenAI, type Content, type FunctionDeclaration, type GenerateContentConfig, type Part } from '@google/genai';
 import { getSystemPrompt } from './systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
 import { withRetry, type RetryInfo } from './retry.js';
@@ -44,6 +44,7 @@ export class GeminiAgentSession {
   private config: AppConfig;
   private gitBranch?: string;
   private skills: SkillDefinition[] = [];
+  private extraTools: FunctionDeclaration[] = [];
 
   constructor(config: AppConfig, history?: Content[]) {
     this.config = config;
@@ -63,6 +64,11 @@ export class GeminiAgentSession {
     this.skills = skills;
   }
 
+  /** Dynamic tools (MCP servers) added to the built-in declarations. */
+  public setExtraTools(tools: FunctionDeclaration[]) {
+    this.extraTools = tools;
+  }
+
   public initChat(history?: Content[]) {
     this.chatConfig = {
       systemInstruction: getSystemPrompt({
@@ -73,7 +79,7 @@ export class GeminiAgentSession {
         additionalDirectories: this.config.additionalDirectories,
         skills: this.skills,
       }),
-      tools: [{ functionDeclarations: geminiToolDeclarations }],
+      tools: [{ functionDeclarations: [...geminiToolDeclarations, ...this.extraTools] }],
       temperature: 0.2,
     };
     this.chat = this.ai.chats.create({

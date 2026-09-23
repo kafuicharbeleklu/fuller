@@ -386,6 +386,24 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: '/mcp',
+    description: 'Serveurs MCP : statut et outils exposés',
+    run: (ctx) => {
+      const statuses = ctx.agent.mcpStatuses();
+      if (statuses.length === 0) {
+        ctx.addSystem('No MCP server configured. Add `.mcp.json` in the project (or `~/.fuller/mcp.json`):\n```json\n{ "mcpServers": { "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } }, "docs": { "url": "https://example.com/mcp" } } }\n```\nTools appear as `mcp__<server>__<tool>`; allow them with rules like `mcp__github` (whole server) or `mcp__github__search_issues`.');
+        return;
+      }
+      const tools = ctx.agent.mcpTools();
+      const lines = statuses.map((s) => {
+        const glyph = s.status === 'connected' ? '✔' : s.status === 'failed' ? '✘' : '…';
+        const own = tools.filter((t) => t.server === s.name).map((t) => `\`${t.name}\``).join(', ');
+        return `- ${glyph} **${s.name}** (${s.scope}, ${s.transport}) — ${s.status}${s.error ? `: ${s.error}` : ''}${own ? `\n  ${own}` : ''}`;
+      });
+      ctx.addSystem(`**MCP servers**\n${lines.join('\n')}`);
+    },
+  },
+  {
     name: '/tasks',
     description: "Tâches en arrière-plan (kill <id> pour arrêter)",
     usage: '[kill <id>]',

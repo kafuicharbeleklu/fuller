@@ -47,6 +47,7 @@ export async function runHeadless(config: AppConfig, prompt: string, format: Out
   };
 
   const agent = new AgentLoop(config, callbacks);
+  await agent.mcpReady();
   if (format === 'stream-json') emit({ type: 'session', session_id: agent.sessionId, model: config.model });
   let turnOptions = {};
   const m = prompt.match(/^\/([\w:-]+)\s*([\s\S]*)$/);

@@ -17,6 +17,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { CONFIG_DIR_NAME } from '../branding.js';
+import { McpManager, type McpServerStatus } from '../mcp/manager.js';
+import { loadMcpConfig } from '../mcp/config.js';
 import type {
   ChatMessage,
   ToolCallState,
@@ -39,6 +41,14 @@ export interface TurnOptions {
   stopHookActive?: boolean;
 }
 
+function safeLoadMcp(cwd: string) {
+  try {
+    return loadMcpConfig(cwd);
+  } catch {
+    return [];
+  }
+}
+
 function safeLoadSkills(cwd: string): SkillDefinition[] {
   try {
     return loadSkills(cwd);
@@ -59,6 +69,7 @@ export interface AgentCallbacks {
   onNotify?: (event: 'permission' | 'done' | 'error') => void;
   onTodosChange?: (todos: TodoItem[]) => void;
   onBackgroundChange?: (running: number, tasks: BackgroundTask[]) => void;
+  onMcpChange?: (statuses: McpServerStatus[]) => void;
 }
 
 /** Coalesces streamed chunks so the UI re-renders at most every `intervalMs`. */
@@ -96,6 +107,7 @@ export class AgentLoop {
   private todos: TodoItem[] = [];
   private background: BackgroundTaskManager;
   private customTitle?: string;
+  private mcp: McpManager;
   public usage: UsageInfo;
 
   constructor(config: AppConfig, callbacks: AgentCallbacks, restored?: SessionData) {
@@ -120,6 +132,10 @@ export class AgentLoop {
     this.session.setSkills(this.skills);
     this.session.refresh();
     this.checkpointManager = new CheckpointManager(config.workspaceDir);
+    this.mcp = new McpManager(safeLoadMcp(config.workspaceDir), {
+      onStatus: (statuses) => this.onMcpStatus(statuses),
+    });
+    if (this.mcp.configured > 0) void this.mcp.connectAll();
     this.background = new BackgroundTaskManager(config.workspaceDir, this.sessionId, (task, tail) => {
       this.addSystemMessage(`⏵ Background task ${task.id} ${task.status}${task.exitCode !== undefined ? ` (exit ${task.exitCode})` : ''} · ${task.description ?? task.command.split('\n')[0].slice(0, 60)}`, 'notice');
       this.pendingContext.push(`[Background task ${task.id} (\`${task.command.split('\n')[0].slice(0, 120)}\`) ${task.status}${task.exitCode !== undefined ? ` with exit code ${task.exitCode}` : ''}. Last output:]\n${tail.trim() || '(no output)'}`);
@@ -168,6 +184,36 @@ export class AgentLoop {
   public renameSession(title: string) {
     this.customTitle = title.trim() || undefined;
     this.scheduleSave();
+  }
+
+  // ---------------------------------------------------------------- MCP
+  private onMcpStatus(statuses: McpServerStatus[]) {
+    this.session.setExtraTools(this.mcp.getDeclarations());
+    this.session.refresh();
+    const settled = statuses.filter((s) => s.status !== 'connecting');
+    const last = settled[settled.length - 1];
+    if (last) {
+      this.addSystemMessage(
+        last.status === 'connected'
+          ? `⚡ MCP ${last.name} connected · ${last.toolCount} tool${last.toolCount === 1 ? '' : 's'}`
+          : `⚠ MCP ${last.name} failed: ${last.error ?? 'unknown error'}`,
+        'notice'
+      );
+    }
+    this.callbacks.onMcpChange?.(statuses);
+  }
+
+  /** Resolves once every configured MCP server has connected or failed. */
+  public mcpReady(): Promise<void> {
+    return this.mcp.ready();
+  }
+
+  public mcpStatuses(): McpServerStatus[] {
+    return this.mcp.statuses();
+  }
+
+  public mcpTools(): Array<{ server: string; name: string; fullName: string; description?: string }> {
+    return this.mcp.getTools();
   }
 
   public getBackgroundTasks(): BackgroundTask[] {
@@ -282,6 +328,7 @@ export class AgentLoop {
       await Promise.race([this.fireHooks('SessionEnd', { reason: 'exit' }, 'exit'), new Promise((r) => setTimeout(r, 3000))]);
     }
     this.background.killAll();
+    await this.mcp.close();
   }
 
   // ---------------------------------------------------------------- settings
@@ -632,8 +679,10 @@ export class AgentLoop {
     update({ status: 'running' });
     this.callbacks.onStatusChange('running_tool');
     try {
-      const out = await dispatchTool(name, state.args, ctx);
-      update({ status: 'completed', result: out.output, summary: out.summary, diff: out.diff ?? state.diff, endTime: Date.now() });
+      const out = name.startsWith('mcp__') && this.mcp.hasTool(name)
+        ? await this.mcp.callTool(name, state.args, signal)
+        : await dispatchTool(name, state.args, ctx);
+      update({ status: 'completed', result: out.output, summary: out.summary, diff: (out as any).diff ?? state.diff, endTime: Date.now() });
       if (name === 'execute_bash' && state.args.run_in_background) this.callbacks.onBackgroundChange?.(this.background.running(), this.background.list());
       let output = out.output;
       if (this.hasHooks('PostToolUse')) {
