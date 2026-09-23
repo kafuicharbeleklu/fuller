@@ -6,6 +6,7 @@ import { webFetch } from './web.js';
 import { LIMITS, truncateMiddle, truncateHead, formatBytes } from './truncate.js';
 import type { CheckpointManager } from '../checkpoint/manager.js';
 import { expandSkill, type SkillDefinition } from '../skills/loader.js';
+import type { TodoItem } from '../agent/types.js';
 
 export const geminiToolDeclarations: FunctionDeclaration[] = [
   {
@@ -101,6 +102,30 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'todo_write',
+    description:
+      'Create or update the task list for the current work. Use it for multi-step tasks: list the steps, mark exactly one as in_progress while you work on it, and mark items completed as soon as they are done. The whole list is replaced on each call.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        todos: {
+          type: Type.ARRAY,
+          description: 'The complete task list.',
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              content: { type: Type.STRING, description: 'Short imperative description of the task.' },
+              status: { type: Type.STRING, description: 'pending | in_progress | completed' },
+              activeForm: { type: Type.STRING, description: 'Present-continuous form shown while in progress, e.g. "Running the tests".' },
+            },
+            required: ['content', 'status'],
+          },
+        },
+      },
+      required: ['todos'],
+    },
+  },
+  {
     name: 'skill',
     description: 'Load the instructions of a skill listed in the system prompt (project or user skill). Returns the full instructions to follow for the current task.',
     parameters: {
@@ -125,7 +150,7 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
   },
 ];
 
-export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'skill']);
+export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'skill', 'todo_write']);
 
 export interface ToolContext {
   cwd: string;
@@ -135,6 +160,24 @@ export interface ToolContext {
   bashTimeoutMs: number;
   messageId?: string;
   skills?: SkillDefinition[];
+  setTodos?: (todos: TodoItem[]) => void;
+}
+
+const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
+
+export function normalizeTodos(raw: unknown): TodoItem[] {
+  if (!Array.isArray(raw)) throw new Error('todos must be an array of { content, status }.');
+  return raw.slice(0, 50).map((t: any, i: number) => {
+    const content = String(t?.content ?? '').trim();
+    if (!content) throw new Error(`todos[${i}].content is required.`);
+    const status = String(t?.status ?? 'pending');
+    if (!TODO_STATUSES.has(status)) throw new Error(`todos[${i}].status must be pending, in_progress or completed.`);
+    return { content, status: status as TodoItem['status'], activeForm: t?.activeForm ? String(t.activeForm) : undefined };
+  });
+}
+
+export function formatTodos(todos: TodoItem[]): string {
+  return todos.map((t) => `${t.status === 'completed' ? '☑' : t.status === 'in_progress' ? '◐' : '☐'} ${t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content}`).join('\n');
 }
 
 export interface ToolOutput {
@@ -229,6 +272,17 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       };
     }
 
+    case 'todo_write': {
+      const todos = normalizeTodos(args.todos);
+      ctx.setTodos?.(todos);
+      const done = todos.filter((t) => t.status === 'completed').length;
+      const active = todos.filter((t) => t.status === 'in_progress').length;
+      return {
+        output: `Todos updated (${done}/${todos.length} completed${active ? `, ${active} in progress` : ''}):\n${formatTodos(todos)}`,
+        summary: `${done}/${todos.length} completed`,
+      };
+    }
+
     case 'skill': {
       const name = String(args.name ?? '').replace(/^\//, '');
       const skill = (ctx.skills ?? []).find((sk) => sk.name === name && sk.modelInvocable);
@@ -258,6 +312,7 @@ export function toolLabel(name: string): string {
     case 'glob': return 'Glob';
     case 'web_fetch': return 'WebFetch';
     case 'skill': return 'Skill';
+    case 'todo_write': return 'Update Todos';
     default: return name;
   }
 }
@@ -273,6 +328,7 @@ export function toolArgSummary(name: string, args: Record<string, any>): string 
     case 'glob': return `pattern: "${args.pattern}"${args.path ? `, path: "${args.path}"` : ''}`;
     case 'web_fetch': return String(args.url ?? '');
     case 'skill': return `${args.name}${args.args ? ` ${args.args}` : ''}`;
+    case 'todo_write': return `${Array.isArray(args.todos) ? args.todos.length : 0} items`;
     default: return JSON.stringify(args).slice(0, 100);
   }
 }

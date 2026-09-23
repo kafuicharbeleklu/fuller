@@ -19,6 +19,7 @@ export const TOOL_DISPLAY: Record<string, string> = {
   glob: 'Glob',
   web_fetch: 'WebFetch',
   skill: 'Skill',
+  todo_write: 'TodoWrite',
 };
 
 export function parseRule(raw: string): PermissionRule | null {
@@ -103,6 +104,7 @@ export function toolTarget(name: string, args: Record<string, any>): string {
     case 'glob': return String(args.pattern ?? '');
     case 'web_fetch': return String(args.url ?? '');
     case 'skill': return String(args.name ?? '');
+    case 'todo_write': return 'todos';
     default: return JSON.stringify(args);
   }
 }
@@ -113,7 +115,7 @@ export function baseRisk(name: string, args: Record<string, any>, cwd: string): 
       const c = classifyCommand(String(args.command ?? ''), cwd);
       return { risk: c.risk, reason: c.reason };
     }
-    case 'read_file': case 'list_directory': case 'search_files': case 'glob': case 'skill':
+    case 'read_file': case 'list_directory': case 'search_files': case 'glob': case 'skill': case 'todo_write':
       return { risk: 'read', reason: '' };
     case 'write_file': case 'edit_file':
       return { risk: 'edit', reason: '' };

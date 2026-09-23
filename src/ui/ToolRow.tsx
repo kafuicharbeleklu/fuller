@@ -4,7 +4,8 @@ import { useTheme } from './theme.js';
 import { DiffView } from './DiffView.js';
 import { toolLabel, toolArgSummary } from '../tools/registry.js';
 import { BULLET, BULLET_GAP } from './glyphs.js';
-import type { ToolCallState } from '../agent/types.js';
+import type { ToolCallState, TodoItem } from '../agent/types.js';
+import { todoGlyph } from './TodoPanel.js';
 
 interface ToolRowProps {
   toolCall: ToolCallState;
@@ -84,6 +85,17 @@ export const ToolRow: React.FC<ToolRowProps> = ({ toolCall, verbose, frame, elap
 
     const max = verbose ? VERBOSE_LINES : COLLAPSED_LINES;
     switch (name) {
+      case 'todo_write': {
+        const todos: TodoItem[] = Array.isArray(args.todos) ? args.todos : [];
+        const shown = verbose ? todos : todos.slice(0, 8);
+        const nodes: React.ReactNode[] = shown.map((t, i) => (
+          <Text key={i} color={t.status === 'in_progress' ? theme.accent : t.status === 'completed' ? theme.subtle : theme.text} strikethrough={t.status === 'completed'} wrap="truncate-end">
+            {todoGlyph(t.status)} {t.content}
+          </Text>
+        ));
+        if (todos.length > shown.length) nodes.push(<Text key="more" color={theme.subtle}>… +{todos.length - shown.length} more (ctrl+o to expand)</Text>);
+        return lines(nodes.length ? nodes : [<Text key="e" color={theme.subtle}>(empty list)</Text>]);
+      }
       case 'edit_file':
       case 'write_file': {
         const nodes: React.ReactNode[] = [];

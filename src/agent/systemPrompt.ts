@@ -46,6 +46,7 @@ export function getSystemPrompt(env: PromptEnv): string {
 - edit_file(file_path, target_content, replacement_content, replace_all?): exact replacement in an existing file.
 - list_directory(dir_path?, recursive?), search_files(query, regex?, ignore_case?, glob?, path?), glob(pattern, path?): explore the project.
 - web_fetch(url): read documentation from the web.
+- todo_write(todos): keep a visible task list for multi-step work (one item in_progress at a time; mark items completed promptly).
 You may request several independent tool calls in one turn; they are executed in order.`;
 
   const skillList = skillsForPrompt(env.skills ?? []);

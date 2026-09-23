@@ -12,9 +12,12 @@ interface Props {
   model: string;
   inputEmpty: boolean;
   bashMode: boolean;
+  /** Output of the custom status line command, when configured. */
+  statusLine?: string | null;
+  statusLinePadding?: number;
 }
 
-export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThreshold, model, inputEmpty, bashMode }) => {
+export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThreshold, model, inputEmpty, bashMode, statusLine, statusLinePadding }) => {
   const theme = useTheme();
   const busy = status !== 'idle';
 
@@ -28,6 +31,16 @@ export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThresh
   const used = usage.promptTokens / usage.contextWindow;
   const left = Math.max(0, Math.round((autoCompactThreshold - used) / autoCompactThreshold * 100));
   const showContext = usage.promptTokens > 0;
+
+  if (statusLine !== undefined && statusLine !== null) {
+    const lines = statusLine.split('\n').slice(0, 3);
+    return (
+      <Box flexDirection="column" paddingX={statusLinePadding ?? 1}>
+        {mode !== 'default' || bashMode || busy ? <Box>{modeNode}</Box> : null}
+        {lines.map((l, i) => <Text key={i}>{l || ' '}</Text>)}
+      </Box>
+    );
+  }
 
   return (
     <Box justifyContent="space-between" paddingX={1}>

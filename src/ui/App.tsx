@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Static, Text, useApp, useStdout } from 'ink';
 import { ThemeProvider, loadTheme, resolveTheme, saveTheme, type Theme } from './theme.js';
-import { renderToString } from './renderToString.js';
 import type { FrameWriter } from './frameWriter.js';
 import { TranscriptItemView } from './Transcript.js';
 import { LiveArea } from './LiveArea.js';
@@ -13,6 +12,8 @@ import { knownContextWindow } from '../agent/models.js';
 import { SessionPicker } from './SessionPicker.js';
 import { InputBox } from './InputBox.js';
 import { Footer } from './Footer.js';
+import { TodoPanel } from './TodoPanel.js';
+import { useStatusLine } from './useStatusLine.js';
 import { COMMANDS, runCommand, type CommandContext, type SlashCommand } from './commands.js';
 import type { SkillDefinition } from '../skills/loader.js';
 import { AgentLoop, type AgentCallbacks } from '../agent/loop.js';
@@ -24,7 +25,7 @@ import { APP_NAME, STARTUP_TIPS } from '../branding.js';
 import type { AppConfig } from '../config.js';
 import type { BannerProps } from './Banner.js';
 import type {
-  AgentStatus, LiveTurn, Notice, PendingConfirmation, PermissionMode, TranscriptItem, UsageInfo,
+  AgentStatus, LiveTurn, Notice, PendingConfirmation, PermissionMode, TranscriptItem, UsageInfo, TodoItem,
 } from '../agent/types.js';
 import { PERMISSION_MODES } from '../agent/types.js';
 
@@ -58,6 +59,9 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [model, setModel] = useState(config.model);
   const [skills, setSkills] = useState<SkillDefinition[]>([]);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [showTodos, setShowTodos] = useState(true);
+  const [sessionId, setSessionId] = useState('');
   const [gitInfo, setGitInfo] = useState<GitInfo | undefined>();
   const [inputState, setInputState] = useState({ empty: true, bashMode: false });
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
@@ -100,10 +104,13 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       onQueueChange: setQueue,
       onModeChange: setMode,
       onNotify: bell,
+      onTodosChange: (t) => { setTodos(t); if (t.some((x) => x.status !== 'completed')) setShowTodos(true); },
     };
     const agent = restored ? AgentLoop.fromSession(restored, config, callbacks) : new AgentLoop(config, callbacks);
     agentRef.current = agent;
     setSkills(agent.getSkills());
+    setTodos(agent.getTodos());
+    setSessionId(agent.sessionId);
     const ctxWindow = knownContextWindow(config.model);
     if (ctxWindow) agent.setContextWindow(ctxWindow);
     setItems([{ key: 'banner', kind: 'banner' }, ...(restored ? messagesToTranscript(restored.messages) : [])]);
@@ -155,39 +162,6 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       if (timer) clearTimeout(timer);
     };
   }, [stdout]);
-
-  // After the settled re-layout, repaint the visible screen: the transcript tail
-  // is laid out again at the new width and the frame ends on the last row, so no
-  // blank rows accumulate at the end of the terminal buffer (see frameWriter.ts).
-  const itemsRef = useRef(items);
-  itemsRef.current = items;
-  useEffect(() => {
-    if (resizeTick === 0 || !frameWriter || !stdout?.isTTY || screen !== 'main') return;
-    // Outside React's execution context: a nested Ink render started inside an
-    // effect would be batched and produce nothing synchronously.
-    const timer = setTimeout(() => {
-      if (!frameWriter.needsRepaint()) return;
-      try {
-        const columns = Math.max(20, (stdout.columns || 80) - 1);
-        const tailItems = itemsRef.current.slice(-40);
-        const text = renderToString(
-          <ThemeProvider theme={theme}>
-            <Static items={tailItems}>
-              {(item) => <TranscriptItemView key={item.key} item={item} verbose={verbose} banner={bannerProps} />}
-            </Static>
-          </ThemeProvider>,
-          columns,
-          stdout.rows || 24
-        );
-        frameWriter.repaint(text ? text.split('\n') : [], stdout.rows || 24);
-      } catch {
-        // Fall back to the in-place render already done by Ink.
-      }
-    }, 0);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resizeTick]);
-
 
   const addSystem = useCallback((text: string, kind: 'command' | 'notice' | 'compact' | 'normal' | 'bash' = 'command') => {
     agentRef.current?.addSystemMessage(text, kind);
@@ -250,6 +224,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       cycleMode,
       clearConversation: () => {
         agent.clearHistory();
+        setTodos([]);
         setItems([{ key: 'banner', kind: 'banner' }]);
         setRestored(undefined);
         redraw(true);
@@ -296,6 +271,8 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const onInterrupt = useCallback(() => agentRef.current?.interrupt(), []);
   const onToggleVerbose = useCallback(() => { setVerbose((v) => !v); clearScreen(); }, [clearScreen]);
   const onToggleHelp = useCallback(() => setShowHelp((h) => !h), []);
+  const onToggleTodos = useCallback(() => setShowTodos((v) => !v), []);
+  const statusLine = useStatusLine(config, { sessionId, model, mode, status, usage, startedAt: startedAt.current });
   const onDoubleEscape = useCallback(() => { if (!agentRef.current?.busy) setRewindOpen(true); }, []);
   const onPopQueue = useCallback(() => agentRef.current?.popQueue(), []);
   const onInputState = useCallback((s: { empty: boolean; bashMode: boolean }) => setInputState(s), []);
@@ -347,6 +324,9 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             <Text color={notice.level === 'error' ? theme.error : notice.level === 'warn' ? theme.warning : theme.subtle}>{notice.text}</Text>
           </Box>
         ) : null}
+        {showTodos && todos.length > 0 && todos.some((t) => t.status !== 'completed') && !confirmation ? (
+          <TodoPanel todos={todos} frame={frame} maxItems={Math.max(3, Math.min(6, rows - 18))} />
+        ) : null}
         {confirmation ? <PermissionPrompt confirmation={confirmation} verbose={verbose} maxDiffLines={Math.max(8, rows - 14)} /> : null}
         {modelPickerOpen && !confirmation ? (
           <ModelPicker
@@ -395,6 +375,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onClearScreen={clearScreen}
             onToggleVerbose={onToggleVerbose}
             onToggleHelp={onToggleHelp}
+            onToggleTodos={onToggleTodos}
             onDoubleEscape={onDoubleEscape}
             onPopQueue={onPopQueue}
             onStateChange={onInputState}
@@ -407,6 +388,8 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             model={model}
             inputEmpty={inputState.empty}
             bashMode={inputState.bashMode}
+            statusLine={statusLine}
+            statusLinePadding={config.settings.statusLine?.padding}
           />
         </Box>
       </Box>

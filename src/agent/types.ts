@@ -103,3 +103,12 @@ export interface Notice {
   text: string;
   level: 'info' | 'warn' | 'error';
 }
+
+export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface TodoItem {
+  content: string;
+  status: TodoStatus;
+  /** Present-continuous form shown while in progress (e.g. "Running tests"). */
+  activeForm?: string;
+}

@@ -22,6 +22,7 @@ export interface InputBoxProps {
   onClearScreen: () => void;
   onToggleVerbose: () => void;
   onToggleHelp: () => void;
+  onToggleTodos?: () => void;
   onDoubleEscape: () => void;
   onPopQueue: () => string | undefined;
   onStateChange?: (state: { empty: boolean; bashMode: boolean }) => void;
@@ -44,7 +45,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const {
     isActive, busy, queue, history: initialHistory, cwd, commands, showHelp,
     onSubmit, onCommand, onBash, onInterrupt, onExit, onCycleMode, onClearScreen,
-    onToggleVerbose, onToggleHelp, onDoubleEscape, onPopQueue, onStateChange,
+    onToggleVerbose, onToggleHelp, onToggleTodos, onDoubleEscape, onPopQueue, onStateChange,
   } = props;
 
   const ed = useRef<EditorState>({ text: '', cursor: 0 });
@@ -348,6 +349,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
           del();
           return;
         case 'o': onToggleVerbose(); return;
+        case 't': onToggleTodos?.(); return;
         case 'l': onClearScreen(); return;
         case 'r':
           if (history.current.length) { draft.current = ed.current.text; setSearch({ query: '', index: 0 }); }
@@ -530,6 +532,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
           <Text color={theme.subtle}>\⏎ ctrl+j  newline                    ↑/↓        history (↑ recovers queue)      ctrl+r  search history</Text>
           <Text color={theme.subtle}>ctrl+c     clear input / exit (×2)    ctrl+l     redraw screen                   ctrl+_  undo</Text>
           <Text color={theme.subtle}>ctrl+a/e   line start/end             ctrl+u/k   kill to start/end               ctrl+w  delete word · ctrl+y yank</Text>
+          <Text color={theme.subtle}>ctrl+t     show/hide the task list</Text>
         </Box>
       ) : null}
     </Box>

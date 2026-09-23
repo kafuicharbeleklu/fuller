@@ -143,4 +143,19 @@ describe('AgentLoop', () => {
     await loop.handleUserInput('leak');
     expect(calls[1].responses[0].output).toMatch(/Accès refusé/);
   });
+
+  it('tracks the task list written with todo_write and persists it in the session', async () => {
+    script = [
+      { functionCalls: [{ name: 'todo_write', args: { todos: [{ content: 'a', status: 'in_progress', activeForm: 'Doing a' }, { content: 'b', status: 'pending' }] } }] },
+      { text: 'ok' },
+    ];
+    const seen: any[] = [];
+    const { cb } = makeCallbacks({ onTodosChange: (t) => seen.push(t) });
+    const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+    await loop.handleUserInput('plan');
+    expect(seen[0]).toHaveLength(2);
+    expect(loop.getTodos()[0].status).toBe('in_progress');
+    expect(loop.getSessionData().todos).toHaveLength(2);
+    expect(calls[1].responses[0].output).toMatch(/Todos updated \(0\/2 completed, 1 in progress\)/);
+  });
 });

@@ -68,6 +68,7 @@ Un fichier = une commande `/nom` (les sous-dossiers donnent `/dossier:nom`). Fro
 | `/plan`, `/accept-edits`, `/mode <mode>` | Modes de permission |
 | `/init`, `/memory` | Générer / lister les fichiers mémoire |
 | `/skills [reload]` | Commandes personnalisées et skills découverts |
+| Ctrl+T | Afficher / masquer la liste de tâches (`todo_write`) |
 | `/rewind`, `/checkpoints` | Restaurer des fichiers |
 | `/sessions`, `/export [fichier]` | Sessions et export Markdown |
 | `/diff`, `/doctor`, `/theme`, `/add-dir`, `/btw`, `/about`, `/exit` | Divers |
@@ -107,6 +108,14 @@ Un fichier = une commande `/nom` (les sous-dossiers donnent `/dossier:nom`). Fro
 }
 ```
 
+- Status line personnalisée (même JSON que Claude Code sur l'entrée standard : `model.id`, `workspace.current_dir`, `context_window.used_percentage`, `cost.total_tokens`, `permission_mode`…) :
+
+```json
+{ "statusLine": { "type": "command", "command": "~/.fuller/statusline.sh", "padding": 1, "refreshInterval": 30 } }
+```
+
+  Exemple de script : `jq -r '"\(.model.id) · \(.workspace.project_name) · ctx \(.context_window.used_percentage)%"'`. Les scripts écrits pour Claude Code fonctionnent tels quels.
+- Liste de tâches : le modèle tient sa liste avec l'outil `todo_write` ; elle s'affiche au-dessus de la saisie tant qu'il reste des éléments (Ctrl+T pour la masquer) et dans le transcript à chaque mise à jour ; elle est restaurée avec la session.
 - Sessions : `~/.fuller/projects/<chemin-encodé>/<id>.json` · checkpoints : `~/.fuller/checkpoints/` · historique : `~/.fuller/history.jsonl`.
 - Redimensionnement : Fuller recalcule le nombre de lignes physiques à effacer après un changement de largeur (les terminaux modernes re-replient le texte). Sur un terminal qui ne re-replie pas (xterm classique), lancez avec `FULLER_NO_REFLOW=1`.
 

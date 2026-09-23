@@ -29,6 +29,8 @@ export interface Settings {
   bashTimeoutMs?: number;
   maxTurns?: number;
   env?: Record<string, string>;
+  /** Custom status line: a shell command fed a JSON status on stdin (Claude Code compatible). */
+  statusLine?: { type?: 'command'; command: string; padding?: number; refreshInterval?: number };
 }
 
 export interface AppConfig {

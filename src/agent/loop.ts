@@ -22,6 +22,7 @@ import type {
   UsageInfo,
   Notice,
   MessageKind,
+  TodoItem,
 } from './types.js';
 
 export interface TurnOptions {
@@ -47,6 +48,7 @@ export interface AgentCallbacks {
   onQueueChange: (queue: string[]) => void;
   onModeChange?: (mode: PermissionMode) => void;
   onNotify?: (event: 'permission' | 'done' | 'error') => void;
+  onTodosChange?: (todos: TodoItem[]) => void;
 }
 
 /** Coalesces streamed chunks so the UI re-renders at most every `intervalMs`. */
@@ -81,6 +83,7 @@ export class AgentLoop {
   private gitBranch?: string;
   private skills: SkillDefinition[] = [];
   private turnAllow: string[] = [];
+  private todos: TodoItem[] = [];
   public usage: UsageInfo;
 
   constructor(config: AppConfig, callbacks: AgentCallbacks, restored?: SessionData) {
@@ -89,6 +92,7 @@ export class AgentLoop {
     this.sessionId = restored?.meta.id ?? generateSessionId();
     this.createdAt = restored?.meta.createdAt ?? Date.now();
     this.messages = restored?.messages ?? [];
+    this.todos = restored?.todos ?? [];
     this.gitBranch = restored?.meta.gitBranch;
     this.usage = {
       promptTokens: 0,
@@ -107,6 +111,16 @@ export class AgentLoop {
 
   public getSkills(): SkillDefinition[] {
     return this.skills;
+  }
+
+  public getTodos(): TodoItem[] {
+    return this.todos;
+  }
+
+  public setTodos(todos: TodoItem[]) {
+    this.todos = todos;
+    this.callbacks.onTodosChange?.(todos);
+    this.scheduleSave();
   }
 
   /** Re-discover custom commands and skills (system prompt updated, history kept). */
@@ -180,6 +194,7 @@ export class AgentLoop {
       },
       messages: this.messages,
       history: this.session.getHistory(),
+      todos: this.todos,
     };
   }
 
@@ -233,6 +248,7 @@ export class AgentLoop {
     this.callbacks.onQueueChange([]);
     this.messages = [];
     this.pendingContext = [];
+    this.setTodos([]);
     this.sessionId = generateSessionId();
     this.session.initChat();
     this.usage = { ...this.usage, promptTokens: 0, responseTokens: 0, cumulativeTokens: 0, apiCalls: 0, turns: 0 };
@@ -435,6 +451,7 @@ export class AgentLoop {
       bashTimeoutMs: this.config.bashTimeoutMs,
       messageId,
       skills: this.skills,
+      setTodos: (todos: TodoItem[]) => this.setTodos(todos),
     };
 
     if (name === 'edit_file' || name === 'write_file') {

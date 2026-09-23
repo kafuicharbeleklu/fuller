@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import type { Content } from '@google/genai';
 import { CONFIG_DIR_NAME } from '../branding.js';
-import type { ChatMessage } from '../agent/types.js';
+import type { ChatMessage, TodoItem } from '../agent/types.js';
 
 export interface SessionMeta {
   id: string;
@@ -22,6 +22,7 @@ export interface SessionData {
   messages: ChatMessage[];
   /** Gemini chat history, used to really restore the model context. */
   history?: Content[];
+  todos?: TodoItem[];
 }
 
 export function encodeWorkspace(workspaceDir: string): string {
