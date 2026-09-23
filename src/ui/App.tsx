@@ -16,6 +16,7 @@ import { TodoPanel } from './TodoPanel.js';
 import { useStatusLine } from './useStatusLine.js';
 import { COMMANDS, runCommand, type CommandContext, type SlashCommand } from './commands.js';
 import type { SkillDefinition } from '../skills/loader.js';
+import type { ImageAttachment } from '../utils/imageClipboard.js';
 import { AgentLoop, type AgentCallbacks } from '../agent/loop.js';
 import { messagesToTranscript } from '../agent/transcript.js';
 import { getGitInfo, type GitInfo } from '../utils/git.js';
@@ -254,9 +255,9 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
     })),
   ], [skills]);
 
-  const onSubmit = useCallback((text: string) => {
+  const onSubmit = useCallback((text: string, attachments: ImageAttachment[] = []) => {
     appendPromptHistory(config.workspaceDir, text);
-    void agentRef.current?.handleUserInput(text);
+    void agentRef.current?.handleUserInput(text, 'normal', attachments.length ? { attachments } : {});
   }, [config.workspaceDir]);
 
   const onCommand = useCallback((cmd: string) => {

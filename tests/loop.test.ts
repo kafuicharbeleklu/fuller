@@ -21,8 +21,8 @@ vi.mock('../src/agent/gemini.js', () => {
     repairHistory() {}
     resetWithSummary() {}
     switchModel() {}
-    async sendUserMessage(text: string, opts: any) {
-      calls.push({ kind: 'user', text });
+    async sendUserMessage(text: any, opts: any) {
+      calls.push({ kind: 'user', text: typeof text === 'string' ? text : text.map((p: any) => p.text ?? `[inline ${p.inlineData?.mimeType} ${p.inlineData?.data?.length}]`).join(''), parts: typeof text === 'string' ? undefined : text });
       return this.next(opts);
     }
     async sendToolResponses(responses: any[], opts: any) {
@@ -305,6 +305,24 @@ describe('AgentLoop', () => {
       expect(calls[2].responses[1].output).toMatch(/may not use write_file/);
       expect(calls[3].responses[0].output).toMatch(/Explore subagent report[\s\S]*sub report/);
       expect(progress.some((p) => /Read\(a\.txt\)/.test(p))).toBe(true);
+    });
+  });
+
+  describe('images', () => {
+    it('sends pasted and dropped images as inline parts and records their metadata', async () => {
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+      fs.writeFileSync(path.join(cwd, 'shot.png'), png);
+      fs.writeFileSync(path.join(cwd, 'clip.png'), png);
+      script = [{ text: 'I see it' }];
+      const { cb, items } = makeCallbacks();
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+      await loop.handleUserInput('what is in shot.png and [Image #1: clip.png]?', 'normal', { attachments: [{ n: 1, path: path.join(cwd, 'clip.png'), mimeType: 'image/png', bytes: png.length, name: 'clip.png' }] });
+      const parts = calls[0].parts;
+      expect(parts[0].text).toMatch(/what is in shot\.png/);
+      expect(parts.filter((p: any) => p.inlineData)).toHaveLength(2);
+      expect(parts[1].inlineData.data).toBe(png.toString('base64'));
+      const user = items.find((i) => i.kind === 'user') as any;
+      expect(user.message.attachments.map((a: any) => a.name)).toEqual(['clip.png', 'shot.png']);
     });
   });
 });

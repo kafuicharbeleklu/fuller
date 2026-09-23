@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { useTheme } from './theme.js';
 import { useRawInput, type KeyEvent } from './useRawInput.js';
 import { getFileIndex, fuzzyFilter } from '../utils/fileIndex.js';
+import { readClipboardImage, attachmentFromFile, type ImageAttachment } from '../utils/imageClipboard.js';
 import type { SlashCommand } from './commands.js';
 
 export interface InputBoxProps {
@@ -13,7 +14,7 @@ export interface InputBoxProps {
   cwd: string;
   commands: SlashCommand[];
   showHelp: boolean;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string, attachments: ImageAttachment[]) => void;
   onCommand: (command: string) => void;
   onBash: (command: string) => void;
   onInterrupt: () => void;
@@ -35,6 +36,7 @@ interface EditorState {
 
 const PASTE_RE = /\[Pasted text #(\d+) \+(\d+) lines\]/g;
 const PASTE_TAIL_RE = /\[Pasted text #(\d+) \+(\d+) lines\]$/;
+const IMAGE_TAIL_RE = /\[Image #(\d+)\]$/;
 
 function isWordChar(ch: string): boolean {
   return /[\p{L}\p{N}_\-./]/u.test(ch);
@@ -54,6 +56,9 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const killRing = useRef('');
   const pastes = useRef(new Map<number, string>());
   const pasteCounter = useRef(0);
+  const images = useRef<ImageAttachment[]>([]);
+  const imageCounter = useRef(0);
+  const [imageHint, setImageHint] = useState<string | null>(null);
   const history = useRef<string[]>(initialHistory);
   const historyIndex = useRef(-1);
   const draft = useRef('');
@@ -129,6 +134,8 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
     const head = t.slice(0, c);
     const m = head.match(PASTE_TAIL_RE);
     if (m) { pastes.current.delete(Number(m[1])); set(head.slice(0, -m[0].length) + t.slice(c), c - m[0].length); return; }
+    const im = head.match(IMAGE_TAIL_RE);
+    if (im) { images.current = images.current.filter((a) => a.n !== Number(im[1])); set(head.slice(0, -im[0].length) + t.slice(c), c - im[0].length); return; }
     const p = prevCp(t, c);
     set(t.slice(0, p) + t.slice(c), p);
   };
@@ -218,10 +225,27 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
     }
   };
 
+  const pasteImage = async () => {
+    setImageHint('Reading clipboard…');
+    try {
+      const img = await readClipboardImage();
+      if (!img) { setImageHint('No image in the clipboard'); setTimeout(() => setImageHint(null), 2000); return; }
+      const n = ++imageCounter.current;
+      const att = attachmentFromFile(img.path, n);
+      images.current.push(att);
+      insert(`[Image #${n}]`);
+      setImageHint(null);
+    } catch (err: any) {
+      setImageHint(String(err?.message ?? err));
+      setTimeout(() => setImageHint(null), 3000);
+    }
+  };
+
   const resetEditor = () => {
     ed.current = { text: '', cursor: 0 };
     undo.current = [];
     pastes.current.clear();
+    images.current = [];
     historyIndex.current = -1;
     draft.current = '';
     setMenuDismissed(false);
@@ -245,11 +269,15 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
       onBash(trimmed);
       return;
     }
-    const expanded = expandPastes(raw).trim();
+    const expanded = expandPastes(raw).replace(/\[Image #(\d+)\]/g, (m, n) => {
+      const att = images.current.find((a) => a.n === Number(n));
+      return att ? `[Image #${n}: ${att.name}]` : m;
+    }).trim();
+    const attachments = images.current.map((a, i) => ({ ...a, n: i + 1 }));
     pushHistory(trimmed);
     resetEditor();
     if (expanded.startsWith('/') && !expanded.includes('\n')) onCommand(expanded);
-    else onSubmit(expanded);
+    else onSubmit(expanded, attachments);
   };
 
   const browseHistory = (dir: -1 | 1) => {
@@ -350,6 +378,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
           return;
         case 'o': onToggleVerbose(); return;
         case 't': onToggleTodos?.(); return;
+        case 'v': void pasteImage(); return;
         case 'l': onClearScreen(); return;
         case 'r':
           if (history.current.length) { draft.current = ed.current.text; setSearch({ query: '', index: 0 }); }
@@ -420,6 +449,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
       case 'delete': del(); return;
       case 'char': {
         if (e.alt) {
+          if (e.text === 'v') { void pasteImage(); return; }
           if (e.text === 'b') { ed.current.cursor = moveWordLeft(); bump(); }
           else if (e.text === 'f') { ed.current.cursor = moveWordRight(); bump(); }
           else if (e.text === 'd') { const { text: t, cursor: c } = ed.current; const p = moveWordRight(); if (p > c) { snapshot(); killRing.current = t.slice(c, p); set(t.slice(0, c) + t.slice(p), c); } }
@@ -524,6 +554,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
       ) : null}
 
       {ctrlCHint ? <Box paddingX={2}><Text color={theme.warning}>Press ctrl+c again to exit</Text></Box> : null}
+      {imageHint ? <Box paddingX={2}><Text color={theme.subtle}>{imageHint}</Text></Box> : null}
 
       {showHelp ? (
         <Box flexDirection="column" paddingX={2} marginTop={0}>
@@ -532,7 +563,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
           <Text color={theme.subtle}>\⏎ ctrl+j  newline                    ↑/↓        history (↑ recovers queue)      ctrl+r  search history</Text>
           <Text color={theme.subtle}>ctrl+c     clear input / exit (×2)    ctrl+l     redraw screen                   ctrl+_  undo</Text>
           <Text color={theme.subtle}>ctrl+a/e   line start/end             ctrl+u/k   kill to start/end               ctrl+w  delete word · ctrl+y yank</Text>
-          <Text color={theme.subtle}>ctrl+t     show/hide the task list</Text>
+          <Text color={theme.subtle}>ctrl+t     show/hide the task list       ctrl+v     paste an image from the clipboard (alt+v on Windows)</Text>
         </Box>
       ) : null}
     </Box>

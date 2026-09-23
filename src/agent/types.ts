@@ -34,6 +34,12 @@ export type MessagePart =
 
 export type MessageKind = 'normal' | 'command' | 'bash' | 'compact' | 'notice';
 
+export interface AttachmentMeta {
+  name: string;
+  mimeType: string;
+  bytes: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: Role;
@@ -42,6 +48,8 @@ export interface ChatMessage {
   parts?: MessagePart[];
   kind?: MessageKind;
   timestamp: number;
+  /** Images sent with a user message (metadata only; the bytes live in the model history). */
+  attachments?: AttachmentMeta[];
 }
 
 export type AgentStatus =

@@ -21,6 +21,8 @@ import { McpManager, type McpServerStatus } from '../mcp/manager.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { loadSubagents, type SubagentDefinition } from './subagents.js';
 import { runSubagent } from './subagent.js';
+import { findImagePaths, attachmentFromFile, readAttachmentBase64, type ImageAttachment } from '../utils/imageClipboard.js';
+import type { Part } from '@google/genai';
 import type {
   ChatMessage,
   ToolCallState,
@@ -41,6 +43,8 @@ export interface TurnOptions {
   allow?: string[];
   /** Set when a Stop hook asked to continue: prevents an infinite loop. */
   stopHookActive?: boolean;
+  /** Images pasted or dropped into the prompt. */
+  attachments?: ImageAttachment[];
 }
 
 function safeLoadMcp(cwd: string) {
@@ -431,7 +435,16 @@ export class AgentLoop {
     const started = Date.now();
     this.turnAllow = options.allow ?? [];
 
-    const userMsg: ChatMessage = { id: uid(), role: 'user', content: input, kind, timestamp: started };
+    // Images: explicit attachments (ctrl+v) plus image files named in the prompt (drag & drop, @path).
+    const attachments: ImageAttachment[] = [...(options.attachments ?? [])];
+    for (const file of findImagePaths(options.prompt ?? input, this.config.workspaceDir)) {
+      if (attachments.some((a) => a.path === file)) continue;
+      try { attachments.push(attachmentFromFile(file, attachments.length + 1)); } catch (err: any) { this.addSystemMessage(`⚠ ${err.message}`, 'notice'); }
+    }
+    const userMsg: ChatMessage = {
+      id: uid(), role: 'user', content: input, kind, timestamp: started,
+      attachments: attachments.length ? attachments.map((a) => ({ name: a.name, mimeType: a.mimeType, bytes: a.bytes })) : undefined,
+    };
     this.messages.push(userMsg);
     this.callbacks.onCommit({ key: userMsg.id, kind: 'user', message: userMsg });
 
@@ -490,7 +503,15 @@ export class AgentLoop {
     let stopHookContinue = false;
     try {
       this.callbacks.onStatusChange('thinking');
-      let turn = await this.session.sendUserMessage(enriched, streamOptions);
+      let message: string | Part[] = enriched;
+      if (attachments.length) {
+        const imageParts: Part[] = [];
+        for (const a of attachments) {
+          try { imageParts.push({ inlineData: { mimeType: a.mimeType, data: readAttachmentBase64(a) } }); } catch (err: any) { this.addSystemMessage(`⚠ Cannot read ${a.name}: ${err.message}`, 'notice'); }
+        }
+        message = [{ text: enriched }, ...imageParts];
+      }
+      let turn = await this.session.sendUserMessage(message, streamOptions);
       for (;;) {
         batcher.flush();
         this.callbacks.onNotice(null);

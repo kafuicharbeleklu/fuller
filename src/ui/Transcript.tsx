@@ -38,6 +38,11 @@ export const TranscriptItemView: React.FC<Props> = React.memo(({ item, verbose, 
               <Text color={m.kind === 'command' ? theme.subtle : theme.user} bold={m.kind !== 'command'}>{l || ' '}</Text>
             </Box>
           ))}
+          {m.attachments?.map((a, i) => (
+            <Box key={`att-${i}`}>
+              <Text color={theme.subtle}>  🖼 [Image #{i + 1}] {a.name} · {Math.round(a.bytes / 1024)} KB</Text>
+            </Box>
+          ))}
         </Box>
       );
     }

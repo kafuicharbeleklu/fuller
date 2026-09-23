@@ -154,7 +154,7 @@ export class GeminiAgentSession {
     this.initChat(history);
   }
 
-  public sendUserMessage(userInput: string, options: StreamOptions = {}): Promise<ModelTurnOutput> {
+  public sendUserMessage(userInput: string | Part[], options: StreamOptions = {}): Promise<ModelTurnOutput> {
     return this.streamTurn(userInput, options);
   }
 
