@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env
+.fuller/settings.local.json
+*.tsgz
+__pycache__/
