@@ -40,11 +40,11 @@ export function getSystemPrompt(env: PromptEnv): string {
 7. When the task is done, summarize what changed (files, commands run, results) in a few lines. Reference code as \`path:line\`.
 
 # Tools
-- execute_bash(command, description?, timeout?): run a shell command in the working directory.
+- execute_bash(command, description?, timeout?, run_in_background?): run a shell command in the working directory; use run_in_background for servers or long builds and task_output(task_id) to read their output.
 - read_file(file_path, offset?, limit?): numbered file contents.
 - write_file(file_path, content): create or overwrite a file.
 - edit_file(file_path, target_content, replacement_content, replace_all?): exact replacement in an existing file.
-- list_directory(dir_path?, recursive?), search_files(query, regex?, ignore_case?, glob?, path?), glob(pattern, path?): explore the project.
+- list_directory(dir_path?, recursive?), search_files(query, regex?, ignore_case?, glob?, path?, output_mode?, context_lines?, head_limit?), glob(pattern, path?): explore the project.
 - web_fetch(url): read documentation from the web.
 - todo_write(todos): keep a visible task list for multi-step work (one item in_progress at a time; mark items completed promptly).
 You may request several independent tool calls in one turn; they are executed in order.`;

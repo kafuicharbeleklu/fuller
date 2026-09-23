@@ -12,6 +12,7 @@ import { uid } from './transcript.js';
 import { loadSkills, type SkillDefinition } from '../skills/loader.js';
 import { runHooks, type HookEvent, type HookOutcome, type HookPayload } from '../hooks/runner.js';
 import { sessionFile } from '../session/store.js';
+import { BackgroundTaskManager, describeTask, type BackgroundTask } from '../tools/background.js';
 import type {
   ChatMessage,
   ToolCallState,
@@ -53,6 +54,7 @@ export interface AgentCallbacks {
   onModeChange?: (mode: PermissionMode) => void;
   onNotify?: (event: 'permission' | 'done' | 'error') => void;
   onTodosChange?: (todos: TodoItem[]) => void;
+  onBackgroundChange?: (running: number, tasks: BackgroundTask[]) => void;
 }
 
 /** Coalesces streamed chunks so the UI re-renders at most every `intervalMs`. */
@@ -88,6 +90,7 @@ export class AgentLoop {
   private skills: SkillDefinition[] = [];
   private turnAllow: string[] = [];
   private todos: TodoItem[] = [];
+  private background: BackgroundTaskManager;
   public usage: UsageInfo;
 
   constructor(config: AppConfig, callbacks: AgentCallbacks, restored?: SessionData) {
@@ -111,6 +114,11 @@ export class AgentLoop {
     this.session.setSkills(this.skills);
     this.session.refresh();
     this.checkpointManager = new CheckpointManager(config.workspaceDir);
+    this.background = new BackgroundTaskManager(config.workspaceDir, this.sessionId, (task, tail) => {
+      this.addSystemMessage(`⏵ Background task ${task.id} ${task.status}${task.exitCode !== undefined ? ` (exit ${task.exitCode})` : ''} · ${task.description ?? task.command.split('\n')[0].slice(0, 60)}`, 'notice');
+      this.pendingContext.push(`[Background task ${task.id} (\`${task.command.split('\n')[0].slice(0, 120)}\`) ${task.status}${task.exitCode !== undefined ? ` with exit code ${task.exitCode}` : ''}. Last output:]\n${tail.trim() || '(no output)'}`);
+      this.callbacks.onBackgroundChange?.(this.background.running(), this.background.list());
+    });
     void this.fireHooks('SessionStart', { source: restored ? 'resume' : 'startup' }, restored ? 'resume' : 'startup').then((o) => {
       for (const c of o.context) this.pendingContext.push(c);
     });
@@ -149,6 +157,20 @@ export class AgentLoop {
 
   public getTodos(): TodoItem[] {
     return this.todos;
+  }
+
+  public getBackgroundTasks(): BackgroundTask[] {
+    return this.background.list();
+  }
+
+  public describeBackgroundTasks(): string[] {
+    return this.background.list().map(describeTask);
+  }
+
+  public killBackgroundTask(id: string): BackgroundTask | undefined {
+    const t = this.background.kill(id);
+    this.callbacks.onBackgroundChange?.(this.background.running(), this.background.list());
+    return t;
   }
 
   public setTodos(todos: TodoItem[]) {
@@ -248,6 +270,7 @@ export class AgentLoop {
     if (this.hasHooks('SessionEnd')) {
       await Promise.race([this.fireHooks('SessionEnd', { reason: 'exit' }, 'exit'), new Promise((r) => setTimeout(r, 3000))]);
     }
+    this.background.killAll();
   }
 
   // ---------------------------------------------------------------- settings
@@ -533,6 +556,11 @@ export class AgentLoop {
       messageId,
       skills: this.skills,
       setTodos: (todos: TodoItem[]) => this.setTodos(todos),
+      background: this.background,
+      onOutput: (chunk: string) => {
+        const current = (state.result ?? '') + chunk;
+        update({ result: current.length > 4000 ? current.slice(-4000) : current });
+      },
     };
 
     if (name === 'edit_file' || name === 'write_file') {
@@ -594,6 +622,7 @@ export class AgentLoop {
     try {
       const out = await dispatchTool(name, state.args, ctx);
       update({ status: 'completed', result: out.output, summary: out.summary, diff: out.diff ?? state.diff, endTime: Date.now() });
+      if (name === 'execute_bash' && state.args.run_in_background) this.callbacks.onBackgroundChange?.(this.background.running(), this.background.list());
       let output = out.output;
       if (this.hasHooks('PostToolUse')) {
         const outcome = await this.fireHooks('PostToolUse', { tool_name: label, tool_input: state.args, tool_response: { output: out.output.slice(0, 4000), summary: out.summary } }, label);

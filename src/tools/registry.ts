@@ -7,6 +7,7 @@ import { LIMITS, truncateMiddle, truncateHead, formatBytes } from './truncate.js
 import type { CheckpointManager } from '../checkpoint/manager.js';
 import { expandSkill, type SkillDefinition } from '../skills/loader.js';
 import type { TodoItem } from '../agent/types.js';
+import { describeTask, type BackgroundTaskManager } from './background.js';
 
 export const geminiToolDeclarations: FunctionDeclaration[] = [
   {
@@ -18,9 +19,31 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
       properties: {
         command: { type: Type.STRING, description: 'The shell command to execute.' },
         description: { type: Type.STRING, description: 'Short (5-10 words) description of what the command does, shown to the user.' },
-        timeout: { type: Type.INTEGER, description: 'Optional timeout in milliseconds (max 600000).' },
+        timeout: { type: Type.INTEGER, description: 'Optional timeout in milliseconds (default 120000, max 600000).' },
+        run_in_background: { type: Type.BOOLEAN, description: 'Run the command in the background and return a task id immediately (dev servers, long builds). Use task_output to read its output; you are notified when it finishes.' },
       },
       required: ['command'],
+    },
+  },
+  {
+    name: 'task_output',
+    description: 'Read the output of a background task started with execute_bash(run_in_background=true). Returns new output since the last read.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        task_id: { type: Type.STRING, description: 'Task id, e.g. "bg1".' },
+        wait_seconds: { type: Type.INTEGER, description: 'Wait up to N seconds for the task to finish before reading (default 0, max 300).' },
+      },
+      required: ['task_id'],
+    },
+  },
+  {
+    name: 'task_kill',
+    description: 'Stop a running background task.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: { task_id: { type: Type.STRING, description: 'Task id to stop.' } },
+      required: ['task_id'],
     },
   },
   {
@@ -85,6 +108,9 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
         glob: { type: Type.STRING, description: 'Restrict to files matching this glob, e.g. "**/*.ts".' },
         path: { type: Type.STRING, description: 'Directory to search in (defaults to workspace).' },
         max_results: { type: Type.INTEGER, description: 'Maximum matches (default 200).' },
+        output_mode: { type: Type.STRING, description: '"content" (matching lines, default), "files_with_matches" (file paths only) or "count" (matches per file).' },
+        context_lines: { type: Type.INTEGER, description: 'Lines of context around each match (content mode).' },
+        head_limit: { type: Type.INTEGER, description: 'Only return the first N lines/entries of the output.' },
       },
       required: ['query'],
     },
@@ -150,7 +176,7 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
   },
 ];
 
-export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'skill', 'todo_write']);
+export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'skill', 'todo_write', 'task_output', 'task_kill']);
 
 export interface ToolContext {
   cwd: string;
@@ -161,6 +187,9 @@ export interface ToolContext {
   messageId?: string;
   skills?: SkillDefinition[];
   setTodos?: (todos: TodoItem[]) => void;
+  background?: BackgroundTaskManager;
+  /** Streaming output of a foreground command (tail shown live). */
+  onOutput?: (chunk: string) => void;
 }
 
 const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
@@ -210,7 +239,15 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       const command = String(args.command ?? '');
       if (!command.trim()) throw new Error('command est requis.');
       const timeoutMs = Math.min(Number(args.timeout) || ctx.bashTimeoutMs, 600_000);
-      const res = await executeBash(command, ctx.cwd, { timeoutMs, signal: ctx.signal });
+      if (args.run_in_background) {
+        if (!ctx.background) throw new Error('Background tasks are not available in this context.');
+        const task = ctx.background.start(command, { description: args.description ? String(args.description) : undefined, timeoutMs: Math.max(timeoutMs, 600_000) });
+        return {
+          output: `Started background task ${task.id} (log: ${task.logFile}). Use task_output("${task.id}") to read its output; you will be notified when it finishes.`,
+          summary: `background ${task.id}`,
+        };
+      }
+      const res = await executeBash(command, ctx.cwd, { timeoutMs, signal: ctx.signal, onOutput: ctx.onOutput });
       if (res.interrupted) throw new Error('Interrupted');
       const parts = [
         res.stdout,
@@ -225,6 +262,26 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
         output,
         summary: res.exitCode === 0 ? `${lineCount} line${lineCount === 1 ? '' : 's'} · ${res.durationMs}ms` : `exit ${res.exitCode} · ${res.durationMs}ms`,
       };
+    }
+
+    case 'task_output': {
+      if (!ctx.background) throw new Error('No background task manager.');
+      const id = String(args.task_id ?? '');
+      const waitSeconds = Math.min(Math.max(0, Number(args.wait_seconds) || 0), 300);
+      if (waitSeconds > 0) await ctx.background.wait(id, waitSeconds * 1000);
+      const r = ctx.background.read(id);
+      if (!r) throw new Error(`Unknown task "${id}". Known tasks: ${ctx.background.list().map((t) => t.id).join(', ') || 'none'}.`);
+      return {
+        output: `${describeTask(r.task)}\n\n${r.output || '(no new output)'}${r.task.status === 'running' ? '\n\n[still running]' : ''}`,
+        summary: `${r.task.status}${r.task.exitCode !== undefined ? ` (exit ${r.task.exitCode})` : ''}`,
+      };
+    }
+
+    case 'task_kill': {
+      if (!ctx.background) throw new Error('No background task manager.');
+      const t = ctx.background.kill(String(args.task_id ?? ''));
+      if (!t) throw new Error(`Unknown task "${args.task_id}".`);
+      return { output: `Task ${t.id} ${t.status === 'killed' ? 'stopped' : `was already ${t.status}`}.`, summary: t.status };
     }
 
     case 'read_file': {
@@ -259,8 +316,12 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
         path: args.path,
         maxResults: args.max_results,
         extraDirs: ctx.extraDirs,
+        contextLines: args.context_lines,
+        signal: ctx.signal,
       });
-      return { output: formatSearchOutput(String(args.query), res), summary: `${res.matches.length}${res.truncated ? '+' : ''} matches` };
+      const mode = (['content', 'files_with_matches', 'count'].includes(args.output_mode) ? args.output_mode : 'content') as 'content' | 'files_with_matches' | 'count';
+      const real = res.matches.filter((m) => !m.context).length;
+      return { output: formatSearchOutput(String(args.query), res, mode, args.head_limit), summary: `${real}${res.truncated ? '+' : ''} matches · ${res.backend}` };
     }
 
     case 'glob': {
@@ -313,6 +374,8 @@ export function toolLabel(name: string): string {
     case 'web_fetch': return 'WebFetch';
     case 'skill': return 'Skill';
     case 'todo_write': return 'Update Todos';
+    case 'task_output': return 'TaskOutput';
+    case 'task_kill': return 'TaskKill';
     default: return name;
   }
 }
@@ -329,6 +392,7 @@ export function toolArgSummary(name: string, args: Record<string, any>): string 
     case 'web_fetch': return String(args.url ?? '');
     case 'skill': return `${args.name}${args.args ? ` ${args.args}` : ''}`;
     case 'todo_write': return `${Array.isArray(args.todos) ? args.todos.length : 0} items`;
+    case 'task_output': case 'task_kill': return String(args.task_id ?? '');
     default: return JSON.stringify(args).slice(0, 100);
   }
 }

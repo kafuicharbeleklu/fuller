@@ -69,6 +69,7 @@ Un fichier = une commande `/nom` (les sous-dossiers donnent `/dossier:nom`). Fro
 | `/init`, `/memory` | Générer / lister les fichiers mémoire |
 | `/skills [reload]` | Commandes personnalisées et skills découverts |
 | `/hooks` | Hooks configurés |
+| `/tasks [kill <id>]` | Tâches en arrière-plan |
 | Ctrl+T | Afficher / masquer la liste de tâches (`todo_write`) |
 | `/rewind`, `/checkpoints` | Restaurer des fichiers |
 | `/sessions`, `/export [fichier]` | Sessions et export Markdown |
@@ -128,6 +129,8 @@ Un fichier = une commande `/nom` (les sous-dossiers donnent `/dossier:nom`). Fro
 ```
 
   Événements : `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Notification`, `Stop`, `PreCompact`, `SessionEnd`. Le script reçoit un JSON sur l'entrée standard (`session_id`, `cwd`, `hook_event_name`, `tool_name`, `tool_input`, `tool_response`, `prompt`…). Code de sortie 2 = blocage, la sortie d'erreur devient la raison (refus de l'outil, prompt bloqué, retour au modèle après un outil, ou reprise d'un tour après `Stop`). Sortie JSON possible : `decision`, `reason`, `hookSpecificOutput.permissionDecision` (`allow` évite la demande de permission), `updatedInput`, `additionalContext`. `/hooks` liste la configuration.
+- Tâches en arrière-plan : `execute_bash(run_in_background=true)` lance un serveur ou un long build sans bloquer le tour ; sortie dans `~/.fuller/tasks/<session>/<id>.log`, lecture par `task_output(task_id, wait_seconds)`, arrêt par `task_kill`, notification au modèle et dans le transcript à la fin, compteur dans le pied de page, `/tasks` pour lister ou arrêter (`/tasks kill bg1`). Les commandes au premier plan affichent leurs dernières lignes de sortie en direct.
+- Recherche : `search_files` utilise `ripgrep` s'il est installé (`rg` dans le PATH ou `FULLER_RG=/chemin/rg`), sinon une implémentation JavaScript ; options `regex`, `ignore_case`, `glob`, `path`, `output_mode` (`content` | `files_with_matches` | `count`), `context_lines`, `head_limit`.
 - Liste de tâches : le modèle tient sa liste avec l'outil `todo_write` ; elle s'affiche au-dessus de la saisie tant qu'il reste des éléments (Ctrl+T pour la masquer) et dans le transcript à chaque mise à jour ; elle est restaurée avec la session.
 - Sessions : `~/.fuller/projects/<chemin-encodé>/<id>.json` · checkpoints : `~/.fuller/checkpoints/` · historique : `~/.fuller/history.jsonl`.
 - Redimensionnement : Fuller recalcule le nombre de lignes physiques à effacer après un changement de largeur (les terminaux modernes re-replient le texte). Sur un terminal qui ne re-replie pas (xterm classique), lancez avec `FULLER_NO_REFLOW=1`.

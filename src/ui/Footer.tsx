@@ -15,9 +15,10 @@ interface Props {
   /** Output of the custom status line command, when configured. */
   statusLine?: string | null;
   statusLinePadding?: number;
+  backgroundTasks?: number;
 }
 
-export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThreshold, model, inputEmpty, bashMode, statusLine, statusLinePadding }) => {
+export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThreshold, model, inputEmpty, bashMode, statusLine, statusLinePadding, backgroundTasks = 0 }) => {
   const theme = useTheme();
   const busy = status !== 'idle';
 
@@ -46,6 +47,7 @@ export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThresh
     <Box justifyContent="space-between" paddingX={1}>
       <Box>{modeNode}</Box>
       <Box>
+        {backgroundTasks > 0 ? <Text color={theme.accent}>⏵ {backgroundTasks} background task{backgroundTasks > 1 ? 's' : ''} (/tasks) · </Text> : null}
         {showContext ? (
           <Text color={left < 20 ? theme.warning : theme.subtle}>Context left until auto-compact: {left}% · </Text>
         ) : null}

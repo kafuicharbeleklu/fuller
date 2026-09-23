@@ -355,6 +355,22 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: '/tasks',
+    description: "Tâches en arrière-plan (kill <id> pour arrêter)",
+    usage: '[kill <id>]',
+    takesArg: true,
+    run: (ctx, arg) => {
+      const [action, id] = arg.split(/\s+/);
+      if (action === 'kill' && id) {
+        const t = ctx.agent.killBackgroundTask(id);
+        ctx.addSystem(t ? `Task ${t.id}: ${t.status}` : `Unknown task "${id}".`);
+        return;
+      }
+      const lines = ctx.agent.describeBackgroundTasks();
+      ctx.addSystem(lines.length ? `**Background tasks**\n${lines.map((l) => `- ${l}`).join('\n')}\n\nLogs in ~/.fuller/tasks/<session>/ · \`/tasks kill <id>\` to stop one.` : 'No background task. The model starts one with execute_bash(run_in_background=true).');
+    },
+  },
+  {
     name: '/hooks',
     description: 'Lister les hooks configurés (settings.json)',
     run: (ctx) => {

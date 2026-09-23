@@ -62,6 +62,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [showTodos, setShowTodos] = useState(true);
   const [sessionId, setSessionId] = useState('');
+  const [backgroundRunning, setBackgroundRunning] = useState(0);
   const [gitInfo, setGitInfo] = useState<GitInfo | undefined>();
   const [inputState, setInputState] = useState({ empty: true, bashMode: false });
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
@@ -105,6 +106,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       onModeChange: setMode,
       onNotify: bell,
       onTodosChange: (t) => { setTodos(t); if (t.some((x) => x.status !== 'completed')) setShowTodos(true); },
+      onBackgroundChange: (running) => setBackgroundRunning(running),
     };
     const agent = restored ? AgentLoop.fromSession(restored, config, callbacks) : new AgentLoop(config, callbacks);
     agentRef.current = agent;
@@ -390,6 +392,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             bashMode={inputState.bashMode}
             statusLine={statusLine}
             statusLinePadding={config.settings.statusLine?.padding}
+            backgroundTasks={backgroundRunning}
           />
         </Box>
       </Box>

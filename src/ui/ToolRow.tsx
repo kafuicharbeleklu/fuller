@@ -78,7 +78,10 @@ export const ToolRow: React.FC<ToolRowProps> = ({ toolCall, verbose, frame, elap
     if (status === 'pending') return null;
     if (status === 'confirming') return lines([<Text key="w" color={theme.permission}>Waiting for permission…</Text>]);
     if (status === 'running') {
-      return lines([<Text key="r" color={theme.subtle}>Running…{elapsedMs && elapsedMs > 2000 ? ` ${Math.round(elapsedMs / 1000)}s` : ''}</Text>]);
+      const tail = (toolCall.result ?? '').replace(/\s+$/, '').split('\n').filter(Boolean).slice(-4);
+      const nodes: React.ReactNode[] = tail.map((l, i) => <Text key={i} color={theme.subtle} wrap="truncate-end">{l}</Text>);
+      nodes.push(<Text key="r" color={theme.subtle}>Running…{elapsedMs && elapsedMs > 2000 ? ` ${Math.round(elapsedMs / 1000)}s` : ''}</Text>);
+      return lines(nodes);
     }
     if (status === 'rejected') return lines([<Text key="x" color={theme.warning}>{toolCall.error || 'Rejected by user'}</Text>]);
     if (status === 'failed') return textLines(toolCall.error || 'Error', verbose ? VERBOSE_LINES : COLLAPSED_LINES, theme.error);

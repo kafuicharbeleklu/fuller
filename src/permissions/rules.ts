@@ -20,6 +20,8 @@ export const TOOL_DISPLAY: Record<string, string> = {
   web_fetch: 'WebFetch',
   skill: 'Skill',
   todo_write: 'TodoWrite',
+  task_output: 'TaskOutput',
+  task_kill: 'TaskKill',
 };
 
 export function parseRule(raw: string): PermissionRule | null {
@@ -115,7 +117,7 @@ export function baseRisk(name: string, args: Record<string, any>, cwd: string): 
       const c = classifyCommand(String(args.command ?? ''), cwd);
       return { risk: c.risk, reason: c.reason };
     }
-    case 'read_file': case 'list_directory': case 'search_files': case 'glob': case 'skill': case 'todo_write':
+    case 'read_file': case 'list_directory': case 'search_files': case 'glob': case 'skill': case 'todo_write': case 'task_output': case 'task_kill':
       return { risk: 'read', reason: '' };
     case 'write_file': case 'edit_file':
       return { risk: 'edit', reason: '' };
