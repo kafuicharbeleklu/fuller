@@ -13,7 +13,8 @@ import { knownContextWindow } from '../agent/models.js';
 import { SessionPicker } from './SessionPicker.js';
 import { InputBox } from './InputBox.js';
 import { Footer } from './Footer.js';
-import { COMMANDS, runCommand, type CommandContext } from './commands.js';
+import { COMMANDS, runCommand, type CommandContext, type SlashCommand } from './commands.js';
+import type { SkillDefinition } from '../skills/loader.js';
 import { AgentLoop, type AgentCallbacks } from '../agent/loop.js';
 import { messagesToTranscript } from '../agent/transcript.js';
 import { getGitInfo, type GitInfo } from '../utils/git.js';
@@ -56,6 +57,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const [rewindOpen, setRewindOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [model, setModel] = useState(config.model);
+  const [skills, setSkills] = useState<SkillDefinition[]>([]);
   const [gitInfo, setGitInfo] = useState<GitInfo | undefined>();
   const [inputState, setInputState] = useState({ empty: true, bashMode: false });
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
@@ -101,6 +103,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
     };
     const agent = restored ? AgentLoop.fromSession(restored, config, callbacks) : new AgentLoop(config, callbacks);
     agentRef.current = agent;
+    setSkills(agent.getSkills());
     const ctxWindow = knownContextWindow(config.model);
     if (ctxWindow) agent.setContextWindow(ctxWindow);
     setItems([{ key: 'banner', kind: 'banner' }, ...(restored ? messagesToTranscript(restored.messages) : [])]);
@@ -258,8 +261,21 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       addDir: (dir) => { config.additionalDirectories.push(dir); },
       openModelPicker: () => setModelPickerOpen(true),
       setContextWindow: (tokens) => agent.setContextWindow(tokens),
+      skills,
+      reloadSkills: () => { const next = agent.reloadSkills(); setSkills(next); return next; },
     };
-  }, [config, gitInfo, theme, verbose, usage, addSystem, applyMode, cycleMode, clearScreen, redraw, handleExit, transcriptMarkdown]);
+  }, [config, gitInfo, theme, verbose, usage, addSystem, applyMode, cycleMode, clearScreen, redraw, handleExit, transcriptMarkdown, skills]);
+
+  const menuCommands = useMemo<SlashCommand[]>(() => [
+    ...COMMANDS,
+    ...skills.filter((sk) => sk.userInvocable).map<SlashCommand>((sk) => ({
+      name: `/${sk.name}`,
+      description: `${sk.description || sk.kind} (${sk.scope})`,
+      usage: sk.argumentHint,
+      takesArg: !!sk.argumentHint,
+      run: () => {},
+    })),
+  ], [skills]);
 
   const onSubmit = useCallback((text: string) => {
     appendPromptHistory(config.workspaceDir, text);
@@ -368,7 +384,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             queue={queue}
             history={history}
             cwd={config.workspaceDir}
-            commands={COMMANDS}
+            commands={menuCommands}
             showHelp={showHelp}
             onSubmit={onSubmit}
             onCommand={onCommand}

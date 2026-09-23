@@ -9,6 +9,7 @@ import { generateSessionId, saveSession, flushSessionSaves, sessionTitleFrom, ty
 import { executeBash } from '../tools/bash.js';
 import { LIMITS, truncateMiddle } from '../tools/truncate.js';
 import { uid } from './transcript.js';
+import { loadSkills, type SkillDefinition } from '../skills/loader.js';
 import type {
   ChatMessage,
   ToolCallState,
@@ -22,6 +23,19 @@ import type {
   Notice,
   MessageKind,
 } from './types.js';
+
+export interface TurnOptions {
+  prompt?: string;
+  allow?: string[];
+}
+
+function safeLoadSkills(cwd: string): SkillDefinition[] {
+  try {
+    return loadSkills(cwd);
+  } catch {
+    return [];
+  }
+}
 
 export interface AgentCallbacks {
   onStatusChange: (status: AgentStatus) => void;
@@ -65,6 +79,8 @@ export class AgentLoop {
   private pendingContext: string[] = [];
   private rejectConfirmation: (() => void) | null = null;
   private gitBranch?: string;
+  private skills: SkillDefinition[] = [];
+  private turnAllow: string[] = [];
   public usage: UsageInfo;
 
   constructor(config: AppConfig, callbacks: AgentCallbacks, restored?: SessionData) {
@@ -82,8 +98,23 @@ export class AgentLoop {
       apiCalls: 0,
       turns: 0,
     };
+    this.skills = safeLoadSkills(config.workspaceDir);
     this.session = new GeminiAgentSession(config, restored?.history);
+    this.session.setSkills(this.skills);
+    this.session.refresh();
     this.checkpointManager = new CheckpointManager(config.workspaceDir);
+  }
+
+  public getSkills(): SkillDefinition[] {
+    return this.skills;
+  }
+
+  /** Re-discover custom commands and skills (system prompt updated, history kept). */
+  public reloadSkills(): SkillDefinition[] {
+    this.skills = safeLoadSkills(this.config.workspaceDir);
+    this.session.setSkills(this.skills);
+    this.session.refresh();
+    return this.skills;
   }
 
   public static fromSession(data: SessionData, config: AppConfig, callbacks: AgentCallbacks): AgentLoop {
@@ -215,13 +246,18 @@ export class AgentLoop {
     this.rejectConfirmation?.();
   }
 
-  public async handleUserInput(input: string, kind: MessageKind = 'normal'): Promise<void> {
+  /**
+   * Send a prompt. `options.prompt` is the text really sent to the model when it
+   * differs from what is shown (expanded custom command); `options.allow` adds
+   * permission rules for this turn only.
+   */
+  public async handleUserInput(input: string, kind: MessageKind = 'normal', options: TurnOptions = {}): Promise<void> {
     if (this.processing) {
       this.queue.push(input);
       this.callbacks.onQueueChange([...this.queue]);
       return;
     }
-    await this.runTurn(input, kind);
+    await this.runTurn(input, kind, options);
   }
 
   private processQueue() {
@@ -241,17 +277,18 @@ export class AgentLoop {
   }
 
   // ---------------------------------------------------------------- main turn
-  private async runTurn(input: string, kind: MessageKind = 'normal'): Promise<void> {
+  private async runTurn(input: string, kind: MessageKind = 'normal', options: TurnOptions = {}): Promise<void> {
     this.processing = true;
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
     const started = Date.now();
+    this.turnAllow = options.allow ?? [];
 
     const userMsg: ChatMessage = { id: uid(), role: 'user', content: input, kind, timestamp: started };
     this.messages.push(userMsg);
     this.callbacks.onCommit({ key: userMsg.id, kind: 'user', message: userMsg });
 
-    let enriched = resolveMentions(input, this.config.workspaceDir, this.config.additionalDirectories);
+    let enriched = resolveMentions(options.prompt ?? input, this.config.workspaceDir, this.config.additionalDirectories);
     if (this.pendingContext.length > 0) {
       enriched = `${this.pendingContext.join('\n\n')}\n\n${enriched}`;
       this.pendingContext = [];
@@ -371,6 +408,7 @@ export class AgentLoop {
       this.rejectConfirmation = null;
       this.processing = false;
       this.abortController = null;
+      this.turnAllow = [];
       this.callbacks.onStatusChange('idle');
       this.scheduleSave();
     }
@@ -385,7 +423,10 @@ export class AgentLoop {
     update: (patch: Partial<ToolCallState>) => void
   ): Promise<string> {
     const { name, args } = state;
-    const evaluation = evaluatePermission(name, args, this.config.workspaceDir, this.config.permissionMode, this.config.settings);
+    const settings = this.turnAllow.length
+      ? { ...this.config.settings, permissions: { ...this.config.settings.permissions, allow: [...(this.config.settings.permissions?.allow ?? []), ...this.turnAllow] } }
+      : this.config.settings;
+    const evaluation = evaluatePermission(name, args, this.config.workspaceDir, this.config.permissionMode, settings);
     const ctx = {
       cwd: this.config.workspaceDir,
       extraDirs: this.config.additionalDirectories,
@@ -393,6 +434,7 @@ export class AgentLoop {
       signal,
       bashTimeoutMs: this.config.bashTimeoutMs,
       messageId,
+      skills: this.skills,
     };
 
     if (name === 'edit_file' || name === 'write_file') {

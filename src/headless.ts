@@ -2,6 +2,7 @@ import { AgentLoop, type AgentCallbacks } from './agent/loop.js';
 import type { AppConfig } from './config.js';
 import type { TranscriptItem } from './agent/types.js';
 import { toolLabel, toolArgSummary } from './tools/registry.js';
+import { expandSkill, commandPrompt } from './skills/loader.js';
 
 export type OutputFormat = 'text' | 'json' | 'stream-json';
 
@@ -47,7 +48,13 @@ export async function runHeadless(config: AppConfig, prompt: string, format: Out
 
   const agent = new AgentLoop(config, callbacks);
   if (format === 'stream-json') emit({ type: 'session', session_id: agent.sessionId, model: config.model });
-  await agent.handleUserInput(prompt);
+  let turnOptions = {};
+  const m = prompt.match(/^\/([\w:-]+)\s*([\s\S]*)$/);
+  if (m) {
+    const skill = agent.getSkills().find((sk) => sk.userInvocable && sk.name === m[1]);
+    if (skill) turnOptions = { prompt: commandPrompt(skill, await expandSkill(skill, m[2], config.workspaceDir)), allow: skill.allowedTools };
+  }
+  await agent.handleUserInput(prompt, m ? 'command' : 'normal', turnOptions);
   await agent.flush();
   const result = texts.join('\n\n');
   const payload = {

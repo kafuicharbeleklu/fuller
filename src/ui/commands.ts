@@ -14,6 +14,7 @@ import { formatTokens } from '../tools/truncate.js';
 import { listChatModels, formatModelTable, freeTierStatus } from '../agent/models.js';
 import { PERMISSION_MODES, type MessageKind, type PermissionMode, type UsageInfo } from '../agent/types.js';
 import type { GitInfo } from '../utils/git.js';
+import { expandSkill, commandPrompt, type SkillDefinition } from '../skills/loader.js';
 
 export interface CommandContext {
   agent: AgentLoop;
@@ -35,6 +36,8 @@ export interface CommandContext {
   addDir: (dir: string) => void;
   openModelPicker: () => void;
   setContextWindow: (tokens: number) => void;
+  skills: SkillDefinition[];
+  reloadSkills: () => SkillDefinition[];
 }
 
 export interface SlashCommand {
@@ -336,6 +339,21 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: '/skills',
+    description: 'Lister les commandes personnalisées et skills (reload pour rafraîchir)',
+    usage: '[reload]',
+    takesArg: true,
+    run: (ctx, arg) => {
+      const skills = arg.trim() === 'reload' ? ctx.reloadSkills() : ctx.skills;
+      if (skills.length === 0) {
+        ctx.addSystem(`No custom command or skill found.\nCreate \`.fuller/commands/<name>.md\` (or \`.fuller/skills/<name>/SKILL.md\`) in the project, or in \`~/.fuller/\`. Claude Code's \`.claude/commands\` and \`.claude/skills\` are read too.\nFrontmatter: \`description\`, \`argument-hint\`, \`allowed-tools\`, \`disable-model-invocation\`, \`user-invocable\`. Body: Markdown with \`$ARGUMENTS\`, \`$1\`…, \`!\\\`cmd\\\`\` and \`@file\`.`);
+        return;
+      }
+      const lines = skills.map((sk) => `- \`/${sk.name}${sk.argumentHint ? ' ' + sk.argumentHint : ''}\` — ${sk.description || '(no description)'} · ${sk.kind}, ${sk.scope}${sk.userInvocable ? '' : ', model only'}${sk.modelInvocable ? '' : ', user only'}${sk.allowedTools.length ? `, allows ${sk.allowedTools.join(' ')}` : ''}`);
+      ctx.addSystem(`**Custom commands & skills** (${skills.length})${arg.trim() === 'reload' ? ' — reloaded' : ''}\n${lines.join('\n')}\n\nFiles: ${[...new Set(skills.map((sk) => path.dirname(sk.file)))].join(', ')}`);
+    },
+  },
+  {
     name: '/verbose',
     description: 'Basculer le transcript détaillé (ctrl+o)',
     run: (ctx) => ctx.toggleVerbose(),
@@ -368,6 +386,16 @@ export async function runCommand(input: string, ctx: CommandContext): Promise<bo
   const arg = rest.join(' ');
   const cmd = findCommand(name);
   if (!cmd) {
+    const skill = ctx.skills.find((sk) => sk.userInvocable && `/${sk.name}` === name);
+    if (skill) {
+      try {
+        const prompt = commandPrompt(skill, await expandSkill(skill, arg, ctx.config.workspaceDir));
+        void ctx.agent.handleUserInput(input.trim(), 'command', { prompt, allow: skill.allowedTools });
+      } catch (err: any) {
+        ctx.addSystem(`✗ ${name}: ${err.message || String(err)}`, 'notice');
+      }
+      return true;
+    }
     ctx.addSystem(`Unknown command: \`${name}\`. Type \`/help\` for the list.`, 'notice');
     return true;
   }

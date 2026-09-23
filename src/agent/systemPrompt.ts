@@ -3,6 +3,7 @@ import path from 'node:path';
 import { APP_NAME, MEMORY_FILE } from '../branding.js';
 import { loadProjectContext } from './contextLoader.js';
 import type { PermissionMode } from './types.js';
+import { skillsForPrompt, type SkillDefinition } from '../skills/loader.js';
 
 export interface PromptEnv {
   workspaceDir: string;
@@ -10,6 +11,7 @@ export interface PromptEnv {
   permissionMode: PermissionMode;
   gitBranch?: string;
   additionalDirectories?: string[];
+  skills?: SkillDefinition[];
 }
 
 export function getSystemPrompt(env: PromptEnv): string {
@@ -45,6 +47,11 @@ export function getSystemPrompt(env: PromptEnv): string {
 - list_directory(dir_path?, recursive?), search_files(query, regex?, ignore_case?, glob?, path?), glob(pattern, path?): explore the project.
 - web_fetch(url): read documentation from the web.
 You may request several independent tool calls in one turn; they are executed in order.`;
+
+  const skillList = skillsForPrompt(env.skills ?? []);
+  if (skillList) {
+    prompt += `\n\n# Skills\nThe user has defined skills (reusable instructions). When one matches the task, call the skill tool with its name to load its instructions, then follow them.\n${skillList}`;
+  }
 
   if (memory.length > 0) {
     prompt += `\n\n# Project memory\nThe following instructions come from the user's memory files (${MEMORY_FILE} and equivalents). Follow them.`;

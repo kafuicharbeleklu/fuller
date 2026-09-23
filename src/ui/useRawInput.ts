@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react';
+import fs from 'node:fs';
 import { useStdin } from 'ink';
+
+const DEBUG_KEYS = process.env.FULLER_DEBUG_KEYS;
 
 export type KeyName =
   | 'char' | 'return' | 'tab' | 'escape' | 'backspace' | 'delete'
@@ -132,7 +135,11 @@ export function useRawInput(handler: (event: KeyEvent) => void, options: { isAct
   useEffect(() => {
     if (!isActive || !isRawModeSupported) return;
     setRawMode(true);
-    return () => setRawMode(false);
+    if (DEBUG_KEYS) { try { fs.appendFileSync(DEBUG_KEYS, `${Date.now()} rawMode on → isRaw=${(process.stdin as any).isRaw}\n`); } catch {} }
+    return () => {
+      if (DEBUG_KEYS) { try { fs.appendFileSync(DEBUG_KEYS, `${Date.now()} rawMode off\n`); } catch {} }
+      setRawMode(false);
+    };
   }, [isActive, isRawModeSupported, setRawMode]);
 
   useEffect(() => {
@@ -158,7 +165,10 @@ export function useRawInput(handler: (event: KeyEvent) => void, options: { isAct
         data = before;
         if (!data) return;
       }
-      for (const ev of parseKeys(data)) handlerRef.current(ev);
+      for (const ev of parseKeys(data)) {
+        if (DEBUG_KEYS) { try { fs.appendFileSync(DEBUG_KEYS, `${Date.now()} isRaw=${(process.stdin as any).isRaw} ${JSON.stringify({ ...ev, raw: JSON.stringify(ev.raw) })}\n`); } catch {} }
+        handlerRef.current(ev);
+      }
     };
     internal_eventEmitter.on('input', onData);
     return () => {

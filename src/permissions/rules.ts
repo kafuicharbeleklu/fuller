@@ -18,6 +18,7 @@ export const TOOL_DISPLAY: Record<string, string> = {
   search_files: 'Grep',
   glob: 'Glob',
   web_fetch: 'WebFetch',
+  skill: 'Skill',
 };
 
 export function parseRule(raw: string): PermissionRule | null {
@@ -101,6 +102,7 @@ export function toolTarget(name: string, args: Record<string, any>): string {
     case 'search_files': return String(args.path ?? '.');
     case 'glob': return String(args.pattern ?? '');
     case 'web_fetch': return String(args.url ?? '');
+    case 'skill': return String(args.name ?? '');
     default: return JSON.stringify(args);
   }
 }
@@ -111,7 +113,7 @@ export function baseRisk(name: string, args: Record<string, any>, cwd: string): 
       const c = classifyCommand(String(args.command ?? ''), cwd);
       return { risk: c.risk, reason: c.reason };
     }
-    case 'read_file': case 'list_directory': case 'search_files': case 'glob':
+    case 'read_file': case 'list_directory': case 'search_files': case 'glob': case 'skill':
       return { risk: 'read', reason: '' };
     case 'write_file': case 'edit_file':
       return { risk: 'edit', reason: '' };

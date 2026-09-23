@@ -3,6 +3,7 @@ import { getSystemPrompt } from './systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
 import { withRetry, type RetryInfo } from './retry.js';
 import type { AppConfig } from '../config.js';
+import type { SkillDefinition } from '../skills/loader.js';
 
 export interface FunctionCallInfo {
   id?: string;
@@ -42,6 +43,7 @@ export class GeminiAgentSession {
   private chatConfig: GenerateContentConfig = {};
   private config: AppConfig;
   private gitBranch?: string;
+  private skills: SkillDefinition[] = [];
 
   constructor(config: AppConfig, history?: Content[]) {
     this.config = config;
@@ -57,6 +59,10 @@ export class GeminiAgentSession {
     this.gitBranch = branch;
   }
 
+  public setSkills(skills: SkillDefinition[]) {
+    this.skills = skills;
+  }
+
   public initChat(history?: Content[]) {
     this.chatConfig = {
       systemInstruction: getSystemPrompt({
@@ -65,6 +71,7 @@ export class GeminiAgentSession {
         permissionMode: this.config.permissionMode,
         gitBranch: this.gitBranch,
         additionalDirectories: this.config.additionalDirectories,
+        skills: this.skills,
       }),
       tools: [{ functionDeclarations: geminiToolDeclarations }],
       temperature: 0.2,

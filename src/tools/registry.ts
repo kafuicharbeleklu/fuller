@@ -5,6 +5,7 @@ import { listDirectory, searchFiles, globFiles, formatSearchOutput } from './sea
 import { webFetch } from './web.js';
 import { LIMITS, truncateMiddle, truncateHead, formatBytes } from './truncate.js';
 import type { CheckpointManager } from '../checkpoint/manager.js';
+import { expandSkill, type SkillDefinition } from '../skills/loader.js';
 
 export const geminiToolDeclarations: FunctionDeclaration[] = [
   {
@@ -100,6 +101,18 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'skill',
+    description: 'Load the instructions of a skill listed in the system prompt (project or user skill). Returns the full instructions to follow for the current task.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Skill name exactly as listed.' },
+        args: { type: Type.STRING, description: 'Optional arguments for the skill.' },
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'web_fetch',
     description: 'Fetch a web page (http/https) and return its text content (max 20000 characters).',
     parameters: {
@@ -112,7 +125,7 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
   },
 ];
 
-export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob']);
+export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'skill']);
 
 export interface ToolContext {
   cwd: string;
@@ -121,6 +134,7 @@ export interface ToolContext {
   signal?: AbortSignal;
   bashTimeoutMs: number;
   messageId?: string;
+  skills?: SkillDefinition[];
 }
 
 export interface ToolOutput {
@@ -215,6 +229,14 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       };
     }
 
+    case 'skill': {
+      const name = String(args.name ?? '').replace(/^\//, '');
+      const skill = (ctx.skills ?? []).find((sk) => sk.name === name && sk.modelInvocable);
+      if (!skill) throw new Error(`Unknown skill "${name}". Available: ${(ctx.skills ?? []).filter((sk) => sk.modelInvocable).map((sk) => sk.name).join(', ') || 'none'}.`);
+      const body = await expandSkill(skill, String(args.args ?? ''), ctx.cwd, { signal: ctx.signal });
+      return { output: `# Skill: ${skill.name}\n${skill.description ? `${skill.description}\n` : ''}\n${body}`, summary: `Loaded ${skill.name}` };
+    }
+
     case 'web_fetch': {
       const res = await webFetch(String(args.url ?? ''), { signal: ctx.signal });
       return { output: `HTTP ${res.statusCode} (${res.contentType || 'unknown'})\n\n${res.content}`, summary: `HTTP ${res.statusCode} · ${res.content.length} chars` };
@@ -235,6 +257,7 @@ export function toolLabel(name: string): string {
     case 'search_files': return 'Grep';
     case 'glob': return 'Glob';
     case 'web_fetch': return 'WebFetch';
+    case 'skill': return 'Skill';
     default: return name;
   }
 }
@@ -249,6 +272,7 @@ export function toolArgSummary(name: string, args: Record<string, any>): string 
     case 'search_files': return `pattern: "${args.query}"${args.glob ? `, glob: "${args.glob}"` : ''}${args.path ? `, path: "${args.path}"` : ''}`;
     case 'glob': return `pattern: "${args.pattern}"${args.path ? `, path: "${args.path}"` : ''}`;
     case 'web_fetch': return String(args.url ?? '');
+    case 'skill': return `${args.name}${args.args ? ` ${args.args}` : ''}`;
     default: return JSON.stringify(args).slice(0, 100);
   }
 }

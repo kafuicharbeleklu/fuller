@@ -10,6 +10,7 @@ vi.mock('../src/agent/gemini.js', () => {
   class GeminiAgentSession {
     constructor(public config: any) {}
     setGitBranch() {}
+    setSkills() {}
     initChat() {}
     refresh() {}
     getHistory() { return []; }

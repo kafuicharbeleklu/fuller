@@ -45,6 +45,16 @@ Le modèle par défaut vient de `-m`, puis de `GEMINI_MODEL`, puis de `"model"` 
 - **Checkpoints** : snapshot des fichiers avant chaque écriture, `Esc Esc` / `/rewind` pour restaurer.
 - **Thèmes** : `dark`, `light`, variantes `-daltonized` et `-ansi`, `monokai`, `ocean`, `forest` (`/theme`).
 
+## Commandes personnalisées et skills
+
+Fuller découvre au démarrage (et avec `/skills reload`) :
+
+- `.fuller/commands/*.md` et `.fuller/skills/<nom>/SKILL.md` dans le projet ;
+- `~/.fuller/commands/*.md` et `~/.fuller/skills/<nom>/SKILL.md` pour l'utilisateur ;
+- en repli, `.claude/commands`, `.claude/skills`, `~/.claude/commands`, `~/.claude/skills` (compatibilité Claude Code).
+
+Un fichier = une commande `/nom` (les sous-dossiers donnent `/dossier:nom`). Frontmatter optionnel : `description`, `argument-hint`, `allowed-tools` (règles `Tool(spec)` autorisées pour ce tour), `disable-model-invocation` (ne pas exposer au modèle), `user-invocable: false` (réservé au modèle). Le corps est envoyé comme prompt après substitution de `$ARGUMENTS`, `$1`…`$9`, exécution des blocs ``!`commande` `` et inclusion des `@fichiers`. Les skills sont listés dans le prompt système et le modèle peut les charger lui-même avec l'outil `skill`. Exemple fourni : `.fuller/commands/revue-diff.md`. En mode headless : `fuller -p "/revue-diff sécurité"`.
+
 ## Commandes slash
 
 | Commande | Rôle |
@@ -57,6 +67,7 @@ Le modèle par défaut vient de `-m`, puis de `GEMINI_MODEL`, puis de `"model"` 
 | `/permissions [add\|deny\|remove <règle>]` | Gérer les règles |
 | `/plan`, `/accept-edits`, `/mode <mode>` | Modes de permission |
 | `/init`, `/memory` | Générer / lister les fichiers mémoire |
+| `/skills [reload]` | Commandes personnalisées et skills découverts |
 | `/rewind`, `/checkpoints` | Restaurer des fichiers |
 | `/sessions`, `/export [fichier]` | Sessions et export Markdown |
 | `/diff`, `/doctor`, `/theme`, `/add-dir`, `/btw`, `/about`, `/exit` | Divers |
