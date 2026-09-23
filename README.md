@@ -68,6 +68,7 @@ Un fichier = une commande `/nom` (les sous-dossiers donnent `/dossier:nom`). Fro
 | `/plan`, `/accept-edits`, `/mode <mode>` | Modes de permission |
 | `/init`, `/memory` | Générer / lister les fichiers mémoire |
 | `/skills [reload]` | Commandes personnalisées et skills découverts |
+| `/hooks` | Hooks configurés |
 | Ctrl+T | Afficher / masquer la liste de tâches (`todo_write`) |
 | `/rewind`, `/checkpoints` | Restaurer des fichiers |
 | `/sessions`, `/export [fichier]` | Sessions et export Markdown |
@@ -115,6 +116,18 @@ Un fichier = une commande `/nom` (les sous-dossiers donnent `/dossier:nom`). Fro
 ```
 
   Exemple de script : `jq -r '"\(.model.id) · \(.workspace.project_name) · ctx \(.context_window.used_percentage)%"'`. Les scripts écrits pour Claude Code fonctionnent tels quels.
+- Hooks (contrat identique à Claude Code, scripts réutilisables) :
+
+```json
+{ "hooks": {
+    "PreToolUse":  [{ "matcher": "Bash|Edit", "hooks": [{ "type": "command", "command": "~/.fuller/hooks/guard.sh", "timeout": 30 }] }],
+    "PostToolUse": [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "npx prettier --check $(jq -r .tool_input.file_path)" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "cat ~/.fuller/context.txt" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "~/.fuller/hooks/ensure-tests.sh" }] }]
+} }
+```
+
+  Événements : `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Notification`, `Stop`, `PreCompact`, `SessionEnd`. Le script reçoit un JSON sur l'entrée standard (`session_id`, `cwd`, `hook_event_name`, `tool_name`, `tool_input`, `tool_response`, `prompt`…). Code de sortie 2 = blocage, la sortie d'erreur devient la raison (refus de l'outil, prompt bloqué, retour au modèle après un outil, ou reprise d'un tour après `Stop`). Sortie JSON possible : `decision`, `reason`, `hookSpecificOutput.permissionDecision` (`allow` évite la demande de permission), `updatedInput`, `additionalContext`. `/hooks` liste la configuration.
 - Liste de tâches : le modèle tient sa liste avec l'outil `todo_write` ; elle s'affiche au-dessus de la saisie tant qu'il reste des éléments (Ctrl+T pour la masquer) et dans le transcript à chaque mise à jour ; elle est restaurée avec la session.
 - Sessions : `~/.fuller/projects/<chemin-encodé>/<id>.json` · checkpoints : `~/.fuller/checkpoints/` · historique : `~/.fuller/history.jsonl`.
 - Redimensionnement : Fuller recalcule le nombre de lignes physiques à effacer après un changement de largeur (les terminaux modernes re-replient le texte). Sur un terminal qui ne re-replie pas (xterm classique), lancez avec `FULLER_NO_REFLOW=1`.

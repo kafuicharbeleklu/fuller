@@ -4,6 +4,7 @@ import os from 'node:os';
 import dotenv from 'dotenv';
 import { CONFIG_DIR_NAME } from './branding.js';
 import type { PermissionMode } from './agent/types.js';
+import type { HooksConfig } from './hooks/runner.js';
 
 dotenv.config();
 
@@ -31,6 +32,8 @@ export interface Settings {
   env?: Record<string, string>;
   /** Custom status line: a shell command fed a JSON status on stdin (Claude Code compatible). */
   statusLine?: { type?: 'command'; command: string; padding?: number; refreshInterval?: number };
+  /** Lifecycle hooks (Claude Code compatible contract), merged per event across settings files. */
+  hooks?: HooksConfig;
 }
 
 export interface AppConfig {
@@ -90,8 +93,17 @@ export function loadSettingsSources(workspaceDir: string): SettingsSource[] {
 export function mergeSettings(sources: Settings[]): Settings {
   const merged: Settings = {};
   for (const s of sources) {
-    const { permissions, env, ...rest } = s;
+    const { permissions, env, hooks, ...rest } = s;
     Object.assign(merged, rest);
+    if (hooks && typeof hooks === 'object') {
+      const target: HooksConfig = { ...(merged.hooks ?? {}) };
+      for (const [event, groups] of Object.entries(hooks)) {
+        if (!Array.isArray(groups)) continue;
+        const key = event as keyof HooksConfig;
+        target[key] = [...(target[key] ?? []), ...groups];
+      }
+      merged.hooks = target;
+    }
     if (permissions) {
       merged.permissions = {
         ...merged.permissions,

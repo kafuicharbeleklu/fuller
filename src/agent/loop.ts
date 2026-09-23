@@ -10,6 +10,8 @@ import { executeBash } from '../tools/bash.js';
 import { LIMITS, truncateMiddle } from '../tools/truncate.js';
 import { uid } from './transcript.js';
 import { loadSkills, type SkillDefinition } from '../skills/loader.js';
+import { runHooks, type HookEvent, type HookOutcome, type HookPayload } from '../hooks/runner.js';
+import { sessionFile } from '../session/store.js';
 import type {
   ChatMessage,
   ToolCallState,
@@ -28,6 +30,8 @@ import type {
 export interface TurnOptions {
   prompt?: string;
   allow?: string[];
+  /** Set when a Stop hook asked to continue: prevents an infinite loop. */
+  stopHookActive?: boolean;
 }
 
 function safeLoadSkills(cwd: string): SkillDefinition[] {
@@ -107,6 +111,36 @@ export class AgentLoop {
     this.session.setSkills(this.skills);
     this.session.refresh();
     this.checkpointManager = new CheckpointManager(config.workspaceDir);
+    void this.fireHooks('SessionStart', { source: restored ? 'resume' : 'startup' }, restored ? 'resume' : 'startup').then((o) => {
+      for (const c of o.context) this.pendingContext.push(c);
+    });
+  }
+
+  // ---------------------------------------------------------------- hooks
+  private hasHooks(event: HookEvent): boolean {
+    const groups = this.config.settings.hooks?.[event];
+    return Array.isArray(groups) && groups.length > 0;
+  }
+
+  private async fireHooks(event: HookEvent, extra: Partial<HookPayload> = {}, target?: string): Promise<HookOutcome> {
+    const empty: HookOutcome = { blocked: false, reasons: [], context: [], notices: [], ran: 0 };
+    if (!this.hasHooks(event)) return empty;
+    const payload: HookPayload = {
+      session_id: this.sessionId,
+      transcript_path: sessionFile(this.config.workspaceDir, this.sessionId),
+      cwd: this.config.workspaceDir,
+      hook_event_name: event,
+      permission_mode: this.config.permissionMode,
+      ...extra,
+    };
+    try {
+      const outcome = await runHooks(this.config.settings.hooks, event, payload, { cwd: this.config.workspaceDir }, target);
+      for (const n of outcome.notices) this.addSystemMessage(`⚠ ${n}`, 'notice');
+      return outcome;
+    } catch (err: any) {
+      this.addSystemMessage(`⚠ ${event} hook failed: ${err?.message ?? err}`, 'notice');
+      return empty;
+    }
   }
 
   public getSkills(): SkillDefinition[] {
@@ -211,6 +245,9 @@ export class AgentLoop {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
     if (this.messages.length > 0) await saveSession(this.getSessionData());
     await flushSessionSaves();
+    if (this.hasHooks('SessionEnd')) {
+      await Promise.race([this.fireHooks('SessionEnd', { reason: 'exit' }, 'exit'), new Promise((r) => setTimeout(r, 3000))]);
+    }
   }
 
   // ---------------------------------------------------------------- settings
@@ -305,6 +342,20 @@ export class AgentLoop {
     this.callbacks.onCommit({ key: userMsg.id, kind: 'user', message: userMsg });
 
     let enriched = resolveMentions(options.prompt ?? input, this.config.workspaceDir, this.config.additionalDirectories);
+    if (this.hasHooks('UserPromptSubmit')) {
+      const outcome = await this.fireHooks('UserPromptSubmit', { prompt: options.prompt ?? input });
+      if (outcome.blocked) {
+        this.addSystemMessage(`⛔ Prompt blocked by hook: ${outcome.reasons.join(' · ') || 'no reason given'}`, 'notice');
+        this.processing = false;
+        this.abortController = null;
+        this.turnAllow = [];
+        this.callbacks.onStatusChange('idle');
+        this.scheduleSave();
+        this.processQueue();
+        return;
+      }
+      if (outcome.context.length) enriched = `${outcome.context.join('\n\n')}\n\n${enriched}`;
+    }
     if (this.pendingContext.length > 0) {
       enriched = `${this.pendingContext.join('\n\n')}\n\n${enriched}`;
       this.pendingContext = [];
@@ -342,6 +393,7 @@ export class AgentLoop {
 
     let toolCount = 0;
     let turns = 0;
+    let stopHookContinue = false;
     try {
       this.callbacks.onStatusChange('thinking');
       let turn = await this.session.sendUserMessage(enriched, streamOptions);
@@ -403,6 +455,15 @@ export class AgentLoop {
         timestamp: Date.now(),
       });
       this.callbacks.onNotify?.('done');
+      if (this.hasHooks('Stop')) {
+        const outcome = await this.fireHooks('Stop', { stop_hook_active: !!options.stopHookActive });
+        if (outcome.blocked && !options.stopHookActive) {
+          const reason = outcome.reasons.join(' · ') || 'A Stop hook asked to continue.';
+          this.addSystemMessage(`↺ Stop hook: ${reason}`, 'notice');
+          this.queue.unshift(`[Stop hook feedback] ${reason}`);
+          stopHookContinue = true;
+        }
+      }
     } catch (err: any) {
       batcher.flush();
       commitText(liveText);
@@ -429,6 +490,12 @@ export class AgentLoop {
       this.scheduleSave();
     }
     await this.maybeAutoCompact();
+    if (stopHookContinue) {
+      const next = this.queue.shift()!;
+      this.callbacks.onQueueChange([...this.queue]);
+      await this.runTurn(next, 'notice', { stopHookActive: true });
+      return;
+    }
     this.processQueue();
   }
 
@@ -438,7 +505,21 @@ export class AgentLoop {
     signal: AbortSignal,
     update: (patch: Partial<ToolCallState>) => void
   ): Promise<string> {
-    const { name, args } = state;
+    const { name } = state;
+    const label = toolLabel(name);
+    let hookAllow = false;
+    if (this.hasHooks('PreToolUse')) {
+      const outcome = await this.fireHooks('PreToolUse', { tool_name: label, tool_input: state.args }, label);
+      if (outcome.updatedInput) update({ args: { ...state.args, ...outcome.updatedInput } });
+      if (outcome.blocked || outcome.permission === 'deny') {
+        const reason = outcome.reasons.join(' · ') || 'blocked by a PreToolUse hook';
+        update({ status: 'rejected', error: `Hook: ${reason}`, endTime: Date.now() });
+        return `Error: This tool call was blocked by a hook. ${reason}`;
+      }
+      hookAllow = outcome.permission === 'allow';
+      if (outcome.context.length) this.pendingContext.push(...outcome.context);
+    }
+    const args = state.args;
     const settings = this.turnAllow.length
       ? { ...this.config.settings, permissions: { ...this.config.settings.permissions, allow: [...(this.config.settings.permissions?.allow ?? []), ...this.turnAllow] } }
       : this.config.settings;
@@ -455,7 +536,7 @@ export class AgentLoop {
     };
 
     if (name === 'edit_file' || name === 'write_file') {
-      const preview = await previewTool(name, args, ctx);
+      const preview = await previewTool(name, state.args, ctx);
       if (preview.error) {
         update({ status: 'failed', error: preview.error, endTime: Date.now() });
         return `Error: ${preview.error}`;
@@ -471,11 +552,23 @@ export class AgentLoop {
       return `Error: ${reason}`;
     }
 
+    let decisionOverride: PermissionDecision | null = null;
+    if (evaluation.decision === 'ask' && hookAllow) decisionOverride = { kind: 'yes' };
+    if (evaluation.decision === 'ask' && !decisionOverride && this.hasHooks('PermissionRequest')) {
+      const outcome = await this.fireHooks('PermissionRequest', { tool_name: label, tool_input: args }, label);
+      if (outcome.updatedInput) update({ args: { ...state.args, ...outcome.updatedInput } });
+      if (outcome.blocked || outcome.permission === 'deny') decisionOverride = { kind: 'no', feedback: outcome.reasons.join(' · ') || 'denied by a PermissionRequest hook' };
+      else if (outcome.permission === 'allow') decisionOverride = { kind: 'yes' };
+    }
+
     if (evaluation.decision === 'ask') {
-      update({ status: 'confirming' });
-      this.callbacks.onStatusChange('awaiting_permission');
-      this.callbacks.onNotify?.('permission');
-      const decision = await this.askPermission(state, evaluation);
+      if (!decisionOverride) {
+        update({ status: 'confirming' });
+        this.callbacks.onStatusChange('awaiting_permission');
+        this.callbacks.onNotify?.('permission');
+        void this.fireHooks('Notification', { message: `Fuller needs your permission to use ${label}`, notification_type: 'permission_prompt' }, 'permission_prompt');
+      }
+      const decision = decisionOverride ?? await this.askPermission(state, evaluation);
       if (decision.kind === 'always') {
         const option = evaluation.options.find((o) => o.value === 'always');
         if (option?.switchMode) this.setPermissionMode(option.switchMode);
@@ -499,9 +592,15 @@ export class AgentLoop {
     update({ status: 'running' });
     this.callbacks.onStatusChange('running_tool');
     try {
-      const out = await dispatchTool(name, args, ctx);
+      const out = await dispatchTool(name, state.args, ctx);
       update({ status: 'completed', result: out.output, summary: out.summary, diff: out.diff ?? state.diff, endTime: Date.now() });
-      return out.output;
+      let output = out.output;
+      if (this.hasHooks('PostToolUse')) {
+        const outcome = await this.fireHooks('PostToolUse', { tool_name: label, tool_input: state.args, tool_response: { output: out.output.slice(0, 4000), summary: out.summary } }, label);
+        const extra = [...(outcome.blocked ? [`[Hook feedback] ${outcome.reasons.join(' · ')}`] : []), ...outcome.context];
+        if (extra.length) output += `\n\n${extra.join('\n\n')}`;
+      }
+      return output;
     } catch (err: any) {
       if (err?.message === 'Interrupted' || signal.aborted) throw new Error('Interrupted');
       const message = err?.message || String(err);
@@ -620,6 +719,13 @@ export class AgentLoop {
     if (history.length < 2) {
       this.addSystemMessage('Nothing to compact yet.', 'notice');
       return;
+    }
+    if (this.hasHooks('PreCompact')) {
+      const outcome = await this.fireHooks('PreCompact', { trigger: auto ? 'auto' : 'manual' }, auto ? 'auto' : 'manual');
+      if (outcome.blocked) {
+        this.addSystemMessage(`⛔ Compaction blocked by hook: ${outcome.reasons.join(' · ')}`, 'notice');
+        return;
+      }
     }
     this.processing = true;
     this.abortController = new AbortController();

@@ -15,6 +15,7 @@ import { listChatModels, formatModelTable, freeTierStatus } from '../agent/model
 import { PERMISSION_MODES, type MessageKind, type PermissionMode, type UsageInfo } from '../agent/types.js';
 import type { GitInfo } from '../utils/git.js';
 import { expandSkill, commandPrompt, type SkillDefinition } from '../skills/loader.js';
+import { describeHooks } from '../hooks/runner.js';
 
 export interface CommandContext {
   agent: AgentLoop;
@@ -351,6 +352,18 @@ export const COMMANDS: SlashCommand[] = [
       }
       const lines = skills.map((sk) => `- \`/${sk.name}${sk.argumentHint ? ' ' + sk.argumentHint : ''}\` — ${sk.description || '(no description)'} · ${sk.kind}, ${sk.scope}${sk.userInvocable ? '' : ', model only'}${sk.modelInvocable ? '' : ', user only'}${sk.allowedTools.length ? `, allows ${sk.allowedTools.join(' ')}` : ''}`);
       ctx.addSystem(`**Custom commands & skills** (${skills.length})${arg.trim() === 'reload' ? ' — reloaded' : ''}\n${lines.join('\n')}\n\nFiles: ${[...new Set(skills.map((sk) => path.dirname(sk.file)))].join(', ')}`);
+    },
+  },
+  {
+    name: '/hooks',
+    description: 'Lister les hooks configurés (settings.json)',
+    run: (ctx) => {
+      const lines = describeHooks(ctx.config.settings.hooks);
+      ctx.addSystem(
+        lines.length
+          ? `**Hooks** (${lines.length})\n${lines.map((l) => `- ${l}`).join('\n')}\n\nEvents: SessionStart, UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, Notification, Stop, PreCompact, SessionEnd. Exit 2 = block (stderr = reason); JSON stdout: decision, hookSpecificOutput.permissionDecision, updatedInput, additionalContext.`
+          : 'No hook configured. Add to `.fuller/settings.json`:\n```json\n{ "hooks": { "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.fuller/check-bash.sh", "timeout": 30 }] }] } }\n```\nThe command receives the same JSON as Claude Code hooks on stdin; exit 2 blocks with stderr as the reason.'
+      );
     },
   },
   {

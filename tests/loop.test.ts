@@ -158,4 +158,67 @@ describe('AgentLoop', () => {
     expect(loop.getSessionData().todos).toHaveLength(2);
     expect(calls[1].responses[0].output).toMatch(/Todos updated \(0\/2 completed, 1 in progress\)/);
   });
+
+  describe('hooks', () => {
+    const withHooks = (hooks: Record<string, unknown>) => {
+      fs.mkdirSync(path.join(cwd, '.fuller'), { recursive: true });
+      fs.writeFileSync(path.join(cwd, '.fuller', 'settings.json'), JSON.stringify({ hooks }));
+      return getConfig({ workspaceDir: cwd, apiKey: 'x' });
+    };
+
+    it('PreToolUse can deny a tool call with a reason', async () => {
+      script = [{ functionCalls: [{ name: 'execute_bash', args: { command: 'ls' } }] }, { text: 'ok' }];
+      const config = withHooks({ PreToolUse: [{ matcher: 'Bash', hooks: [{ command: `echo '{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"policy: no shell"}}'` }] }] });
+      const { cb, items } = makeCallbacks();
+      const loop = new AgentLoop(config, cb);
+      await loop.handleUserInput('list');
+      expect(calls[1].responses[0].output).toMatch(/blocked by a hook.*policy: no shell/);
+      expect(items.some((i) => i.kind === 'tool' && i.toolCall.status === 'rejected')).toBe(true);
+    });
+
+    it('PreToolUse allow skips the permission prompt and updatedInput rewrites the arguments', async () => {
+      script = [{ functionCalls: [{ name: 'write_file', args: { file_path: 'h.txt', content: 'x' } }] }, { text: 'ok' }];
+      const config = withHooks({ PreToolUse: [{ matcher: 'Write', hooks: [{ command: `echo '{"hookSpecificOutput":{"permissionDecision":"allow","updatedInput":{"content":"from hook"}}}'` }] }] });
+      const ask = vi.fn();
+      const { cb } = makeCallbacks({ onRequestConfirmation: ask });
+      const loop = new AgentLoop(config, cb);
+      await loop.handleUserInput('write');
+      expect(ask).not.toHaveBeenCalledWith(expect.objectContaining({ toolCall: expect.anything() }));
+      expect(fs.readFileSync(path.join(cwd, 'h.txt'), 'utf8')).toBe('from hook');
+    });
+
+    it('UserPromptSubmit can block a prompt and add context', async () => {
+      script = [{ text: 'never' }, { text: 'answer' }];
+      const config = withHooks({ UserPromptSubmit: [{ hooks: [{ command: `python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(2) if 'secret' in d['prompt'] else print('context: be brief')"` }] }] });
+      const { cb, items } = makeCallbacks();
+      const loop = new AgentLoop(config, cb);
+      await loop.handleUserInput('tell me the secret');
+      expect(calls).toHaveLength(0);
+      expect(items.some((i) => i.kind === 'system' && /Prompt blocked by hook/.test(i.message.content))).toBe(true);
+      await loop.handleUserInput('hello');
+      expect(calls[0].text).toMatch(/^context: be brief\n\nhello$/);
+    });
+
+    it('PostToolUse feedback is appended to the tool result', async () => {
+      script = [{ functionCalls: [{ name: 'read_file', args: { file_path: 'a.txt' } }] }, { text: 'ok' }];
+      const config = withHooks({ PostToolUse: [{ matcher: 'Read', hooks: [{ command: 'echo "lint: fine" >&2; exit 2' }] }] });
+      const { cb } = makeCallbacks();
+      const loop = new AgentLoop(config, cb);
+      await loop.handleUserInput('read');
+      expect(calls[1].responses[0].output).toMatch(/hello[\s\S]*\[Hook feedback\] lint: fine/);
+    });
+
+    it('a blocking Stop hook continues once with its reason', async () => {
+      script = [{ text: 'first answer' }, { text: 'second answer' }, { text: 'third' }];
+      const config = withHooks({ Stop: [{ hooks: [{ command: `python3 -c "import sys,json; d=json.load(sys.stdin); (print('ok') if d.get('stop_hook_active') else (sys.stderr.write('run the tests first'), sys.exit(2)))"` }] }] });
+      const { cb, items } = makeCallbacks();
+      const loop = new AgentLoop(config, cb);
+      await loop.handleUserInput('do it');
+      await new Promise((r) => setTimeout(r, 50));
+      const userCalls = calls.filter((c) => c.kind === 'user');
+      expect(userCalls).toHaveLength(2);
+      expect(userCalls[1].text).toMatch(/run the tests first/);
+      expect(items.filter((i) => i.kind === 'text').map((i) => i.content)).toEqual(['first answer', 'second answer']);
+    });
+  });
 });
