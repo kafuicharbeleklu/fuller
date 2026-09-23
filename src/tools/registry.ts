@@ -152,6 +152,17 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'exit_plan_mode',
+    description: 'Plan mode only: present your plan to the user and ask to leave plan mode so you can implement it. Call it once the plan is complete; the user approves or asks for changes.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        plan: { type: Type.STRING, description: 'The full plan in Markdown: goal, steps, files to change, verification.' },
+      },
+      required: ['plan'],
+    },
+  },
+  {
     name: 'skill',
     description: 'Load the instructions of a skill listed in the system prompt (project or user skill). Returns the full instructions to follow for the current task.',
     parameters: {
@@ -176,7 +187,7 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
   },
 ];
 
-export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'skill', 'todo_write', 'task_output', 'task_kill']);
+export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'skill', 'todo_write', 'task_output', 'task_kill', 'exit_plan_mode']);
 
 export interface ToolContext {
   cwd: string;
@@ -344,6 +355,9 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       };
     }
 
+    case 'exit_plan_mode':
+      return { output: 'Not in plan mode — no approval needed, just proceed.', summary: 'not in plan mode' };
+
     case 'skill': {
       const name = String(args.name ?? '').replace(/^\//, '');
       const skill = (ctx.skills ?? []).find((sk) => sk.name === name && sk.modelInvocable);
@@ -376,6 +390,7 @@ export function toolLabel(name: string): string {
     case 'todo_write': return 'Update Todos';
     case 'task_output': return 'TaskOutput';
     case 'task_kill': return 'TaskKill';
+    case 'exit_plan_mode': return 'ExitPlanMode';
     default: return name;
   }
 }
@@ -393,6 +408,7 @@ export function toolArgSummary(name: string, args: Record<string, any>): string 
     case 'skill': return `${args.name}${args.args ? ` ${args.args}` : ''}`;
     case 'todo_write': return `${Array.isArray(args.todos) ? args.todos.length : 0} items`;
     case 'task_output': case 'task_kill': return String(args.task_id ?? '');
+    case 'exit_plan_mode': return 'plan ready';
     default: return JSON.stringify(args).slice(0, 100);
   }
 }

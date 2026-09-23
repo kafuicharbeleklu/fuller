@@ -13,6 +13,10 @@ import { loadSkills, type SkillDefinition } from '../skills/loader.js';
 import { runHooks, type HookEvent, type HookOutcome, type HookPayload } from '../hooks/runner.js';
 import { sessionFile } from '../session/store.js';
 import { BackgroundTaskManager, describeTask, type BackgroundTask } from '../tools/background.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { CONFIG_DIR_NAME } from '../branding.js';
 import type {
   ChatMessage,
   ToolCallState,
@@ -91,6 +95,7 @@ export class AgentLoop {
   private turnAllow: string[] = [];
   private todos: TodoItem[] = [];
   private background: BackgroundTaskManager;
+  private customTitle?: string;
   public usage: UsageInfo;
 
   constructor(config: AppConfig, callbacks: AgentCallbacks, restored?: SessionData) {
@@ -100,6 +105,7 @@ export class AgentLoop {
     this.createdAt = restored?.meta.createdAt ?? Date.now();
     this.messages = restored?.messages ?? [];
     this.todos = restored?.todos ?? [];
+    this.customTitle = restored?.meta.title && restored.meta.title !== sessionTitleFrom(restored.messages) ? restored.meta.title : undefined;
     this.gitBranch = restored?.meta.gitBranch;
     this.usage = {
       promptTokens: 0,
@@ -157,6 +163,11 @@ export class AgentLoop {
 
   public getTodos(): TodoItem[] {
     return this.todos;
+  }
+
+  public renameSession(title: string) {
+    this.customTitle = title.trim() || undefined;
+    this.scheduleSave();
   }
 
   public getBackgroundTasks(): BackgroundTask[] {
@@ -239,7 +250,7 @@ export class AgentLoop {
     return {
       meta: {
         id: this.sessionId,
-        title: sessionTitleFrom(this.messages),
+        title: this.customTitle ?? sessionTitleFrom(this.messages),
         workspaceDir: this.config.workspaceDir,
         model: this.config.model,
         createdAt: this.createdAt,
@@ -530,6 +541,7 @@ export class AgentLoop {
   ): Promise<string> {
     const { name } = state;
     const label = toolLabel(name);
+    if (name === 'exit_plan_mode' && this.config.permissionMode === 'plan') return this.handleExitPlanMode(state, update);
     let hookAllow = false;
     if (this.hasHooks('PreToolUse')) {
       const outcome = await this.fireHooks('PreToolUse', { tool_name: label, tool_input: state.args }, label);
@@ -636,6 +648,56 @@ export class AgentLoop {
       update({ status: 'failed', error: message, endTime: Date.now() });
       return `Error: ${message}`;
     }
+  }
+
+  /** Plan mode: show the plan, ask the user to approve it, and switch modes accordingly. */
+  private async handleExitPlanMode(state: ToolCallState, update: (patch: Partial<ToolCallState>) => void): Promise<string> {
+    const plan = String(state.args.plan ?? '').trim();
+    if (!plan) {
+      update({ status: 'failed', error: 'plan is required', endTime: Date.now() });
+      return 'Error: provide the plan text.';
+    }
+    // The plan itself goes into the transcript so the user can read it in full.
+    this.callbacks.onCommit({ key: `${state.id}-plan`, kind: 'text', messageId: state.id, content: `**Plan**\n\n${plan}`, timestamp: Date.now() });
+    let planFile = '';
+    try {
+      const dir = path.join(os.homedir(), CONFIG_DIR_NAME, 'plans');
+      fs.mkdirSync(dir, { recursive: true });
+      planFile = path.join(dir, `${this.sessionId}.md`);
+      fs.writeFileSync(planFile, `${plan}\n`, 'utf8');
+    } catch {}
+    update({ status: 'confirming' });
+    this.callbacks.onStatusChange('awaiting_permission');
+    this.callbacks.onNotify?.('permission');
+    const decision = await new Promise<PermissionDecision>((resolve, reject) => {
+      this.rejectConfirmation = () => {
+        this.rejectConfirmation = null;
+        this.callbacks.onRequestConfirmation(null);
+        reject(new Error('Interrupted'));
+      };
+      this.callbacks.onRequestConfirmation({
+        toolCall: state,
+        title: 'Would you like to proceed?',
+        options: [
+          { value: 'yes', label: 'Yes, and auto-accept edits', switchMode: 'acceptEdits' },
+          { value: 'always', label: 'Yes, manually approve edits', switchMode: 'default' },
+          { value: 'no', label: 'No, keep planning (tell Fuller what to change)' },
+        ],
+        onDecide: (d) => {
+          this.rejectConfirmation = null;
+          this.callbacks.onRequestConfirmation(null);
+          resolve(d);
+        },
+      });
+    });
+    if (decision.kind === 'no') {
+      update({ status: 'rejected', error: decision.feedback ? `Keep planning · ${decision.feedback}` : 'Keep planning', endTime: Date.now() });
+      return `The user did not approve the plan${decision.feedback ? `: "${decision.feedback}"` : ''}. Stay in plan mode, revise the plan accordingly and call exit_plan_mode again.`;
+    }
+    const mode: PermissionMode = decision.kind === 'yes' ? 'acceptEdits' : 'default';
+    this.setPermissionMode(mode);
+    update({ status: 'completed', summary: `approved · ${mode}`, result: `Plan approved (${mode})${planFile ? ` · ${planFile}` : ''}`, endTime: Date.now() });
+    return `The user approved the plan. Plan mode is off (permission mode: ${mode}${mode === 'acceptEdits' ? ', file edits are auto-accepted' : ', edits need approval'}). Implement the plan now, step by step.`;
   }
 
   private askPermission(state: ToolCallState, evaluation: Evaluation): Promise<PermissionDecision> {

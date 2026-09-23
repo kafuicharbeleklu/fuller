@@ -54,7 +54,7 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={borderColor} paddingX={1} marginTop={1}>
-      <Text bold color={borderColor}>{danger ? '⚠ ' : ''}{label === 'Bash' ? 'Bash command' : label === 'Edit' ? 'Edit file' : label === 'Write' ? 'Create file' : label}</Text>
+      <Text bold color={borderColor}>{danger ? '⚠ ' : ''}{label === 'Bash' ? 'Bash command' : label === 'Edit' ? 'Edit file' : label === 'Write' ? 'Create file' : label === 'ExitPlanMode' ? 'Ready to code?' : label}</Text>
       {danger ? <Text color={theme.error}>{danger}</Text> : null}
       <Box flexDirection="column" marginTop={0} marginBottom={1}>
         {renderDetails()}
@@ -84,6 +84,10 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
 
   function renderDetails(): React.ReactNode {
     const { name, args } = toolCall;
+    if (name === 'exit_plan_mode') {
+      const lines = String(args.plan ?? '').split('\n').length;
+      return <Text color={theme.subtle}>Fuller's plan ({lines} lines) is shown above. Approving leaves plan mode.</Text>;
+    }
     if (name === 'execute_bash') {
       return (
         <Box flexDirection="column">

@@ -221,4 +221,43 @@ describe('AgentLoop', () => {
       expect(items.filter((i) => i.kind === 'text').map((i) => i.content)).toEqual(['first answer', 'second answer']);
     });
   });
+
+  describe('plan mode', () => {
+    it('exit_plan_mode shows the plan, asks for approval and switches the mode', async () => {
+      script = [{ functionCalls: [{ name: 'exit_plan_mode', args: { plan: '1. Do a\n2. Do b' } }] }, { text: 'implementing' }];
+      let seen: any = null;
+      const modes: string[] = [];
+      const { cb, items } = makeCallbacks({
+        onRequestConfirmation: (c) => { if (c) { seen = c; c.onDecide({ kind: 'yes' }); } },
+        onModeChange: (m) => modes.push(m),
+      });
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'plan' }), cb);
+      await loop.handleUserInput('plan it');
+      expect(seen.title).toBe('Would you like to proceed?');
+      expect(seen.options.map((o: any) => o.label)).toEqual(['Yes, and auto-accept edits', 'Yes, manually approve edits', 'No, keep planning (tell Fuller what to change)']);
+      expect(modes).toEqual(['acceptEdits']);
+      expect(loop.permissionMode).toBe('acceptEdits');
+      expect(items.some((i) => i.kind === 'text' && /\*\*Plan\*\*[\s\S]*Do b/.test(i.content))).toBe(true);
+      expect(calls[1].responses[0].output).toMatch(/approved the plan.*acceptEdits/);
+    });
+
+    it('a rejected plan keeps plan mode and forwards the feedback', async () => {
+      script = [{ functionCalls: [{ name: 'exit_plan_mode', args: { plan: 'x' } }] }, { text: 'revising' }];
+      const { cb } = makeCallbacks({ onRequestConfirmation: (c) => c?.onDecide({ kind: 'no', feedback: 'add tests' }) });
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'plan' }), cb);
+      await loop.handleUserInput('plan it');
+      expect(loop.permissionMode).toBe('plan');
+      expect(calls[1].responses[0].output).toMatch(/did not approve the plan: "add tests"/);
+    });
+
+    it('outside plan mode the tool is a no-op', async () => {
+      script = [{ functionCalls: [{ name: 'exit_plan_mode', args: { plan: 'x' } }] }, { text: 'ok' }];
+      const ask = vi.fn();
+      const { cb } = makeCallbacks({ onRequestConfirmation: ask });
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+      await loop.handleUserInput('go');
+      expect(ask).not.toHaveBeenCalledWith(expect.objectContaining({ toolCall: expect.anything() }));
+      expect(calls[1].responses[0].output).toMatch(/Not in plan mode/);
+    });
+  });
 });

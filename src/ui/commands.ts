@@ -16,6 +16,7 @@ import { PERMISSION_MODES, type MessageKind, type PermissionMode, type UsageInfo
 import type { GitInfo } from '../utils/git.js';
 import { expandSkill, commandPrompt, type SkillDefinition } from '../skills/loader.js';
 import { describeHooks } from '../hooks/runner.js';
+import { copyToClipboard } from '../utils/clipboard.js';
 
 export interface CommandContext {
   agent: AgentLoop;
@@ -352,6 +353,36 @@ export const COMMANDS: SlashCommand[] = [
       }
       const lines = skills.map((sk) => `- \`/${sk.name}${sk.argumentHint ? ' ' + sk.argumentHint : ''}\` — ${sk.description || '(no description)'} · ${sk.kind}, ${sk.scope}${sk.userInvocable ? '' : ', model only'}${sk.modelInvocable ? '' : ', user only'}${sk.allowedTools.length ? `, allows ${sk.allowedTools.join(' ')}` : ''}`);
       ctx.addSystem(`**Custom commands & skills** (${skills.length})${arg.trim() === 'reload' ? ' — reloaded' : ''}\n${lines.join('\n')}\n\nFiles: ${[...new Set(skills.map((sk) => path.dirname(sk.file)))].join(', ')}`);
+    },
+  },
+  {
+    name: '/copy',
+    description: 'Copier la dernière réponse (ou la N-ième depuis la fin) dans le presse-papiers',
+    usage: '[N]',
+    takesArg: true,
+    run: async (ctx, arg) => {
+      const n = Math.max(1, parseInt(arg, 10) || 1);
+      const texts = ctx.agent.getMessages().filter((m) => m.role === 'assistant' && (m.content || m.parts?.some((p) => p.type === 'text')));
+      const msg = texts[texts.length - n];
+      if (!msg) { ctx.addSystem('Nothing to copy yet.'); return; }
+      const text = msg.content || (msg.parts ?? []).filter((p) => p.type === 'text').map((p: any) => p.content).join('\n\n');
+      try {
+        const via = await copyToClipboard(text);
+        ctx.addSystem(`Copied ${text.length} characters to the clipboard (${via}).`);
+      } catch (err: any) {
+        ctx.addSystem(`✗ ${err.message}`, 'notice');
+      }
+    },
+  },
+  {
+    name: '/rename',
+    description: 'Renommer la session (titre dans /sessions et le sélecteur --resume)',
+    usage: '<title>',
+    takesArg: true,
+    run: (ctx, arg) => {
+      if (!arg.trim()) { ctx.addSystem('Usage: `/rename <title>`'); return; }
+      ctx.agent.renameSession(arg.trim());
+      ctx.addSystem(`Session renamed to **${arg.trim()}**.`);
     },
   },
   {

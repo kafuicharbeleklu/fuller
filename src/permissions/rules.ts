@@ -22,6 +22,7 @@ export const TOOL_DISPLAY: Record<string, string> = {
   todo_write: 'TodoWrite',
   task_output: 'TaskOutput',
   task_kill: 'TaskKill',
+  exit_plan_mode: 'ExitPlanMode',
 };
 
 export function parseRule(raw: string): PermissionRule | null {
@@ -117,7 +118,7 @@ export function baseRisk(name: string, args: Record<string, any>, cwd: string): 
       const c = classifyCommand(String(args.command ?? ''), cwd);
       return { risk: c.risk, reason: c.reason };
     }
-    case 'read_file': case 'list_directory': case 'search_files': case 'glob': case 'skill': case 'todo_write': case 'task_output': case 'task_kill':
+    case 'read_file': case 'list_directory': case 'search_files': case 'glob': case 'skill': case 'todo_write': case 'task_output': case 'task_kill': case 'exit_plan_mode':
       return { risk: 'read', reason: '' };
     case 'write_file': case 'edit_file':
       return { risk: 'edit', reason: '' };

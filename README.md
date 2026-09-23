@@ -65,14 +65,14 @@ Un fichier = une commande `/nom` (les sous-dossiers donnent `/dossier:nom`). Fro
 | `/status`, `/cost`, `/context` | État de session, tokens, répartition du contexte |
 | `/model [nom\|list]` | Sélecteur de modèles (API ListModels), changement sans perdre l'historique |
 | `/permissions [add\|deny\|remove <règle>]` | Gérer les règles |
-| `/plan`, `/accept-edits`, `/mode <mode>` | Modes de permission |
+| `/plan`, `/accept-edits`, `/mode <mode>` | Modes de permission ; en plan mode le modèle explore puis soumet son plan avec `exit_plan_mode` (« Would you like to proceed? » : auto-accept, approbation manuelle, ou retour en planification avec vos remarques ; plan sauvegardé dans `~/.fuller/plans/`) |
 | `/init`, `/memory` | Générer / lister les fichiers mémoire |
 | `/skills [reload]` | Commandes personnalisées et skills découverts |
 | `/hooks` | Hooks configurés |
 | `/tasks [kill <id>]` | Tâches en arrière-plan |
 | Ctrl+T | Afficher / masquer la liste de tâches (`todo_write`) |
 | `/rewind`, `/checkpoints` | Restaurer des fichiers |
-| `/sessions`, `/export [fichier]` | Sessions et export Markdown |
+| `/sessions`, `/export [fichier]`, `/rename <titre>`, `/copy [N]` | Sessions, export Markdown, renommage, copie de la dernière réponse dans le presse-papiers |
 | `/diff`, `/doctor`, `/theme`, `/add-dir`, `/btw`, `/about`, `/exit` | Divers |
 
 ## Raccourcis

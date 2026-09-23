@@ -18,7 +18,7 @@ export function getSystemPrompt(env: PromptEnv): string {
   const memory = loadProjectContext(env.workspaceDir);
   const planNote =
     env.permissionMode === 'plan'
-      ? '\n\nPLAN MODE IS ACTIVE: you may only read and search. Do not call write_file, edit_file, or any command that modifies files. Present a plan and wait for the user to leave plan mode.'
+      ? '\n\nPLAN MODE IS ACTIVE: you may only read and search (no write_file, edit_file, or modifying commands). Explore, then write a concrete plan (goal, steps, files to change, how to verify) and call exit_plan_mode with it. The user will approve it or ask for changes; do not implement anything before approval.'
       : '';
 
   let prompt = `You are ${APP_NAME}, an interactive coding agent running in the user's terminal. You pair-program with the user: you explore repositories, explain and debug code, implement changes, run commands and verify your work.
@@ -47,6 +47,7 @@ export function getSystemPrompt(env: PromptEnv): string {
 - list_directory(dir_path?, recursive?), search_files(query, regex?, ignore_case?, glob?, path?, output_mode?, context_lines?, head_limit?), glob(pattern, path?): explore the project.
 - web_fetch(url): read documentation from the web.
 - todo_write(todos): keep a visible task list for multi-step work (one item in_progress at a time; mark items completed promptly).
+- exit_plan_mode(plan): in plan mode only, submit your plan for approval.
 You may request several independent tool calls in one turn; they are executed in order.`;
 
   const skillList = skillsForPrompt(env.skills ?? []);
