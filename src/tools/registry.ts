@@ -152,6 +152,19 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'agent',
+    description: 'Delegate a self-contained task to a subagent that runs in its own context with its own tools and returns a final report. Use for broad codebase exploration, research, or long sub-tasks. The prompt must be complete: the subagent does not see this conversation.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        description: { type: Type.STRING, description: 'Short (3-6 words) description of the task, shown to the user.' },
+        prompt: { type: Type.STRING, description: 'Detailed, standalone instructions for the subagent, including what to report back.' },
+        subagent_type: { type: Type.STRING, description: 'Subagent type from the system prompt list (default: general-purpose; use Explore for read-only exploration).' },
+      },
+      required: ['description', 'prompt'],
+    },
+  },
+  {
     name: 'exit_plan_mode',
     description: 'Plan mode only: present your plan to the user and ask to leave plan mode so you can implement it. Call it once the plan is complete; the user approves or asks for changes.',
     parameters: {
@@ -187,7 +200,7 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
   },
 ];
 
-export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'skill', 'todo_write', 'task_output', 'task_kill', 'exit_plan_mode']);
+export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'skill', 'todo_write', 'task_output', 'task_kill', 'exit_plan_mode', 'agent']);
 
 export interface ToolContext {
   cwd: string;
@@ -358,6 +371,9 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
     case 'exit_plan_mode':
       return { output: 'Not in plan mode — no approval needed, just proceed.', summary: 'not in plan mode' };
 
+    case 'agent':
+      throw new Error('Subagents are not available in this context.');
+
     case 'skill': {
       const name = String(args.name ?? '').replace(/^\//, '');
       const skill = (ctx.skills ?? []).find((sk) => sk.name === name && sk.modelInvocable);
@@ -391,6 +407,7 @@ export function toolLabel(name: string): string {
     case 'task_output': return 'TaskOutput';
     case 'task_kill': return 'TaskKill';
     case 'exit_plan_mode': return 'ExitPlanMode';
+    case 'agent': return 'Agent';
     default: return name;
   }
 }
@@ -409,6 +426,7 @@ export function toolArgSummary(name: string, args: Record<string, any>): string 
     case 'todo_write': return `${Array.isArray(args.todos) ? args.todos.length : 0} items`;
     case 'task_output': case 'task_kill': return String(args.task_id ?? '');
     case 'exit_plan_mode': return 'plan ready';
+    case 'agent': return `${args.subagent_type ? `${args.subagent_type}: ` : ''}${args.description ?? ''}`;
     default: return JSON.stringify(args).slice(0, 100);
   }
 }

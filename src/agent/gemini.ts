@@ -4,6 +4,7 @@ import { geminiToolDeclarations } from '../tools/registry.js';
 import { withRetry, type RetryInfo } from './retry.js';
 import type { AppConfig } from '../config.js';
 import type { SkillDefinition } from '../skills/loader.js';
+import type { SubagentDefinition } from './subagents.js';
 
 export interface FunctionCallInfo {
   id?: string;
@@ -45,6 +46,9 @@ export class GeminiAgentSession {
   private gitBranch?: string;
   private skills: SkillDefinition[] = [];
   private extraTools: FunctionDeclaration[] = [];
+  private toolFilter: Set<string> | null = null;
+  private extraInstructions = '';
+  private subagents: SubagentDefinition[] = [];
 
   constructor(config: AppConfig, history?: Content[]) {
     this.config = config;
@@ -69,6 +73,19 @@ export class GeminiAgentSession {
     this.extraTools = tools;
   }
 
+  /** Restrict the built-in tools offered to the model (subagents). */
+  public setToolFilter(names: string[] | null) {
+    this.toolFilter = names ? new Set(names) : null;
+  }
+
+  public setExtraInstructions(text: string) {
+    this.extraInstructions = text;
+  }
+
+  public setSubagents(defs: SubagentDefinition[]) {
+    this.subagents = defs;
+  }
+
   public initChat(history?: Content[]) {
     this.chatConfig = {
       systemInstruction: getSystemPrompt({
@@ -78,8 +95,10 @@ export class GeminiAgentSession {
         gitBranch: this.gitBranch,
         additionalDirectories: this.config.additionalDirectories,
         skills: this.skills,
+        subagents: this.toolFilter ? [] : this.subagents,
+        extraInstructions: this.extraInstructions || undefined,
       }),
-      tools: [{ functionDeclarations: [...geminiToolDeclarations, ...this.extraTools] }],
+      tools: [{ functionDeclarations: [...geminiToolDeclarations.filter((d) => !this.toolFilter || this.toolFilter.has(d.name!)), ...(this.toolFilter ? [] : this.extraTools)] }],
       temperature: 0.2,
     };
     this.chat = this.ai.chats.create({

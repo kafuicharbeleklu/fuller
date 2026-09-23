@@ -12,6 +12,9 @@ vi.mock('../src/agent/gemini.js', () => {
     setGitBranch() {}
     setSkills() {}
     setExtraTools() {}
+    setToolFilter() {}
+    setExtraInstructions() {}
+    setSubagents() {}
     initChat() {}
     refresh() {}
     getHistory() { return []; }
@@ -279,5 +282,29 @@ describe('AgentLoop', () => {
       expect(calls[1].responses[0].output).toBe('echo: salut');
       await loop.flush();
     }, 30000);
+  });
+
+  describe('subagents', () => {
+    it('runs a subagent in its own session, routes permissions to the parent and returns its report', async () => {
+      script = [
+        { functionCalls: [{ name: 'agent', args: { description: 'explore files', prompt: 'read a.txt', subagent_type: 'Explore' } }] },
+        { functionCalls: [{ name: 'read_file', args: { file_path: 'a.txt' } }, { name: 'write_file', args: { file_path: 'x', content: 'x' } }] },
+        { text: 'sub report: a.txt says hello' },
+        { text: 'final answer' },
+      ];
+      const progress: string[] = [];
+      const { cb, items } = makeCallbacks({ onLive: (l) => { if (l?.tools[0]?.result) progress.push(l.tools[0].result); } });
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+      await loop.handleUserInput('delegate');
+      const toolItem = items.find((i) => i.kind === 'tool' && i.toolCall.name === 'agent') as any;
+      expect(toolItem.toolCall.status).toBe('completed');
+      expect(toolItem.toolCall.result).toBe('sub report: a.txt says hello');
+      expect(toolItem.toolCall.summary).toMatch(/1 tool use/);
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'user', 'tools', 'tools']);
+      expect(calls[2].responses[0].output).toContain('hello');
+      expect(calls[2].responses[1].output).toMatch(/may not use write_file/);
+      expect(calls[3].responses[0].output).toMatch(/Explore subagent report[\s\S]*sub report/);
+      expect(progress.some((p) => /Read\(a\.txt\)/.test(p))).toBe(true);
+    });
   });
 });

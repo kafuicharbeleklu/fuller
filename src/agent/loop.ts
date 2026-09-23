@@ -19,6 +19,8 @@ import os from 'node:os';
 import { CONFIG_DIR_NAME } from '../branding.js';
 import { McpManager, type McpServerStatus } from '../mcp/manager.js';
 import { loadMcpConfig } from '../mcp/config.js';
+import { loadSubagents, type SubagentDefinition } from './subagents.js';
+import { runSubagent } from './subagent.js';
 import type {
   ChatMessage,
   ToolCallState,
@@ -44,6 +46,14 @@ export interface TurnOptions {
 function safeLoadMcp(cwd: string) {
   try {
     return loadMcpConfig(cwd);
+  } catch {
+    return [];
+  }
+}
+
+function safeLoadSubagents(cwd: string): SubagentDefinition[] {
+  try {
+    return loadSubagents(cwd);
   } catch {
     return [];
   }
@@ -108,6 +118,7 @@ export class AgentLoop {
   private background: BackgroundTaskManager;
   private customTitle?: string;
   private mcp: McpManager;
+  private subagents: SubagentDefinition[] = [];
   public usage: UsageInfo;
 
   constructor(config: AppConfig, callbacks: AgentCallbacks, restored?: SessionData) {
@@ -128,8 +139,10 @@ export class AgentLoop {
       turns: 0,
     };
     this.skills = safeLoadSkills(config.workspaceDir);
+    this.subagents = safeLoadSubagents(config.workspaceDir);
     this.session = new GeminiAgentSession(config, restored?.history);
     this.session.setSkills(this.skills);
+    this.session.setSubagents(this.subagents);
     this.session.refresh();
     this.checkpointManager = new CheckpointManager(config.workspaceDir);
     this.mcp = new McpManager(safeLoadMcp(config.workspaceDir), {
@@ -589,6 +602,7 @@ export class AgentLoop {
     const { name } = state;
     const label = toolLabel(name);
     if (name === 'exit_plan_mode' && this.config.permissionMode === 'plan') return this.handleExitPlanMode(state, update);
+    if (name === 'agent') return this.handleAgentTool(state, messageId, signal, update);
     let hookAllow = false;
     if (this.hasHooks('PreToolUse')) {
       const outcome = await this.fireHooks('PreToolUse', { tool_name: label, tool_input: state.args }, label);
@@ -696,6 +710,56 @@ export class AgentLoop {
       const message = err?.message || String(err);
       update({ status: 'failed', error: message, endTime: Date.now() });
       return `Error: ${message}`;
+    }
+  }
+
+  public getSubagents(): SubagentDefinition[] {
+    return this.subagents;
+  }
+
+  /** The `agent` tool: run a subagent with the parent's permissions and stream its progress into the tool row. */
+  private async handleAgentTool(state: ToolCallState, messageId: string, signal: AbortSignal, update: (patch: Partial<ToolCallState>) => void): Promise<string> {
+    const type = String(state.args.subagent_type ?? 'general-purpose');
+    const definition = this.subagents.find((d) => d.name === type) ?? this.subagents.find((d) => d.name.toLowerCase() === type.toLowerCase());
+    if (!definition) {
+      const known = this.subagents.map((d) => d.name).join(', ');
+      update({ status: 'failed', error: `Unknown subagent type "${type}"`, endTime: Date.now() });
+      return `Error: unknown subagent type "${type}". Available: ${known}.`;
+    }
+    const prompt = String(state.args.prompt ?? '').trim();
+    if (!prompt) {
+      update({ status: 'failed', error: 'prompt is required', endTime: Date.now() });
+      return 'Error: provide a prompt for the subagent.';
+    }
+    update({ status: 'running', summary: `${definition.name}` });
+    this.callbacks.onStatusChange('running_tool');
+    try {
+      const result = await runSubagent({
+        config: this.config,
+        definition,
+        prompt,
+        description: String(state.args.description ?? definition.name),
+        signal,
+        skills: this.skills,
+        askPermission: (st, ev) => {
+          this.callbacks.onStatusChange('awaiting_permission');
+          this.callbacks.onNotify?.('permission');
+          return this.askPermission(st, ev).finally(() => this.callbacks.onStatusChange('running_tool'));
+        },
+        onProgress: (log, toolCount) => update({ result: log, summary: `${definition.name} · ${toolCount} tool use${toolCount === 1 ? '' : 's'}` }),
+        onUsage: (u) => { this.usage.cumulativeTokens += u.totalTokens; this.usage.apiCalls++; this.callbacks.onUsage({ ...this.usage }); },
+        checkpointManager: this.checkpointManager,
+        background: this.background,
+        messageId,
+      });
+      const summary = `Done · ${result.toolCount} tool use${result.toolCount === 1 ? '' : 's'} · ${result.turns} turn${result.turns === 1 ? '' : 's'} · ${result.tokens.toLocaleString('en-US')} tokens`;
+      update({ status: 'completed', result: result.text, summary, endTime: Date.now() });
+      return `[${definition.name} subagent report — ${summary}]\n\n${result.text}`;
+    } catch (err: any) {
+      if (err?.message === 'Interrupted' || signal.aborted) throw new Error('Interrupted');
+      const message = err?.message ?? String(err);
+      update({ status: 'failed', error: message, endTime: Date.now() });
+      return `Error: subagent failed: ${message}`;
     }
   }
 

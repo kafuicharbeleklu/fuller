@@ -386,6 +386,14 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: '/agents',
+    description: 'Sous-agents disponibles (outil agent)',
+    run: (ctx) => {
+      const defs = ctx.agent.getSubagents();
+      ctx.addSystem(`**Subagents** (${defs.length})\n${defs.map((d) => `- **${d.name}** (${d.scope}) — ${d.description}${d.tools.length ? ` · tools: ${d.tools.join(', ')}` : ' · all tools'}`).join('\n')}\n\nDefine your own in \`.fuller/agents/<name>.md\` (frontmatter: description, tools, model, maxTurns; body = instructions). \`.claude/agents\` is read too.`);
+    },
+  },
+  {
     name: '/mcp',
     description: 'Serveurs MCP : statut et outils exposés',
     run: (ctx) => {
