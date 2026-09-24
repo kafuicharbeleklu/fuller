@@ -1,6 +1,6 @@
 import type { TodoItem } from './types.js';
 import path from 'node:path';
-import { parseSegment, splitCommand } from '../permissions/bashParser.js';
+import { parseSegment } from '../permissions/bashParser.js';
 
 /**
  * What the agent did during one user turn, so its work is checked before it concludes:
@@ -23,45 +23,124 @@ export function isInspection(command: string): boolean {
   return segments.length > 0 && segments.every((s) => INSPECT.test(s));
 }
 
+/** Redirections that change where output goes, never the exit code. */
+const HARMLESS_REDIRECT = /\s*(?:\d?>&\d|&>>?\s*\/dev\/null|\d?>>?\s*\/dev\/null)(?=\s|$|;|&|\|)/g;
+/** Programs that only shorten or filter a check's output (`npm test 2>&1 | tail -20`). */
+const FILTERS = new Set(['tail', 'head', 'grep', 'egrep', 'rg', 'sort', 'uniq', 'less', 'more', 'cat', 'wc', 'cut']);
+
 /**
- * Conservative recognition of validation commands, not proof of test coverage.
- * Unknown commands may still be useful, but must not silence the verification reminder.
- * Reject control flow that can hide a failed check behind a successful shell exit.
+ * Top-level shell structure: statements (;) of and-lists (&&) of pipelines (|), quotes honoured.
+ * Null when `||`, a background `&`, a newline or a substitution makes the exit status unreliable.
  */
-export function isCheckCommand(command: string): boolean {
-  if (mayWrite(command) || /\|\||[;|\n`]|(?<!&)&(?!&)|\$\(/.test(command)) return false;
-  const segments = splitCommand(command).map(parseSegment);
-  let found = false;
-  const task = /^(?:test|tests|check|typecheck|lint|build|verify|validate)(?:$|[:_-])/;
-  for (const segment of segments) {
-    const program = path.basename(segment.program);
-    const args = segment.args;
-    if (segment.subshell || segment.wrappers.some((w) => !['env', 'timeout', 'nice', 'command', 'time'].includes(w))) return false;
-    if (args.some((arg) => ['--version', '-V', '--help', '-h', '--listTests', '--list-tests', '--collect-only', '--init', '--showConfig', '--print-config', '--dry-run'].includes(arg))) return false;
-    if (args.includes('-v') && ['node', 'npm', 'pnpm', 'yarn', 'bun', 'npx', 'vitest', 'jest', 'tsc', 'eslint'].includes(program)) return false;
-    let check = false;
-    if (['npm', 'pnpm', 'yarn', 'bun'].includes(program)) {
-      const action = args[0] === 'run' ? args[1] : args[0];
-      check = args[0] === 'exec'
-        ? ['vitest', 'jest', 'tsc', 'eslint'].includes(args[1]) && args[2] !== 'list'
-        : task.test(action ?? '');
-    } else if (program === 'node') {
-      check = args.includes('--test') || args.includes('--check') || args.includes('-c');
-    } else if (['pytest', 'vitest', 'jest', 'tsc', 'eslint', 'tslint', 'mypy', 'pyright'].includes(program)) {
-      check = args[0] !== 'list';
-    } else if (program === 'npx') {
-      check = ['vitest', 'jest', 'tsc', 'eslint'].includes(args[0]) && args[1] !== 'list';
-    } else if (/^python(?:3(?:\.\d+)?)?$/.test(program)) {
-      check = args[0] === '-m' && ['pytest', 'unittest', 'py_compile', 'compileall'].includes(args[1]);
-    } else if (['cargo', 'go', 'dotnet', 'make'].includes(program)) {
-      check = task.test(args[0] ?? '');
-    } else if (program === 'ruff') {
-      check = args[0] === 'check';
+function shellStructure(command: string): string[][][] | null {
+  if (/[\n`]|\$\(/.test(command)) return null;
+  const statements: string[][][] = [];
+  let andList: string[][] = [];
+  let pipeline: string[] = [];
+  let word = '';
+  let quote: string | null = null;
+  const endStage = () => { pipeline.push(word.trim()); word = ''; };
+  const endPipeline = () => { endStage(); andList.push(pipeline); pipeline = []; };
+  const endStatement = () => { endPipeline(); statements.push(andList); andList = []; };
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    const next = command[i + 1];
+    if (quote) {
+      if (c === '\\' && quote === '"') { word += c + (next ?? ''); i++; continue; }
+      if (c === quote) quote = null;
+      word += c;
+      continue;
     }
-    if (!check && !isInspection(segment.raw)) return false;
-    found ||= check;
+    if (c === '\\') { word += c + (next ?? ''); i++; continue; }
+    if (c === '"' || c === "'") { quote = c; word += c; continue; }
+    if (c === '|' && next === '|') return null;
+    if (c === '&' && next === '&') { endPipeline(); i++; continue; }
+    if (c === '&') {
+      if (command[i - 1] === '>' || next === '>') { word += c; continue; }
+      return null;
+    }
+    if (c === '|') { endStage(); continue; }
+    if (c === ';') { endStatement(); continue; }
+    word += c;
   }
-  return found;
+  if (quote) return null;
+  if (word.trim() || pipeline.length || andList.length) endStatement();
+  if (!statements.length || statements.some((s) => s.some((p) => p.some((stage) => !stage)))) return null;
+  return statements;
+}
+
+const TASK = /^(?:test|tests|check|typecheck|lint|build|verify|validate)(?:$|[:_-])/;
+
+/** One simple command: a validation (tests, type check, lint, build), a look around, or something else. */
+function stageKind(stage: string): 'check' | 'inspect' | 'other' {
+  if (mayWrite(stage)) return 'other';
+  const segment = parseSegment(stage);
+  const program = path.basename(segment.program);
+  const args = segment.args;
+  if (segment.subshell || segment.wrappers.some((w) => !['env', 'timeout', 'nice', 'command', 'time'].includes(w))) return 'other';
+  if (args.some((arg) => ['--version', '-V', '--help', '-h', '--listTests', '--list-tests', '--collect-only', '--init', '--showConfig', '--print-config', '--dry-run'].includes(arg))) return 'other';
+  if (args.includes('-v') && ['node', 'npm', 'pnpm', 'yarn', 'bun', 'npx', 'vitest', 'jest', 'tsc', 'eslint'].includes(program)) return 'other';
+  let check = false;
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(program)) {
+    const action = args[0] === 'run' ? args[1] : args[0];
+    check = args[0] === 'exec'
+      ? ['vitest', 'jest', 'tsc', 'eslint'].includes(args[1]) && args[2] !== 'list'
+      : TASK.test(action ?? '');
+  } else if (program === 'node') {
+    check = args.includes('--test') || args.includes('--check') || args.includes('-c');
+  } else if (['pytest', 'vitest', 'jest', 'tsc', 'eslint', 'tslint', 'mypy', 'pyright'].includes(program)) {
+    check = args[0] !== 'list';
+  } else if (program === 'npx') {
+    check = ['vitest', 'jest', 'tsc', 'eslint'].includes(args[0]) && args[1] !== 'list';
+  } else if (/^python(?:3(?:\.\d+)?)?$/.test(program)) {
+    check = args[0] === '-m' && ['pytest', 'unittest', 'py_compile', 'compileall'].includes(args[1]);
+  } else if (['cargo', 'go', 'dotnet', 'make'].includes(program)) {
+    check = TASK.test(args[0] ?? '');
+  } else if (program === 'ruff') {
+    check = args[0] === 'check';
+  }
+  if (check) return 'check';
+  return isInspection(stage) ? 'inspect' : 'other';
+}
+
+/**
+ * Whether a command validates the work, recognized conservatively (not a proof of coverage):
+ * 'exact' when the command's exit code is the check's, 'unknown' when a filter such as
+ * `| tail -20` sets it (the check ran, its result is not known), null for no check, or a
+ * check whose failure could be hidden (`|| true`, `; true`, `&`, a write after it).
+ */
+export function checkStatus(command: string): 'exact' | 'unknown' | null {
+  const statements = shellStructure(command.replace(HARMLESS_REDIRECT, ''));
+  if (!statements) return null;
+  let found = false;
+  let exact = true;
+  for (const [si, andList] of statements.entries()) {
+    for (const pipeline of andList) {
+      for (const [pi, stage] of pipeline.entries()) {
+        if (pi > 0) {
+          if (!FILTERS.has(path.basename(parseSegment(stage).program)) || mayWrite(stage)) return null;
+          continue;
+        }
+        const kind = stageKind(stage);
+        if (kind === 'other') return null;
+        if (kind !== 'check') continue;
+        // A later statement would set the exit code: `npm test; true` hides a failure.
+        if (si < statements.length - 1) return null;
+        found = true;
+        if (pipeline.length > 1) exact = false;
+      }
+    }
+  }
+  return found ? (exact ? 'exact' : 'unknown') : null;
+}
+
+export function isCheckCommand(command: string): boolean {
+  return checkStatus(command) !== null;
+}
+
+/** The same check whatever its harmless redirections or spacing: `npm test 2>&1` is `npm test`. */
+function checkKey(command: string): string {
+  return command.replace(HARMLESS_REDIRECT, '').replace(/\s+/g, ' ').trim();
 }
 
 /** A command that may change files (sed -i, a redirection, git checkout, an install…). */
@@ -106,7 +185,8 @@ export class WorkTracker {
   /** A review of this turn's changes already ran. */
   reviewed = false;
   private readonly changed = new Map<string, number>();
-  private lastCheck?: { command: string; version: number; exitCode: number };
+  /** exitCode null: the check ran behind a filter (`| tail`), its result is unknown. */
+  private lastCheck?: { command: string; version: number; exitCode: number | null };
   private readonly failedChecks = new Map<string, { command: string; exitCode: number }>();
   private readonly sent = new Set<Reminder['kind']>();
   private readonly calls = new Map<string, number>();
@@ -123,12 +203,14 @@ export class WorkTracker {
   /** A foreground command and its output (the tool appends "[Exit code: N]" when it fails). */
   noteCommand(command: string, output: string): void {
     if (mayWrite(command)) this.version++;
-    if (!isCheckCommand(command)) return;
+    const status = checkStatus(command);
+    if (!status) return;
     const codes = [...output.matchAll(/^\[Exit code: (-?\d+)\]$/gm)];
-    const exitCode = codes.length ? Number(codes[codes.length - 1][1]) : /\[Command timed out/.test(output) ? 1 : 0;
+    const exitCode = status === 'unknown' ? null : codes.length ? Number(codes[codes.length - 1][1]) : /\[Command timed out/.test(output) ? 1 : 0;
     this.lastCheck = { command, version: this.version, exitCode };
-    if (exitCode === 0) this.failedChecks.delete(command.trim());
-    else this.failedChecks.set(command.trim(), { command, exitCode });
+    // A result behind a filter neither clears nor records a failure.
+    if (exitCode === 0) this.failedChecks.delete(checkKey(command));
+    else if (exitCode !== null) this.failedChecks.set(checkKey(command), { command, exitCode });
   }
 
   changedFiles(): string[] {
@@ -190,7 +272,7 @@ export class WorkTracker {
         kind: 'verify',
         text: check
           ? `[Before you finish] You changed ${listFiles(stale)} after your last check (\`${check.command}\`). Run the relevant check again, then give your final answer. If it cannot be checked here, say so plainly instead of claiming it works.`
-          : `[Before you finish] You changed ${listFiles(stale)} and ran no command to check the change. Run the relevant tests, type check or build now (or run the changed code), then give your final answer. If it cannot be checked here, say so plainly instead of claiming it works.`,
+          : `[Before you finish] You changed ${listFiles(stale)}, and no test, type check, lint or build command ran after the change. Run the relevant one now, then give your final answer. If the project has none or the change cannot be checked here, say so plainly instead of claiming it works.`,
         notice: check ? 'Files changed after the last check · asking to check again' : 'No check run after the changes · asking to verify',
       };
     }
@@ -199,7 +281,7 @@ export class WorkTracker {
       this.sent.add('failing');
       return {
         kind: 'failing',
-        text: `[Before you finish] A check still needs attention: \`${failure.command}\` exited with code ${failure.exitCode}. Fix the cause and run it again. A different passing check does not resolve this failure. If the failure is unrelated to your change or expected, say so plainly in your final answer.`,
+        text: `[Before you finish] A check still needs attention: \`${failure.command}\` exited with code ${failure.exitCode}. Fix the cause and run it again as is, without piping its output, so its exit code shows. A different passing check does not resolve this failure. If the failure is unrelated to your change or expected, say so plainly in your final answer.`,
         notice: `A check failed (exit ${failure.exitCode}) · asking to fix it or explain`,
       };
     }

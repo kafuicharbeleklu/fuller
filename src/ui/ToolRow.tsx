@@ -130,6 +130,7 @@ export const ToolRow: React.FC<ToolRowProps> = ({ toolCall, verbose, frame, elap
       }
       case 'search_files':
       case 'glob':
+      case 'outline_file':
       case 'list_directory': {
         const result = toolCall.result ?? '';
         if (!verbose) {

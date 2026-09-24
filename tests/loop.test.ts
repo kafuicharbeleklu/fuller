@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const calls: any[] = [];
 let oneShotReply = '';
+let refreshes = 0;
 let script: Array<{ text?: string; functionCalls?: any[]; finishReason?: string; error?: Error; retry?: boolean }> = [];
 
 vi.mock('../src/agent/gemini.js', () => {
@@ -17,7 +18,7 @@ vi.mock('../src/agent/gemini.js', () => {
     setExtraInstructions() {}
     setSubagents() {}
     initChat() {}
-    refresh() {}
+    refresh() { refreshes++; }
     getHistory() { return []; }
     repairHistory() { calls.push({ kind: 'repair' }); }
     resetWithSummary() {}
@@ -455,7 +456,7 @@ describe('AgentLoop', () => {
       const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
       await loop.handleUserInput('add x');
       expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'user', 'tools']);
-      expect(calls[2].text).toContain('[Before you finish] You changed `x.js` and ran no command to check the change');
+      expect(calls[2].text).toContain('[Before you finish] You changed `x.js`, and no test, type check, lint or build command ran after the change');
       expect(notices(items)).toContain('↺ No check run after the changes · asking to verify');
       expect(items.some((i) => i.kind === 'text' && i.content === 'Checked: x.js parses.')).toBe(true);
     });
@@ -483,7 +484,7 @@ describe('AgentLoop', () => {
       ];
       const { cb } = approveAll();
       await new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb).handleUserInput('add x');
-      expect(calls[3].text).toContain('ran no command to check the change');
+      expect(calls[3].text).toContain('no test, type check, lint or build command ran after the change');
     });
 
     it('repairs a dangling call at the turn limit before the next user message', async () => {
@@ -631,6 +632,51 @@ describe('AgentLoop', () => {
       expect(notices(items).some((n) => n.includes('Review inconclusive'))).toBe(true);
       expect(notices(items).some((n) => n.includes('no problem found'))).toBe(false);
     });
+  });
+
+  it('uses outline_file in plan mode, as a read', async () => {
+    fs.writeFileSync(path.join(cwd, 'm.ts'), 'export class M {\n  run(): void {}\n}\n');
+    script = [{ functionCalls: [{ id: 'o', name: 'outline_file', args: { file_path: 'm.ts' } }] }, { text: 'M has run().' }];
+    const asked: unknown[] = [];
+    const { cb } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) asked.push(c); } });
+    const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'plan' }), cb);
+    await loop.handleUserInput('outline m.ts');
+    expect(asked).toHaveLength(0);
+    expect(calls[1].responses[0].output).toContain('2: [method] run(): void');
+  });
+
+  it('rebuilds the instructions after the turn, never under a reply in progress', async () => {
+    script = [{ functionCalls: [{ id: 'w', name: 'write_file', args: { file_path: 'n.txt', content: 'x' } }] }, { text: 'done' }];
+    let approve!: () => void;
+    const { cb } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) approve = () => c.onDecide({ kind: 'yes' }); } });
+    const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+    const before = refreshes;
+    const turn = loop.handleUserInput('write');
+    for (let i = 0; i < 50 && !approve; i++) await new Promise((r) => setTimeout(r, 5));
+    loop.reloadInstructions();
+    expect(refreshes).toBe(before);
+    approve();
+    await turn;
+    expect(refreshes).toBe(before + 1);
+    loop.reloadInstructions();
+    expect(refreshes).toBe(before + 2);
+  });
+
+  it('/learn saves the note and reloads the instructions for the next message', async () => {
+    const { COMMANDS } = await import('../src/ui/commands.js');
+    const learn = COMMANDS.find((c) => c.name === '/learn')!;
+    const shown: string[] = [];
+    let reloads = 0;
+    const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+    const ctx = { agent: { reloadInstructions: () => { reloads++; } }, config, addSystem: (t: string) => shown.push(t) } as any;
+    await learn.run(ctx, 'Always run vitest with --run');
+    expect(reloads).toBe(1);
+    expect(shown[0]).toContain('Fuller follows it from your next message');
+    const { loadMemories } = await import('../src/agent/autoMemory.js');
+    expect(loadMemories(cwd).map((m) => m.text)).toContain('Always run vitest with --run');
+    config.settings.autoMemory = false;
+    await learn.run(ctx, 'Prefer pnpm');
+    expect(shown[1]).toContain('Learned memory is off');
   });
 
   describe('hooks', () => {

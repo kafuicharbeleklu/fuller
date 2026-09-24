@@ -43,3 +43,22 @@ Sur les 7 tâches notées des deux côtés : 7 → 7 réussites, 256 050 → 252
 - **Quota** : le quota du jour de Gemini 3.6 Flash était épuisé sur toutes les clés le 24/09 au soir ; il revient à minuit, heure du Pacifique. Un 429 peut aussi être une simple limite par minute : `--check-keys` ou un seul appel suffit pour savoir.
 - **Commits** : sujets courts en français ; indexer seulement ses propres fichiers. `reports/Comparaison_Recherches_Fuller_Codex.md` est un fichier de Codex resté hors git : je ne l'ai ni modifié ni commité.
 - Poussée : `git push origin main` (SSH) ; si SSH échoue, `git -c credential.helper='!gh auth git-credential' push https://github.com/kafuicharbeleklu/fuller.git main`.
+
+## 6. Mise à jour du 24/09 au soir — corrections après la revue croisée
+
+Les notes de [Codex](Note_de_passation_Codex.md) et d'[Antigravity](Note_de_passation_Antigravity.md) ont été lues. Codex et moi avons reproduit les mêmes défauts dans `outline_file` et `/learn` ; l'utilisateur m'a confié les corrections. Codex n'a rien modifié entre-temps.
+
+| Point | Avant | Maintenant | Fichiers |
+|---|---|---|---|
+| `outline_file` et les permissions | « outil inconnu » : confirmation en mode normal, **refus en mode plan**, absent d'Explore et du relecteur | Une lecture partout : permissions (`TOOL_DISPLAY` → `Read`, donc les règles `Read(...)` s'appliquent), mode plan, exécution en parallèle, Explore, relecteur, affichage replié | `src/permissions/rules.ts`, `src/agent/loop.ts`, `src/agent/subagents.ts`, `src/agent/review.ts`, `src/ui/ToolRow.tsx`, `src/ui/ToolGroup.tsx` |
+| `outline_file` et le contenu | Motifs seuls : 13 symboles sur `loop.ts`, aucune méthode de classe, déclarations sur plusieurs lignes manquées | JS/TS : analyseur TypeScript du projet, sinon celui de Fuller (pas une dépendance d'exécution) ; méthodes, constructeurs, accesseurs, plages de lignes (86 symboles sur `loop.ts`). Sans TypeScript : motifs avec suivi des accolades (chaînes, gabarits, commentaires et expressions régulières sautés) ; sur les 101 fichiers TS de Fuller, 98 % des 809 symboles de l'analyseur, aucun faux positif | `src/tools/outline.ts` |
+| `/learn` | Note enregistrée mais absente de la session en cours | Consignes rechargées ; pendant un tour, rechargement à la fin du tour (reconstruire la conversation sous une réponse en cours la perdrait) ; message clair si la mémoire apprise est désactivée | `src/ui/commands.ts`, `src/agent/loop.ts` (`reloadInstructions`) |
+| Reconnaissance des contrôles (correctif A de Codex) | `npm test 2>&1` et `npm test 2>&1 \| tail -20` non reconnus : rappel faux (« aucune commande ») | `checkStatus()` : `exact` (y compris `2>&1`, `> /dev/null`, `cd x; npm test`), `unknown` derrière un filtre (`\| tail`, `\| head`, `\| grep`, `\| cat`…) : le contrôle compte comme lancé mais n'efface pas un échec connu ; `null` pour `\|\| true`, `; true`, `&`, `$(…)`, une écriture ou `\| tee`. Même contrôle malgré une redirection différente (`npm test` = `npm test 2>&1`). Textes des rappels corrigés | `src/agent/taskState.ts` |
+| Verdict du relecteur (correctif B de Codex) | Défauts écrits `` `src/a.js:3` — … ``, `**src/a.js:3** - …` ou `src/a.js:3: …` jetés comme « non concluants » | Ces formes comptent comme défauts ; `NO_ISSUES` accepté comme dernière ligne ou dernière phrase (« No defect found. NO_ISSUES ») ; « I cannot say NO_ISSUES. » reste non concluant | `src/agent/review.ts` |
+
+Vérifications : `npm run typecheck`, 429 tests (26 de plus), `npm run build`, `--verify-solutions` 8/8, `--baseline` 8/8, `tui-smoke.py` 11/11 à deux reprises. Un premier passage de `tui-smoke.py` a échoué une fois sur le sélecteur de modèle en plein écran (« the conversation disappeared above the picker ») puis a réussi deux fois : même instabilité de synchronisation que celle de `tests/sessionPicker.test.tsx` signalée par Codex, cause non établie.
+
+Toujours non vérifié : aucun de ces changements n'a tourné contre l'API réelle ; l'effet d'`outline_file` sur la qualité ou les tokens n'est pas mesuré.
+
+Risque vu en passant, non corrigé : `setPermissionMode()` (Maj+Tab) reconstruit la conversation immédiatement, même pendant une réponse en cours. D'après le fonctionnement du SDK (l'échange n'entre dans l'historique qu'à la fin du flux), cela pourrait perdre l'échange en cours. Non reproduit ; à vérifier avant de corriger.
+

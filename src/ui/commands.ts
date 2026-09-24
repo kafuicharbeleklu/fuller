@@ -530,7 +530,11 @@ export const COMMANDS: SlashCommand[] = [
         ctx.addSystem(`Note already in memory: "${res.duplicate.text}" [${res.duplicate.id}]`);
         return;
       }
-      ctx.addSystem(`✓ Saved to project memory [${res.entry?.id}]: "${res.entry?.text}"\nThis note will be loaded in future turns and sessions.`);
+      // The notes live in the system prompt: rebuild it so the next message already sees this one.
+      ctx.agent.reloadInstructions();
+      ctx.addSystem(ctx.config.settings.autoMemory === false
+        ? `✓ Saved to project memory [${res.entry?.id}]: "${res.entry?.text}"\nLearned memory is off (/config → Learned memory): the note is not used until you turn it on.`
+        : `✓ Saved to project memory [${res.entry?.id}]: "${res.entry?.text}"\nFuller follows it from your next message, in this session and the next ones.`);
     },
   },
   {

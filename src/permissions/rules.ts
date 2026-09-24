@@ -12,6 +12,8 @@ export interface PermissionRule {
 export const TOOL_DISPLAY: Record<string, string> = {
   execute_bash: 'Bash',
   read_file: 'Read',
+  // An outline reads the file: Read(...) allow, ask and deny rules apply to it too.
+  outline_file: 'Read',
   write_file: 'Write',
   edit_file: 'Edit',
   list_directory: 'List',
@@ -107,7 +109,7 @@ export interface Evaluation {
 export function toolTarget(name: string, args: Record<string, any>): string {
   switch (name) {
     case 'execute_bash': return String(args.command ?? '');
-    case 'read_file': case 'write_file': case 'edit_file': return String(args.file_path ?? '');
+    case 'read_file': case 'outline_file': case 'write_file': case 'edit_file': return String(args.file_path ?? '');
     case 'list_directory': return String(args.dir_path ?? '.');
     case 'search_files': return String(args.path ?? '.');
     case 'glob': return String(args.pattern ?? '');
@@ -124,7 +126,7 @@ export function baseRisk(name: string, args: Record<string, any>, cwd: string): 
       const c = classifyCommand(String(args.command ?? ''), cwd);
       return { risk: c.risk, reason: c.reason };
     }
-    case 'read_file': case 'list_directory': case 'search_files': case 'glob': case 'skill': case 'todo_write': case 'task_output': case 'task_kill': case 'exit_plan_mode': case 'agent': case 'memory':
+    case 'read_file': case 'outline_file': case 'list_directory': case 'search_files': case 'glob': case 'skill': case 'todo_write': case 'task_output': case 'task_kill': case 'exit_plan_mode': case 'agent': case 'memory':
       return { risk: 'read', reason: '' };
     case 'write_file': case 'edit_file':
       return { risk: 'edit', reason: '' };

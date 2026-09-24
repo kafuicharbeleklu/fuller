@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { WorkTracker, isInspection, isCheckCommand, mayWrite, isDocFile, REPEAT_LIMIT, FAILURE_LIMIT } from '../src/agent/taskState.js';
+import { WorkTracker, checkStatus, isInspection, isCheckCommand, mayWrite, isDocFile, REPEAT_LIMIT, FAILURE_LIMIT } from '../src/agent/taskState.js';
 import { turnDiff, isRisky, parseReview, reviewPrompt } from '../src/agent/review.js';
 
 describe('commands', () => {
@@ -20,10 +20,18 @@ describe('commands', () => {
     'npm install', 'npm run dev', 'node cli.js', 'node -e "console.log(1)"',
     'npx tsc --init', 'npx jest --showConfig', 'vitest list', 'npx vitest list', 'pnpm exec vitest list',
     'npm test && echo replacement > src/a.js', 'npm test && npm install',
-    'echo "npm test"', 'npm test || true', 'npm test; true', 'npm test | cat',
+    'echo "npm test"', 'npm test || true', 'npm test; true', 'npm test | tee log.txt',
     'npm test &', 'echo "$(npm test)"', 'xargs npm test',
   ])('does not mistake an unrelated or masked command for a check: %s', (command) => {
     expect(isCheckCommand(command)).toBe(false);
+  });
+
+  it.each([
+    ['npm test 2>&1', 'exact'], ['npm test > /dev/null 2>&1', 'exact'], ['cd app; npm test', 'exact'], ['node --test 2>/dev/null', 'exact'],
+    ['npm test 2>&1 | tail -20', 'unknown'], ['npm test | cat', 'unknown'], ['cd app && npx tsc --noEmit 2>&1 | head -30', 'unknown'],
+    ['node -e "a; b | c"', null], ['npm test | tee log.txt', null], ['npm test | xargs echo', null], ['npm test; true', null],
+  ])('knows whether the exit code is the check\'s: %s → %s', (command, status) => {
+    expect(checkStatus(command)).toBe(status);
   });
 
   it('tells looking around from checking', () => {
@@ -56,7 +64,7 @@ describe('WorkTracker.beforeConclude', () => {
     work.noteChanges(['src/a.js']);
     const reminder = work.beforeConclude(null);
     expect(reminder?.kind).toBe('verify');
-    expect(reminder?.text).toContain('`src/a.js` and ran no command to check the change');
+    expect(reminder?.text).toContain('`src/a.js`, and no test, type check, lint or build command ran after the change');
     // Once per turn: the model may then conclude honestly.
     expect(work.beforeConclude(null)).toBeNull();
   });
@@ -77,6 +85,29 @@ describe('WorkTracker.beforeConclude', () => {
     const reminder = work.beforeConclude(null);
     expect(reminder?.kind).toBe('verify');
     expect(reminder?.text).toContain('changed `src/b.js` after your last check (`node --test`)');
+  });
+
+  it('counts a check behind a filter as run, without clearing a known failure', () => {
+    const work = new WorkTracker();
+    work.noteChanges(['src/a.js']);
+    work.noteCommand('npm test 2>&1 | tail -20', 'ok 1');
+    expect(work.beforeConclude(null)).toBeNull();
+
+    const failing = new WorkTracker();
+    failing.noteChanges(['src/a.js']);
+    failing.noteCommand('npm test', 'not ok 1\n\n[Exit code: 1]');
+    failing.noteCommand('npm test | tail -5', 'ok 1');
+    const reminder = failing.beforeConclude(null);
+    expect(reminder?.kind).toBe('failing');
+    expect(reminder?.text).toContain('without piping its output');
+  });
+
+  it('treats the same check with a harmless redirection as the same check', () => {
+    const work = new WorkTracker();
+    work.noteChanges(['src/a.js']);
+    work.noteCommand('npm test', 'not ok 1\n\n[Exit code: 1]');
+    work.noteCommand('npm  test 2>&1', 'ok 1');
+    expect(work.beforeConclude(null)).toBeNull();
   });
 
   it('asks to fix or explain a failed last check', () => {
@@ -206,6 +237,20 @@ describe('review', () => {
     expect(parseReview('**NO_ISSUES**')).toEqual({ status: 'clean' });
     expect(parseReview('src/a.js:3 — off by one — the last item is skipped')).toMatchObject({ status: 'issues', text: expect.stringContaining('src/a.js:3') });
     expect(parseReview('NO_ISSUES\nsrc/a.js:3 — off by one — the last item is skipped').status).toBe('issues');
+  });
+
+  it.each([
+    '- `src/a.js:3` — off by one — the last item is skipped',
+    '1. **src/a.js:3** - off by one',
+    'src/a.js:3: the last item is skipped',
+    'src/a.js:3-5 — the loop stops early',
+  ])('reads the usual ways of writing a defect: %s', (text) => {
+    expect(parseReview(text).status).toBe('issues');
+  });
+
+  it('accepts NO_ISSUES as the closing sentence or line', () => {
+    expect(parseReview('No defect found. NO_ISSUES')).toEqual({ status: 'clean' });
+    expect(parseReview('I read the diff and the callers.\nNO_ISSUES')).toEqual({ status: 'clean' });
   });
 
   it.each(['', '   ', '(the subagent returned no text)', 'Unable to review.', 'I cannot say NO_ISSUES.', '[Subagent stopped: max turns (12) reached]'])('keeps an unusable review inconclusive: %s', (text) => {

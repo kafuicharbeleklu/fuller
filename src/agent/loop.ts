@@ -65,7 +65,7 @@ export interface TurnOptions {
 /** How long the auto mode classifier may take before the user is asked. */
 const AUTO_MODE_TIMEOUT_MS = 30_000;
 
-const PARALLEL_READ_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob']);
+const PARALLEL_READ_TOOLS = new Set(['read_file', 'outline_file', 'list_directory', 'search_files', 'glob']);
 
 function safeLoadMcp(cwd: string) {
   try {
@@ -157,6 +157,8 @@ export class AgentLoop {
   private skills: SkillDefinition[] = [];
   private turnAllow: string[] = [];
   private todos: TodoItem[] = [];
+  /** reloadInstructions() was called during a turn. */
+  private instructionsStale = false;
   private background: BackgroundTaskManager;
   /** Background agents: /btw then f, or a task typed in the agents view. */
   private agentTasks: AgentTask[] = [];
@@ -573,7 +575,12 @@ export class AgentLoop {
   }
 
   /** Rebuild the system prompt and tools (e.g. learned memory turned on or off). */
+  /**
+   * Rebuild the system prompt (memory notes, instructions). During a turn the chat is not
+   * rebuilt under a streaming reply, which would lose it: it happens when the turn ends.
+   */
   public reloadInstructions() {
+    if (this.processing) { this.instructionsStale = true; return; }
     this.session.refresh();
   }
 
@@ -935,6 +942,10 @@ export class AgentLoop {
       this.turnAllow = [];
       this.callbacks.onStatusChange('idle');
       this.scheduleSave();
+      if (this.instructionsStale) {
+        this.instructionsStale = false;
+        this.session.refresh();
+      }
     }
     await this.maybeAutoCompact();
     if (stopHookContinue) {

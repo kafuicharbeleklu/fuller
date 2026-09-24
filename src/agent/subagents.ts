@@ -17,7 +17,7 @@ export interface SubagentDefinition {
   file?: string;
 }
 
-const READ_ONLY = ['read_file', 'list_directory', 'search_files', 'glob', 'web_fetch'];
+const READ_ONLY = ['read_file', 'outline_file', 'list_directory', 'search_files', 'glob', 'web_fetch'];
 
 export const BUILT_IN_SUBAGENTS: SubagentDefinition[] = [
   {

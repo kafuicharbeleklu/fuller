@@ -57,7 +57,7 @@ export function isRisky(diff: TurnDiff): boolean {
 export const REVIEWER: SubagentDefinition = {
   name: 'reviewer',
   description: 'Reviews the changes of a turn before the agent concludes.',
-  tools: ['read_file', 'list_directory', 'search_files', 'glob'],
+  tools: ['read_file', 'outline_file', 'list_directory', 'search_files', 'glob'],
   maxTurns: 12,
   prompt: 'You are a strict, read-only code reviewer. Never modify files.',
   scope: 'built-in',
@@ -90,10 +90,19 @@ export type ReviewVerdict =
   | { status: 'issues'; text: string }
   | { status: 'inconclusive' };
 
+/**
+ * A defect line: `path:line — problem`, as asked, or the usual variants a model writes (a list
+ * marker, the location in backticks or bold, a colon or a dash after it).
+ */
+const DEFECT = /^\s*(?:[-*•]|\d+[.)])?\s*(?:\*\*|__|`)?[^\s`*]+:\d+(?:[-–]\d+)?(?:\*\*|__|`)?\s*(?:[—–:-]\s*)?\S/m;
+/** NO_ISSUES as the whole reply, its last line, or its closing sentence ("No defect found. NO_ISSUES"). */
+const CLEAN = /(?:^|\n|[.!]\s+)[\s`*_]*NO_ISSUES[\s`*_.]*$/;
+
 /** Only an explicit verdict counts as a completed review. */
 export function parseReview(text: string): ReviewVerdict {
   const t = text.trim();
-  if (/^[\s`*_]*NO_ISSUES[\s`*_.]*$/.test(t)) return { status: 'clean' };
-  if (!/^\s*(?:[-*]|\d+[.)])?\s*\S+:\d+\s+[—–-]\s+\S/m.test(t)) return { status: 'inconclusive' };
+  const defects = DEFECT.test(t);
+  if (!defects && CLEAN.test(t)) return { status: 'clean' };
+  if (!defects) return { status: 'inconclusive' };
   return { status: 'issues', text: t.length > 4000 ? `${t.slice(0, 4000)}\n[review cut]` : t };
 }

@@ -12,7 +12,7 @@ export interface ToolGroupItem {
 
 export type DisplayItem = TranscriptItem | ToolGroupItem;
 
-const COLLAPSIBLE = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'execute_bash', 'web_fetch']);
+const COLLAPSIBLE = new Set(['read_file', 'outline_file', 'list_directory', 'search_files', 'glob', 'execute_bash', 'web_fetch']);
 const LISTING = /^\s*(?:ls|tree|find)(?:\s|$)/;
 
 /**
@@ -48,7 +48,7 @@ const plural = (count: number, one: string, many: string) => (count === 1 ? one 
 /** The parts of the summary line, e.g. [["Read", 1, "file"], ["listed", 1, "directory"]]. */
 export function toolGroupParts(tools: ToolCallState[]): Array<[string, number, string]> {
   const count = (test: (tool: ToolCallState) => boolean) => tools.filter(test).length;
-  const reads = count((tool) => tool.name === 'read_file');
+  const reads = count((tool) => tool.name === 'read_file' || tool.name === 'outline_file');
   const listings = count((tool) => tool.name === 'list_directory' || (tool.name === 'execute_bash' && LISTING.test(String(tool.args.command ?? ''))));
   const searches = count((tool) => tool.name === 'search_files' || tool.name === 'glob');
   const shells = count((tool) => tool.name === 'execute_bash');
