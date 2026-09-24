@@ -11,6 +11,7 @@
     "url": "https://github.com/kafuicharbeleklu/fuller/issues"
   },
   "license": "MIT",
+  "author": "Kafui Charbel EKLU",
   "type": "module",
   "bin": {
     "fuller": "./bin/fuller.js"
