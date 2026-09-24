@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const calls: any[] = [];
 let oneShotReply = '';
-let script: Array<{ text?: string; functionCalls?: any[]; error?: Error; retry?: boolean }> = [];
+let script: Array<{ text?: string; functionCalls?: any[]; finishReason?: string; error?: Error; retry?: boolean }> = [];
 
 vi.mock('../src/agent/gemini.js', () => {
   class GeminiAgentSession {
@@ -19,7 +19,7 @@ vi.mock('../src/agent/gemini.js', () => {
     initChat() {}
     refresh() {}
     getHistory() { return []; }
-    repairHistory() {}
+    repairHistory() { calls.push({ kind: 'repair' }); }
     resetWithSummary() {}
     switchModel() {}
     chainMinWindow() { return 1_048_576; }
@@ -38,13 +38,13 @@ vi.mock('../src/agent/gemini.js', () => {
       if (step.retry) opts?.onRetry?.({ attempt: 4, maxAttempts: 5, delayMs: 8000, status: 429 });
       if (step.text) opts?.onChunk?.(step.text);
       if (step.error) throw step.error;
-      return { text: step.text ?? '', functionCalls: step.functionCalls ?? [], usage: { promptTokens: 10, responseTokens: 5, totalTokens: 15, thoughtsTokens: 0 } };
+      return { text: step.text ?? '', functionCalls: step.functionCalls ?? [], finishReason: step.finishReason, usage: { promptTokens: 10, responseTokens: 5, totalTokens: 15, thoughtsTokens: 0 } };
     }
     async compactHistory() { return 'summary'; }
     async oneShot(question: string) { calls.push({ kind: 'oneShot', text: question }); return oneShotReply; }
   }
   class QuotaExhaustedError extends Error {}
-  return { GeminiAgentSession, QuotaExhaustedError, historyToText: () => '', sanitizeHistory: (h: any) => h };
+  return { GeminiAgentSession, QuotaExhaustedError, BLOCKED_FINISH_REASONS: new Set(['SAFETY', 'RECITATION']), historyToText: () => '', sanitizeHistory: (h: any) => h };
 });
 
 import { AgentLoop, type AgentCallbacks } from '../src/agent/loop.js';
@@ -463,7 +463,7 @@ describe('AgentLoop', () => {
     it('asks to fix or explain a failed check', async () => {
       script = [
         { functionCalls: [{ id: '1', name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
-        { functionCalls: [{ id: '2', name: 'execute_bash', args: { command: 'node -e "process.exit(3)"' } }] },
+        { functionCalls: [{ id: '2', name: 'execute_bash', args: { command: 'node --check missing.js' } }] },
         { text: 'Done.' },
         { text: 'The check fails for a reason unrelated to x.js.' },
       ];
@@ -471,7 +471,38 @@ describe('AgentLoop', () => {
       const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
       await loop.handleUserInput('add x');
       expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'tools', 'user']);
-      expect(calls[3].text).toContain('exited with code 3');
+      expect(calls[3].text).toContain('exited with code 1');
+    });
+
+    it('still asks for verification after an unrelated successful command', async () => {
+      script = [
+        { functionCalls: [{ name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { functionCalls: [{ name: 'execute_bash', args: { command: 'node --version' } }] },
+        { text: 'Done.' },
+        { text: 'I have not checked the change.' },
+      ];
+      const { cb } = approveAll();
+      await new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb).handleUserInput('add x');
+      expect(calls[3].text).toContain('ran no command to check the change');
+    });
+
+    it('repairs a dangling call at the turn limit before the next user message', async () => {
+      script = [
+        { functionCalls: [{ id: 'first', name: 'read_file', args: { file_path: 'a.txt' } }] },
+        { functionCalls: [{ id: 'pending', name: 'read_file', args: { file_path: 'a.txt' } }] },
+        { text: 'Resumed.' },
+      ];
+      const { cb, items } = makeCallbacks();
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      config.maxTurns = 1;
+      const loop = new AgentLoop(config, cb);
+      await loop.handleUserInput('read');
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'repair']);
+      expect(notices(items).some((n) => n.includes('Max turns reached'))).toBe(true);
+      expect(items.filter((i) => i.kind === 'tool')).toHaveLength(1);
+      await loop.handleUserInput('continue');
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'repair', 'user']);
+      expect(items.some((i) => i.kind === 'text' && i.content === 'Resumed.')).toBe(true);
     });
 
     it('can be turned off', async () => {
@@ -539,6 +570,66 @@ describe('AgentLoop', () => {
       const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
       await loop.handleUserInput('add x');
       expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'tools']);
+    });
+
+    it.each(['', 'Unable to complete this review.'])('never reports an unusable review as clean: %s', async (text) => {
+      script = [
+        { functionCalls: [{ name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { functionCalls: [{ name: 'execute_bash', args: { command: 'node --check x.js' } }] },
+        { text: 'Done.' },
+        { text },
+      ];
+      const { cb, items } = approveAll();
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      config.settings.reviewChanges = 'always';
+      await new AgentLoop(config, cb).handleUserInput('add x');
+      expect(notices(items).some((n) => n.includes('Review inconclusive'))).toBe(true);
+      expect(notices(items).some((n) => n.includes('no problem found'))).toBe(false);
+    });
+
+    it('reports an explicit, completed clean review', async () => {
+      script = [
+        { functionCalls: [{ name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { text: 'Done.' },
+        { text: 'NO_ISSUES', finishReason: 'STOP' },
+      ];
+      const { cb, items } = approveAll();
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      config.settings.verifyWork = false;
+      config.settings.reviewChanges = 'always';
+      await new AgentLoop(config, cb).handleUserInput('add x');
+      expect(notices(items)).toContain('✓ Review: no problem found in the changes');
+    });
+
+    it.each(['MAX_TOKENS', 'SAFETY'])('does not accept a review stopped with %s', async (finishReason) => {
+      script = [
+        { functionCalls: [{ name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { text: 'Done.' },
+        { text: 'NO_ISSUES', finishReason },
+      ];
+      const { cb, items } = approveAll();
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      config.settings.verifyWork = false;
+      config.settings.reviewChanges = 'always';
+      await new AgentLoop(config, cb).handleUserInput('add x');
+      expect(notices(items).some((n) => n.includes('Review inconclusive'))).toBe(true);
+      expect(notices(items).some((n) => n.includes('no problem found'))).toBe(false);
+    });
+
+    it('does not reuse a pre-tool reviewer verdict when the final reply is empty', async () => {
+      script = [
+        { functionCalls: [{ name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { text: 'Done.' },
+        { text: 'NO_ISSUES', functionCalls: [{ name: 'read_file', args: { file_path: 'x.js' } }] },
+        { text: '' },
+      ];
+      const { cb, items } = approveAll();
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      config.settings.verifyWork = false;
+      config.settings.reviewChanges = 'always';
+      await new AgentLoop(config, cb).handleUserInput('add x');
+      expect(notices(items).some((n) => n.includes('Review inconclusive'))).toBe(true);
+      expect(notices(items).some((n) => n.includes('no problem found'))).toBe(false);
     });
   });
 

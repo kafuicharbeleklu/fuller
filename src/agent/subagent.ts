@@ -32,6 +32,8 @@ export interface SubagentRunParams {
 
 export interface SubagentResult {
   text: string;
+  /** False for a stopped/truncated/refused turn, even when it contains text. */
+  completed: boolean;
   toolCount: number;
   turns: number;
   tokens: number;
@@ -74,7 +76,8 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
   let finalText = turn.text;
   for (;;) {
     if (turn.usage) { tokens += turn.usage.totalTokens; params.onUsage?.(turn.usage); }
-    if (turn.text) finalText = turn.text;
+    // The caller needs the final turn, never a stale pre-tool claim of success.
+    finalText = turn.text;
     if (turn.functionCalls.length === 0) break;
     turns++;
     if (turns > definition.maxTurns) {
@@ -133,5 +136,6 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
     }
     turn = await session.sendToolResponses(responses, { signal });
   }
-  return { text: finalText.trim() || '(the subagent returned no text)', toolCount, turns, tokens };
+  const completed = turn.functionCalls.length === 0 && (!turn.finishReason || turn.finishReason === 'STOP');
+  return { text: finalText.trim() || '(the subagent returned no text)', completed, toolCount, turns, tokens };
 }

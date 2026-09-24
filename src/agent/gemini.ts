@@ -330,20 +330,7 @@ export class GeminiAgentSession {
 
   /** Drop trailing model function calls that never received a response (after an interruption). */
   public repairHistory() {
-    const history = this.getHistory();
-    while (history.length > 0) {
-      const last = history[history.length - 1];
-      if (last.role === 'model' && last.parts?.some((p) => p.functionCall)) {
-        history.pop();
-        continue;
-      }
-      if (last.role === 'user' && last.parts?.every((p) => p.functionResponse)) {
-        history.pop();
-        continue;
-      }
-      break;
-    }
-    this.initChat(history);
+    this.initChat(sanitizeHistory(this.getHistory()));
   }
 
   public sendUserMessage(userInput: string | Part[], options: StreamOptions = {}): Promise<ModelTurnOutput> {
@@ -542,7 +529,23 @@ export function sanitizeHistory(history: Content[]): Content[] {
   while (cleaned.length) {
     const last = cleaned[cleaned.length - 1];
     if (last.role === 'model' && last.parts?.some((p) => p.functionCall)) { cleaned.pop(); continue; }
-    if (last.role === 'user' && last.parts?.every((p) => p.functionResponse)) { cleaned.pop(); continue; }
+    if (last.role === 'user' && last.parts?.some((p) => p.functionResponse)) {
+      const previous = cleaned[cleaned.length - 2];
+      const calls = previous?.role === 'model' ? (previous.parts ?? []).flatMap((p) => p.functionCall ? [p.functionCall] : []) : [];
+      const responses = (last.parts ?? []).flatMap((p) => p.functionResponse ? [p.functionResponse] : []);
+      // Keep complete tool exchanges, including their opaque thought signatures.
+      // Match each response once: two same-name calls still need two distinct responses.
+      const pending = [...calls];
+      const matched = responses.every((response) => {
+        const index = pending.findIndex((call) => call.name === response.name && call.id === response.id);
+        if (index < 0) return false;
+        pending.splice(index, 1);
+        return true;
+      });
+      if (calls.length > 0 && matched && pending.length === 0) break;
+      cleaned.pop();
+      continue;
+    }
     break;
   }
   return cleaned;

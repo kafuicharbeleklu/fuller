@@ -85,12 +85,15 @@ Review the changes against the request. Report only concrete defects: a requirem
 Reply with one line per defect: \`path:line — problem — why it matters\`. If you find no defect, reply exactly: NO_ISSUES`;
 }
 
-/** The defects found, or null when the reviewer found none (or said nothing usable). */
-export function parseReview(text: string): string | null {
+export type ReviewVerdict =
+  | { status: 'clean' }
+  | { status: 'issues'; text: string }
+  | { status: 'inconclusive' };
+
+/** Only an explicit verdict counts as a completed review. */
+export function parseReview(text: string): ReviewVerdict {
   const t = text.trim();
-  if (!t || t === '(the subagent returned no text)') return null;
-  if (/^[\s`*_]*NO_ISSUES[\s`*_.]*$/.test(t)) return null;
-  // Defects come as `path:line — …`: a reply that says NO_ISSUES and names none is clean.
-  if (/NO_ISSUES/.test(t) && !/\S+:\d+/.test(t)) return null;
-  return t.length > 4000 ? `${t.slice(0, 4000)}\n[review cut]` : t;
+  if (/^[\s`*_]*NO_ISSUES[\s`*_.]*$/.test(t)) return { status: 'clean' };
+  if (!/^\s*(?:[-*]|\d+[.)])?\s*\S+:\d+\s+[—–-]\s+\S/m.test(t)) return { status: 'inconclusive' };
+  return { status: 'issues', text: t.length > 4000 ? `${t.slice(0, 4000)}\n[review cut]` : t };
 }

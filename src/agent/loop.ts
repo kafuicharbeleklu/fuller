@@ -818,6 +818,7 @@ export class AgentLoop {
         turns++;
         this.usage.turns++;
         if (turns > this.config.maxTurns) {
+          this.session.repairHistory();
           this.addSystemMessage(`⚠ Max turns reached (${this.config.maxTurns}). Stopping. Ask to continue if needed.`, 'notice');
           break;
         }
@@ -1127,13 +1128,17 @@ export class AgentLoop {
         runInTerminal: this.callbacks.runInTerminal,
       });
       this.callbacks.onNotice(null);
-      const issues = parseReview(result.text);
-      if (!issues) {
+      const review = parseReview(result.text);
+      if (!result.completed || review.status === 'inconclusive') {
+        this.addSystemMessage('⚠ Review inconclusive: no complete, usable verdict returned; the changes are not independently validated', 'notice');
+        return null;
+      }
+      if (review.status === 'clean') {
         this.addSystemMessage('✓ Review: no problem found in the changes', 'notice');
         return null;
       }
       this.addSystemMessage('↺ Review found possible problems · asking to check them', 'notice');
-      return `[Independent review] Another agent read your changes and reports:\n\n${issues}\n\nCheck each point against the code. Fix the real problems and run the relevant checks again; dismiss the wrong ones in one line each. Then give your final answer.`;
+      return `[Independent review] Another agent read your changes and reports:\n\n${review.text}\n\nCheck each point against the code. Fix the real problems and run the relevant checks again; dismiss the wrong ones in one line each. Then give your final answer.`;
     } catch (err: any) {
       this.callbacks.onNotice(null);
       if (err?.message === 'Interrupted' || signal.aborted) throw new Error('Interrupted');

@@ -1,4 +1,6 @@
 import type { TodoItem } from './types.js';
+import path from 'node:path';
+import { parseSegment, splitCommand } from '../permissions/bashParser.js';
 
 /**
  * What the agent did during one user turn, so its work is checked before it concludes:
@@ -19,6 +21,47 @@ const INSPECT = /^(cd|ls|cat|head|tail|less|grep|egrep|rg|ag|find|fd|tree|pwd|ec
 export function isInspection(command: string): boolean {
   const segments = command.split(/&&|\|\||;|\|/).map((s) => s.trim()).filter(Boolean);
   return segments.length > 0 && segments.every((s) => INSPECT.test(s));
+}
+
+/**
+ * Conservative recognition of validation commands, not proof of test coverage.
+ * Unknown commands may still be useful, but must not silence the verification reminder.
+ * Reject control flow that can hide a failed check behind a successful shell exit.
+ */
+export function isCheckCommand(command: string): boolean {
+  if (mayWrite(command) || /\|\||[;|\n`]|(?<!&)&(?!&)|\$\(/.test(command)) return false;
+  const segments = splitCommand(command).map(parseSegment);
+  let found = false;
+  const task = /^(?:test|tests|check|typecheck|lint|build|verify|validate)(?:$|[:_-])/;
+  for (const segment of segments) {
+    const program = path.basename(segment.program);
+    const args = segment.args;
+    if (segment.subshell || segment.wrappers.some((w) => !['env', 'timeout', 'nice', 'command', 'time'].includes(w))) return false;
+    if (args.some((arg) => ['--version', '-V', '--help', '-h', '--listTests', '--list-tests', '--collect-only', '--init', '--showConfig', '--print-config', '--dry-run'].includes(arg))) return false;
+    if (args.includes('-v') && ['node', 'npm', 'pnpm', 'yarn', 'bun', 'npx', 'vitest', 'jest', 'tsc', 'eslint'].includes(program)) return false;
+    let check = false;
+    if (['npm', 'pnpm', 'yarn', 'bun'].includes(program)) {
+      const action = args[0] === 'run' ? args[1] : args[0];
+      check = args[0] === 'exec'
+        ? ['vitest', 'jest', 'tsc', 'eslint'].includes(args[1]) && args[2] !== 'list'
+        : task.test(action ?? '');
+    } else if (program === 'node') {
+      check = args.includes('--test') || args.includes('--check') || args.includes('-c');
+    } else if (['pytest', 'vitest', 'jest', 'tsc', 'eslint', 'tslint', 'mypy', 'pyright'].includes(program)) {
+      check = args[0] !== 'list';
+    } else if (program === 'npx') {
+      check = ['vitest', 'jest', 'tsc', 'eslint'].includes(args[0]) && args[1] !== 'list';
+    } else if (/^python(?:3(?:\.\d+)?)?$/.test(program)) {
+      check = args[0] === '-m' && ['pytest', 'unittest', 'py_compile', 'compileall'].includes(args[1]);
+    } else if (['cargo', 'go', 'dotnet', 'make'].includes(program)) {
+      check = task.test(args[0] ?? '');
+    } else if (program === 'ruff') {
+      check = args[0] === 'check';
+    }
+    if (!check && !isInspection(segment.raw)) return false;
+    found ||= check;
+  }
+  return found;
 }
 
 /** A command that may change files (sed -i, a redirection, git checkout, an install…). */
@@ -64,6 +107,7 @@ export class WorkTracker {
   reviewed = false;
   private readonly changed = new Map<string, number>();
   private lastCheck?: { command: string; version: number; exitCode: number };
+  private readonly failedChecks = new Map<string, { command: string; exitCode: number }>();
   private readonly sent = new Set<Reminder['kind']>();
   private readonly calls = new Map<string, number>();
   private readonly failures = new Map<string, number>();
@@ -79,10 +123,12 @@ export class WorkTracker {
   /** A foreground command and its output (the tool appends "[Exit code: N]" when it fails). */
   noteCommand(command: string, output: string): void {
     if (mayWrite(command)) this.version++;
-    if (isInspection(command)) return;
-    const codes = [...output.matchAll(/\[Exit code: (\d+)\]/g)];
-    const exitCode = codes.length ? Number(codes[codes.length - 1][1]) : 0;
+    if (!isCheckCommand(command)) return;
+    const codes = [...output.matchAll(/^\[Exit code: (-?\d+)\]$/gm)];
+    const exitCode = codes.length ? Number(codes[codes.length - 1][1]) : /\[Command timed out/.test(output) ? 1 : 0;
     this.lastCheck = { command, version: this.version, exitCode };
+    if (exitCode === 0) this.failedChecks.delete(command.trim());
+    else this.failedChecks.set(command.trim(), { command, exitCode });
   }
 
   changedFiles(): string[] {
@@ -133,7 +179,11 @@ export class WorkTracker {
     const code = this.changedFiles().filter((f) => !isDocFile(f));
     if (!code.length) return null;
     const check = this.lastCheck;
-    const stale = check ? code.filter((f) => (this.changed.get(f) ?? 0) > check.version) : code;
+    const stale = check
+      ? code.filter((f) => (this.changed.get(f) ?? 0) > check.version)
+      : code;
+    // Shell writes may affect tracked files without producing a new checkpoint.
+    if (check && check.version < this.version && !stale.length) stale.push(...code);
     if (stale.length && !this.sent.has('verify')) {
       this.sent.add('verify');
       return {
@@ -144,12 +194,13 @@ export class WorkTracker {
         notice: check ? 'Files changed after the last check · asking to check again' : 'No check run after the changes · asking to verify',
       };
     }
-    if (check && !stale.length && check.exitCode !== 0 && !this.sent.has('failing')) {
+    const failure = this.failedChecks.values().next().value;
+    if (failure && !stale.length && !this.sent.has('failing')) {
       this.sent.add('failing');
       return {
         kind: 'failing',
-        text: `[Before you finish] Your last check failed: \`${check.command}\` exited with code ${check.exitCode}. Fix the cause and run it again. If the failure is unrelated to your change or expected, say so plainly in your final answer.`,
-        notice: `The last check failed (exit ${check.exitCode}) · asking to fix it or explain`,
+        text: `[Before you finish] A check still needs attention: \`${failure.command}\` exited with code ${failure.exitCode}. Fix the cause and run it again. A different passing check does not resolve this failure. If the failure is unrelated to your change or expected, say so plainly in your final answer.`,
+        notice: `A check failed (exit ${failure.exitCode}) · asking to fix it or explain`,
       };
     }
     return null;

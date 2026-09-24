@@ -2,10 +2,30 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { WorkTracker, isInspection, mayWrite, isDocFile, REPEAT_LIMIT, FAILURE_LIMIT } from '../src/agent/taskState.js';
+import { WorkTracker, isInspection, isCheckCommand, mayWrite, isDocFile, REPEAT_LIMIT, FAILURE_LIMIT } from '../src/agent/taskState.js';
 import { turnDiff, isRisky, parseReview, reviewPrompt } from '../src/agent/review.js';
 
 describe('commands', () => {
+  it.each([
+    'npm test', 'npm run typecheck', 'pnpm exec vitest run', 'yarn lint',
+    'node --test', 'node --check src/a.js', './node_modules/.bin/tsc --noEmit',
+    'cd app && npm test', 'CI=1 npm test', 'env CI=1 npx vitest run',
+    'python3 -m pytest', 'pytest -v', 'cargo check', 'go test ./...', 'ruff check .',
+  ])('recognizes a validation command: %s', (command) => {
+    expect(isCheckCommand(command)).toBe(true);
+  });
+
+  it.each([
+    'node --version', 'npm --version', 'npx tsc --help', 'pytest --collect-only',
+    'npm install', 'npm run dev', 'node cli.js', 'node -e "console.log(1)"',
+    'npx tsc --init', 'npx jest --showConfig', 'vitest list', 'npx vitest list', 'pnpm exec vitest list',
+    'npm test && echo replacement > src/a.js', 'npm test && npm install',
+    'echo "npm test"', 'npm test || true', 'npm test; true', 'npm test | cat',
+    'npm test &', 'echo "$(npm test)"', 'xargs npm test',
+  ])('does not mistake an unrelated or masked command for a check: %s', (command) => {
+    expect(isCheckCommand(command)).toBe(false);
+  });
+
   it('tells looking around from checking', () => {
     expect(isInspection('ls -la && cat src/a.js | head -20')).toBe(true);
     expect(isInspection('git status')).toBe(true);
@@ -67,6 +87,44 @@ describe('WorkTracker.beforeConclude', () => {
     expect(reminder?.kind).toBe('failing');
     expect(reminder?.text).toContain('`npm test` exited with code 1');
     expect(work.beforeConclude(null)).toBeNull();
+  });
+
+  it('does not treat a version query as verification', () => {
+    const work = new WorkTracker();
+    work.noteChanges(['src/a.js']);
+    work.noteCommand('node --version', 'v22.0.0');
+    expect(work.beforeConclude(null)?.kind).toBe('verify');
+  });
+
+  it.each(['node --version', 'npm run lint'])('does not erase failed tests after %s', (command) => {
+    const work = new WorkTracker();
+    work.noteChanges(['src/a.js']);
+    work.noteCommand('npm test', 'not ok\n[Exit code: 1]');
+    work.noteCommand(command, 'ok');
+    expect(work.beforeConclude(null)).toMatchObject({ kind: 'failing', text: expect.stringContaining('npm test') });
+  });
+
+  it('resolves a failure when the same check succeeds', () => {
+    const work = new WorkTracker();
+    work.noteChanges(['src/a.js']);
+    work.noteCommand('npm test', 'not ok\n[Exit code: 1]');
+    work.noteCommand('npm test', 'ok');
+    expect(work.beforeConclude(null)).toBeNull();
+  });
+
+  it('invalidates a check after a possible shell write', () => {
+    const work = new WorkTracker();
+    work.noteChanges(['src/a.js']);
+    work.noteCommand('npm test', 'ok');
+    work.noteCommand('npm install', 'installed');
+    expect(work.beforeConclude(null)?.kind).toBe('verify');
+  });
+
+  it.each(['[Exit code: -1]', '[Command timed out after 10s]'])('does not call an interrupted check successful: %s', (output) => {
+    const work = new WorkTracker();
+    work.noteChanges(['src/a.js']);
+    work.noteCommand('npm test', output);
+    expect(work.beforeConclude(null)?.kind).toBe('failing');
   });
 
   it('never blocks an analysis or a documentation change', () => {
@@ -144,10 +202,13 @@ describe('review', () => {
   });
 
   it('reads the reviewer verdict', () => {
-    expect(parseReview('NO_ISSUES')).toBeNull();
-    expect(parseReview('**NO_ISSUES**')).toBeNull();
-    expect(parseReview('I checked everything. NO_ISSUES')).toBeNull();
-    expect(parseReview('src/a.js:3 — off by one — the last item is skipped')).toContain('src/a.js:3');
-    expect(parseReview('(the subagent returned no text)')).toBeNull();
+    expect(parseReview('NO_ISSUES')).toEqual({ status: 'clean' });
+    expect(parseReview('**NO_ISSUES**')).toEqual({ status: 'clean' });
+    expect(parseReview('src/a.js:3 — off by one — the last item is skipped')).toMatchObject({ status: 'issues', text: expect.stringContaining('src/a.js:3') });
+    expect(parseReview('NO_ISSUES\nsrc/a.js:3 — off by one — the last item is skipped').status).toBe('issues');
+  });
+
+  it.each(['', '   ', '(the subagent returned no text)', 'Unable to review.', 'I cannot say NO_ISSUES.', '[Subagent stopped: max turns (12) reached]'])('keeps an unusable review inconclusive: %s', (text) => {
+    expect(parseReview(text)).toEqual({ status: 'inconclusive' });
   });
 });

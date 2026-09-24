@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { Content } from '@google/genai';
 
 process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-robust-home-'));
 
@@ -9,14 +10,16 @@ process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-robust-home-'))
 let script: Array<{ text?: string; call?: boolean; finish?: string; cached?: number }> = [];
 let requests = 0;
 let lastConfig: any;
+let lastHistory: Content[] = [];
 vi.mock('@google/genai', async (importOriginal) => {
   const real: any = await importOriginal();
   class GoogleGenAI {
     chats = {
-      create: ({ config }: any) => {
+      create: ({ config, history }: any) => {
         lastConfig = config;
+        lastHistory = history ?? [];
         return {
-          getHistory: () => [],
+          getHistory: () => lastHistory,
           sendMessageStream: async () => {
             requests++;
             const step = script.shift() ?? { text: 'done', finish: 'STOP' };
@@ -33,13 +36,74 @@ vi.mock('@google/genai', async (importOriginal) => {
   return { ...real, GoogleGenAI };
 });
 
-import { GeminiAgentSession, EmptyTurnError, historyToText } from '../src/agent/gemini.js';
+import { GeminiAgentSession, EmptyTurnError, historyToText, sanitizeHistory } from '../src/agent/gemini.js';
 import { getConfig } from '../src/config.js';
 import { getSystemPrompt } from '../src/agent/systemPrompt.js';
 
 const newSession = () => new GeminiAgentSession({ ...getConfig({ workspaceDir: process.cwd(), apiKey: 'robust-key', model: 'gemini-3.6-flash' }), apiKeys: ['robust-key'] } as any);
 
 beforeEach(() => { script = []; requests = 0; });
+
+describe('history repair', () => {
+  const completed = (): Content[] => [
+    { role: 'user', parts: [{ text: 'Fix the bug.' }] },
+    { role: 'model', parts: [{ thoughtSignature: 'opaque-signature', functionCall: { id: 'read1', name: 'read_file', args: { file_path: 'a.js' } } }] },
+    { role: 'user', parts: [{ functionResponse: { id: 'read1', name: 'read_file', response: { output: 'file contents' } } }] },
+    { role: 'model', parts: [{ functionCall: { id: 'edit1', name: 'edit_file', args: {} } }] },
+    { role: 'user', parts: [{ functionResponse: { id: 'edit1', name: 'edit_file', response: { output: 'Updated a.js' } } }] },
+  ];
+  const pending: Content = { role: 'model', parts: [{ thoughtSignature: 'pending-signature', functionCall: { id: 'test1', name: 'execute_bash', args: { command: 'npm test' } } }] };
+
+  it('preserves completed exchanges and their signatures at the tail', () => {
+    const history = completed();
+    expect(sanitizeHistory(history)).toEqual(history);
+  });
+
+  it('drops only the unanswered tail, without mutating the original history', () => {
+    const history = [...completed(), pending];
+    expect(sanitizeHistory(history)).toEqual(completed());
+    expect(history).toHaveLength(6);
+    expect(sanitizeHistory(sanitizeHistory(history))).toEqual(completed());
+  });
+
+  it('repairs the session without deleting the previous tool chain', () => {
+    const session = newSession();
+    vi.spyOn(session, 'getHistory').mockReturnValue([...completed(), pending]);
+    session.repairHistory();
+    expect(lastHistory).toEqual(completed());
+  });
+
+  it('keeps the complete history on refresh', () => {
+    const session = newSession();
+    session.initChat(completed());
+    session.refresh();
+    expect(lastHistory).toEqual(completed());
+  });
+
+  it('drops an unmatched response without discarding an earlier completed chain', () => {
+    const history: Content[] = [...completed(), pending, { role: 'user', parts: [{ functionResponse: { id: 'wrong', name: 'execute_bash', response: {} } }] }];
+    expect(sanitizeHistory(history)).toEqual(completed());
+  });
+
+  it('matches parallel same-name calls one-to-one, not by name alone', () => {
+    const prefix = completed();
+    const call: Content = { role: 'model', parts: ['a', 'b'].map((id) => ({ functionCall: { id, name: 'read_file', args: {} } })) };
+    const responses = (ids: string[]): Content => ({ role: 'user', parts: ids.map((id) => ({ functionResponse: { id, name: 'read_file', response: {} } })) });
+    const history = [...prefix, call, responses(['b', 'a'])];
+    expect(sanitizeHistory(history)).toEqual(history);
+    expect(sanitizeHistory([...prefix, call, responses(['a', 'a'])])).toEqual(prefix);
+    expect(sanitizeHistory([...prefix, call, responses(['a'])])).toEqual(prefix);
+  });
+
+  it('preserves matching calls without IDs for models that omit them', () => {
+    const history: Content[] = [
+      { role: 'user', parts: [{ text: 'read' }] },
+      { role: 'model', parts: [{ functionCall: { name: 'read_file', args: {} } }] },
+      { role: 'user', parts: [{ functionResponse: { name: 'read_file', response: {} } }] },
+    ];
+    expect(sanitizeHistory(history)).toEqual(history);
+  });
+});
 
 describe('Gemini integration (lot 1)', () => {
   it('sends no temperature (Google: keep Gemini 3 sampling defaults)', () => {
