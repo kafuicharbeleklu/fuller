@@ -218,3 +218,7 @@ node scripts/check-tui-auth.mjs
 Le script PTY substitue un faux `sudo` dans un répertoire temporaire et vérifie succès, annulation et timeout, pendant et après la saisie masquée. Il contrôle aussi l'absence du secret simulé dans les sorties, les sessions et les journaux de debug. Les `.cast` et leurs écrans rejoués sont dans `reports/tui-auth/`. Les tests Vitest rejouent les octets d'Ink avec `@xterm/headless` et examinent écran **et** scrollback. Pour régénérer les snapshots après revue : `npm test -- tests/terminalLifecycle.test.tsx tests/nativeTerminal.test.ts --update` ; sans `--update`, la commande les vérifie.
 
 Voir `reports/` pour l'analyse d'écarts avec Claude Code et la feuille de route (P0 → P3).
+
+## Licence
+
+[MIT](LICENSE)
