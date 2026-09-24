@@ -7,7 +7,11 @@
 
 ## Démarrage rapide
 
+Prérequis : Node.js 20 ou plus récent, une clé API Gemini.
+
 ```bash
+git clone https://github.com/kafuicharbeleklu/fuller.git
+cd fuller
 npm install
 cp .env.example .env        # puis renseignez GEMINI_API_KEY (https://aistudio.google.com/apikey)
 npm run dev                 # mode développement (tsx)
@@ -185,6 +189,10 @@ src/
 └── ui/                  App, vues classique/plein écran, saisie, permissions, transcript, diff, lecteur d'écran, …
 tests/                   vitest (parseur bash, règles, confinement, clavier, boucle agent, rendu)
 ```
+
+## Parité avec Claude Code
+
+Fuller reprend l'interface de Claude Code 2.1.281 écran par écran : bannière, saisie, pied de page, menus, rendu de la conversation, dialogues des commandes `/`, mode auto, panneau `/diff`. Chaque étape est comparée à des captures des deux outils dans un vrai terminal (`scripts/parity-capture.py`, `scripts/parity-render.mjs`) ; les rapports, écarts corrigés et écarts voulus, sont dans [`reports/parite-cc/`](reports/parite-cc/).
 
 ## Développement
 

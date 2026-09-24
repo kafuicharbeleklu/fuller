@@ -2,6 +2,14 @@
   "name": "fuller-code",
   "version": "0.3.0",
   "description": "Fuller — agentic coding assistant in your terminal (Ink/React + Google Gemini), inspired by Claude Code",
+  "homepage": "https://github.com/kafuicharbeleklu/fuller#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kafuicharbeleklu/fuller.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kafuicharbeleklu/fuller/issues"
+  },
   "type": "module",
   "bin": {
     "fuller": "./bin/fuller.js"
@@ -53,10 +61,16 @@
   "keywords": [
     "cli",
     "tui",
+    "terminal",
     "agent",
-    "gemini",
-    "ink",
+    "ai-agent",
     "coding-assistant",
+    "gemini",
+    "google-gemini",
+    "ink",
+    "react",
+    "typescript",
+    "mcp",
     "claude-code"
   ]
 }
