@@ -1,12 +1,10 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-fz22fygk
+  █████╗   /tmp/fuller-auth-r8871ll_
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Pasted text longer than a few lines is collapsed into [Pasted text #N +L lines].
 
 
 ! sudo fuller-auth-test timeout_prompt                                                             

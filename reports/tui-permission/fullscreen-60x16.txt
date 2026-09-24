@@ -1,14 +1,14 @@
+  ██╔═══╝  Gemini 3.6 Flash · Gemini API
+  █████╗   /tmp/fuller-permission-n3qbn4bo
+  ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Ctrl+O toggles the detailed transcript with full tool 
-  output.
 
 
 ❯ please ask permission                                    
 
   Ran 1 shell command
-                                       ◌ minimal · /effort
+                                           ○ low · /effort
 ───────────────────────────────────────────────────────────
 ❯  
 ───────────────────────────────────────────────────────────

@@ -1,10 +1,12 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-gghft6pa
+  █████╗   /tmp/fuller-auth-d75to19m
   ██╔══╝ 
   ██║    
   ╚═╝    
+
+  Esc interrupts; Esc Esc opens the rewind menu.
 
 
 ! sudo fuller-auth-test success                                                                    

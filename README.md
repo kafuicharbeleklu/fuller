@@ -38,6 +38,8 @@ fuller --tui classic                      # scrollback natif du terminal (plein 
 fuller --screen-reader                    # interface linéaire pour lecteur d'écran
 fuller --list-models                     # modèles récents et gratuits accessibles à votre clé
 fuller --list-models --all               # tous les modèles texte (y compris payants / anciens)
+fuller --check-keys                      # teste chaque clé API (une mini-requête chacune, clés jamais affichées)
+fuller --fallback-model gemma-4-31b-it   # modèle de repli si le modèle courant est saturé ou sans quota (off pour désactiver)
 ```
 
 ### Modèles

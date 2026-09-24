@@ -8,6 +8,7 @@ import { getLatestSession, loadSession } from './session/store.js';
 import { runHeadless, type OutputFormat } from './headless.js';
 import { APP_NAME, APP_SLUG, APP_VERSION } from './branding.js';
 import { PERMISSION_MODES, type PermissionMode } from './agent/types.js';
+import { checkKeys } from './agent/keyCheck.js';
 import { listChatModels, formatModelTable, knownContextWindow } from './agent/models.js';
 import { installFrameWriter } from './ui/frameWriter.js';
 import { runScreenReader } from './ui/screenReader.js';
@@ -32,6 +33,8 @@ program
   .option('--max-turns <n>', 'Maximum tool turns per prompt', (v) => parseInt(v, 10))
   .option('-c, --continue', 'Resume the latest session of this workspace', false)
   .option('-r, --resume [id]', 'Resume a session (interactive picker when no id is given)')
+  .option('--fallback-model <model>', 'Model used when the current one is overloaded or out of quota (default gemma-4-26b-a4b-it; "off" to disable)')
+  .option('--check-keys', 'Test every configured Gemini API key with a tiny request and exit (keys are never shown)', false)
   .option('--list-models', 'List recent, free-of-charge chat models available to your API key and exit', false)
   .option('--all', 'With --list-models: include every chat model (paid and older ones)', false)
   .option('--theme <name>', 'Theme (auto, dark, light, *-daltonized, *-ansi, monokai, ocean, forest, lagoon, olive, amethyst, citrus)')
@@ -55,6 +58,7 @@ program
       maxTurns: options.maxTurns,
     });
     if (options.theme) config.settings.theme = options.theme;
+    if (options.fallbackModel) config.settings.fallbackModel = String(options.fallbackModel);
     if (options.allowedTools?.length) {
       config.settings.permissions = {
         ...config.settings.permissions,
@@ -64,6 +68,17 @@ program
 
     let initialPrompt = promptArgs.length > 0 ? promptArgs.join(' ') : undefined;
 
+    if (options.checkKeys) {
+      const keys = config.apiKeys?.length ? config.apiKeys : config.apiKey ? [config.apiKey] : [];
+      if (!keys.length) { process.stderr.write('Error: no GEMINI_API_KEY configured.\n'); process.exit(1); }
+      process.stdout.write(`Checking ${keys.length} key${keys.length === 1 ? '' : 's'} with ${config.model} (one tiny request each)…\n`);
+      const results = await checkKeys(keys, config.model, {
+        onResult: (r) => process.stdout.write(`  key ${String(r.position).padStart(2)}/${keys.length} (${r.kind}…) ${r.health.padEnd(10)} ${r.seconds.toFixed(1).padStart(5)} s${r.detail ? `  ${r.detail}` : ''}\n`),
+      });
+      const count = (h: string) => results.filter((r) => r.health === h).length;
+      process.stdout.write(`\n${count('ok') + count('slow')} working (${count('slow')} slow) · ${count('quota')} out of quota · ${count('denied')} denied · ${count('invalid')} invalid · ${count('overloaded')} overloaded · ${count('no answer') + count('error')} other\n`);
+      process.exit(0);
+    }
     if (options.listModels) {
       if (!config.apiKey) { process.stderr.write('Error: GEMINI_API_KEY is required.\n'); process.exit(1); }
       const models = await listChatModels(config.apiKey, { force: true, all: !!options.all });

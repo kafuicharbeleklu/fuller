@@ -45,6 +45,8 @@ export function modelVersion(id: string): number {
 
 /** Recent and free of charge: what the picker shows by default. */
 export function isRecommendedModel(m: ModelInfo): boolean {
+  // Gemma 4 (open models, served by the Gemini API) is offered too: a light fallback when Flash is busy.
+  if (isChatModel(m) && /^gemma-4-/.test(m.id)) return true;
   return isChatModel(m) && freeTierStatus(m.id) === 'free' && modelVersion(m.id) >= RECENT_MIN_VERSION && !/preview|customtools/.test(m.id);
 }
 

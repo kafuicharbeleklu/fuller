@@ -1,7 +1,8 @@
 import { GoogleGenAI, ThinkingLevel, type Content, type FunctionDeclaration, type GenerateContentConfig, type Part } from '@google/genai';
 import { getSystemPrompt } from './systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
-import { keyPoolFor, isKeyError, isDeadKeyError, type KeyPool } from './keyPool.js';
+import { keyPoolFor, isKeyError, isDeadKeyError, isQuotaError, type KeyPool } from './keyPool.js';
+import { errorStatus } from './retry.js';
 import { withRetry, type RetryInfo } from './retry.js';
 import type { AppConfig } from '../config.js';
 import type { SkillDefinition } from '../skills/loader.js';
@@ -81,15 +82,28 @@ export class GeminiAgentSession {
     this.initChat(history);
   }
 
-  /** withRetry's recover hook: a quota error or an unusable key moves the conversation to the next key. */
-  private readonly recoverFromQuota = (err: any): boolean => {
-    if (!isKeyError(err)) return false;
-    if (this.keys.current() !== this.keyInUse) { this.syncKey(); return true; }
-    if (!this.keys.rotate(err)) return false;
-    this.syncKey();
-    this.onKeySwitch?.(this.keys.position, this.keys.size, isDeadKeyError(err) ? 'unusable' : 'quota');
-    return true;
-  };
+  /**
+   * withRetry's recover hook for one request: a quota error or an unusable key moves the
+   * conversation to the next key; when no key is left for this model, or the model stays
+   * overloaded (503) for OVERLOAD_RETRIES attempts, it moves to the fallback model.
+   */
+  private makeRecover(): (err: any) => boolean {
+    let overloaded = 0;
+    return (err: any): boolean => {
+      if (isKeyError(err)) {
+        if (this.keys.current() !== this.keyInUse) { this.syncKey(); return true; }
+        if (this.keys.rotate(err)) {
+          this.syncKey();
+          this.onKeySwitch?.(this.keys.position, this.keys.size, isDeadKeyError(err) ? 'unusable' : 'quota');
+          return true;
+        }
+        return isQuotaError(err) && this.fallBack('quota');
+      }
+      if (isOverloadError(err) && ++overloaded >= OVERLOAD_RETRIES) return this.fallBack('overloaded');
+      return false;
+    };
+  }
+
 
   public get model(): string {
     return this.config.model;
@@ -165,7 +179,28 @@ export class GeminiAgentSession {
   public switchModel(model: string, thinkingLevel: ThinkingLevelSetting | undefined = this.config.thinkingLevel) {
     this.config.model = model;
     this.config.thinkingLevel = thinkingLevel;
-    this.initChat(this.getHistory());
+    this.initChat(adaptHistoryForModel(this.getHistory(), model));
+  }
+
+  /** Called when calls move to the fallback model because the current one is overloaded or out of quota. */
+  public onModelFallback?: (from: string, to: string, reason: 'overloaded' | 'quota') => void;
+
+  /** The fallback model, unless off or already in use. */
+  private fallbackTarget(): string | undefined {
+    const target = this.config.settings.fallbackModel ?? DEFAULT_FALLBACK_MODEL;
+    if (!target || target === 'off' || target === this.config.model) return undefined;
+    return target;
+  }
+
+  /** Move the conversation to the fallback model (history adapted to it). */
+  private fallBack(reason: 'overloaded' | 'quota'): boolean {
+    const target = this.fallbackTarget();
+    if (!target) return false;
+    const from = this.config.model;
+    // The fallback has its own thinking levels: keep none rather than one it may refuse.
+    this.switchModel(target, undefined);
+    this.onModelFallback?.(from, target, reason);
+    return true;
   }
 
   public setThinkingLevel(level?: ThinkingLevelSetting) {
@@ -263,7 +298,7 @@ export class GeminiAgentSession {
       {
         signal,
         // A partly streamed answer is not resent on another key (the text would repeat).
-        recover: (err) => !delivered && this.recoverFromQuota(err),
+        recover: ((recover) => (err: any) => !delivered && recover(err))(this.makeRecover()),
         onAttempt: options.onAttempt,
         onRetry: (info) => {
           if (delivered) throw info.error;
@@ -286,7 +321,7 @@ Conversation:
 ${historyText}`;
     const res = await withRetry(
       () => this.ai.models.generateContent({ model: this.config.model, contents: prompt, config: { abortSignal: signal, temperature: 0.1 } }),
-      { signal, recover: this.recoverFromQuota }
+      { signal, recover: this.makeRecover() }
     );
     return res.text || 'Context compacted.';
   }
@@ -300,7 +335,7 @@ ${historyText}`;
     const thinking = lowest ? { thinkingConfig: { thinkingLevel: ThinkingLevel[lowest.toUpperCase() as keyof typeof ThinkingLevel] } } : {};
     const stream = await withRetry(
       () => this.ai.models.generateContentStream({ model: this.config.model, contents, config: { abortSignal: signal, ...thinking } }),
-      { signal, recover: this.recoverFromQuota }
+      { signal, recover: this.makeRecover() }
     );
     let full = '';
     for await (const chunk of stream) {
@@ -315,6 +350,42 @@ ${historyText}`;
     }
     return full;
   }
+}
+
+/** Gemma 4 (26B A4B): fast, calls tools well, served by the same API — the default fallback. */
+export const DEFAULT_FALLBACK_MODEL = 'gemma-4-26b-a4b-it';
+/** Overloaded (503) attempts on one request before moving to the fallback model. */
+const OVERLOAD_RETRIES = 3;
+
+function isOverloadError(err: any): boolean {
+  const status = errorStatus(err);
+  return status === 503 || /UNAVAILABLE|high demand|overloaded/i.test(String(err?.message ?? err ?? ''));
+}
+
+/** Google's documented placeholder for function calls that carry no thought signature. */
+export const SKIP_SIGNATURE = 'skip_thought_signature_validator';
+
+/**
+ * A history made with one model family, made acceptable to another (checked live on 24/09/2026):
+ * Gemma refuses Gemini's thought signatures and thought parts (400), and Gemini 3 wants a
+ * signature on the function calls of the current turn, which Gemma never writes.
+ */
+export function adaptHistoryForModel(history: Content[], model: string): Content[] {
+  if (/^gemma-/.test(model)) {
+    return history
+      .map((c) => ({ ...c, parts: (c.parts ?? []).filter((p) => !p.thought).map(({ thoughtSignature: _dropped, ...rest }) => rest as Part) }))
+      .filter((c) => c.parts.length > 0);
+  }
+  if (/^gemini-3/.test(model)) {
+    return history.map((c) => {
+      if (c.role !== 'model') return c;
+      const parts = c.parts ?? [];
+      const first = parts.findIndex((p) => p.functionCall);
+      if (first < 0 || parts.some((p) => p.thoughtSignature)) return c;
+      return { ...c, parts: parts.map((p, i) => (i === first ? { ...p, thoughtSignature: SKIP_SIGNATURE } : p)) };
+    });
+  }
+  return history;
 }
 
 /** Make sure a stored history is acceptable for chats.create (starts with a user turn, no dangling calls). */

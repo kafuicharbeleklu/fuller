@@ -1,7 +1,7 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-bbu6bro6
+  █████╗   /tmp/fuller-permission-dq8nord2
   ██╔══╝ 
   ██║    
   ╚═╝    

@@ -23,6 +23,7 @@ import { McpManager, type McpServerStatus } from '../mcp/manager.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { loadSubagents, type SubagentDefinition } from './subagents.js';
 import { runSubagent } from './subagent.js';
+import { modelLabel } from '../ui/modelLabel.js';
 import { FileTracker } from '../tools/fileTracker.js';
 import { autoModePrompt, parseVerdict, type AutoVerdict } from '../permissions/autoMode.js';
 import { findImagePaths, attachmentFromFile, readAttachmentBase64, type ImageAttachment } from '../utils/imageClipboard.js';
@@ -93,6 +94,8 @@ export interface AgentCallbacks {
   onNotice: (notice: Notice | null) => void;
   onQueueChange: (queue: string[]) => void;
   onModeChange?: (mode: PermissionMode) => void;
+  /** The model changed without the user (fallback when the current one is overloaded or out of quota). */
+  onModelChange?: (model: string) => void;
   onNotify?: (event: 'permission' | 'done' | 'error') => void;
   onTodosChange?: (todos: TodoItem[]) => void;
   onBackgroundChange?: (running: number, tasks: BackgroundTask[]) => void;
@@ -173,6 +176,12 @@ export class AgentLoop {
     this.subagents = safeLoadSubagents(config.workspaceDir);
     this.session = new GeminiAgentSession(config, restored?.history);
     this.session.onKeySwitch = (position, total, reason) => this.announceKeySwitch(position, total, reason);
+    this.session.onModelFallback = (from, to, reason) => {
+      this.callbacks.onNotice({ level: 'warn', text: `${modelLabel(from)} ${reason === 'overloaded' ? 'is overloaded' : 'is out of quota on every key'} · switched to ${modelLabel(to)} (/model to change)` });
+      setTimeout(() => this.callbacks.onNotice(null), 8000);
+      this.callbacks.onModelChange?.(to);
+      this.scheduleSave();
+    };
     this.session.setSkills(this.skills);
     this.session.setSubagents(this.subagents);
     this.session.refresh();

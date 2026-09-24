@@ -237,6 +237,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       onNotice: setNotice,
       onQueueChange: setQueue,
       onModeChange: setMode,
+      onModelChange: setModel,
       onNotify: bell,
       onTodosChange: (t) => { setTodos(t); if (t.some((x) => x.status !== 'completed')) setShowTodos(true); },
       onBackgroundChange: (running) => setBackgroundRunning(running),

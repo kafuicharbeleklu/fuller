@@ -10,6 +10,7 @@ import { executeBash } from '../tools/bash.js';
 import { listAllSessions, listSessions, formatRelative, sessionsDir, type SessionMeta } from '../session/store.js';
 import { loadPromptTimestamps } from '../session/history.js';
 import { loadMemories, memoryFile } from '../agent/autoMemory.js';
+import { DEFAULT_FALLBACK_MODEL } from '../agent/gemini.js';
 import { getThemeNames, type Theme } from './theme.js';
 import { APP_NAME, APP_VERSION, MEMORY_FILE, CONFIG_DIR_NAME } from '../branding.js';
 import type { CommandEntry, ConfigItem, InfoRow, ListItem, SettingsTab } from './InfoDialogs.js';
@@ -164,6 +165,11 @@ function configItems(ctx: CommandContext): ConfigItem[] {
     {
       label: 'Reply after ! commands', value: bool(ctx.config.settings.replyAfterShell !== false), options: ['true', 'false'],
       onChange: (value) => { ctx.config.settings.replyAfterShell = value === 'true'; saveUserSetting(['replyAfterShell'], value === 'true'); },
+    },
+    {
+      label: 'Fallback model', value: ctx.config.settings.fallbackModel ?? DEFAULT_FALLBACK_MODEL, options: ['gemma-4-26b-a4b-it', 'gemma-4-31b-it', 'gemini-3.5-flash-lite', 'off'],
+      description: 'Used when the current model is overloaded or out of quota on every key',
+      onChange: (value) => { ctx.config.settings.fallbackModel = value; saveUserSetting(['fallbackModel'], value); },
     },
     {
       label: 'Learned memory', value: bool(ctx.config.settings.autoMemory !== false), options: ['true', 'false'],

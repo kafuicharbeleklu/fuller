@@ -2,12 +2,12 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-epwgjl6i
+  █████╗   /tmp/fuller-auth-f8ktf_xs
   ██╔══╝ 
   ██║    
   ╚═╝    
 
-  Shift+Tab cycles modes: manual → accept edits → plan → bypass.
+  Pasted text longer than a few lines is collapsed into [Pasted text #N +L lines].
 
 
 ! sudo fuller-auth-test timeout                                                                    

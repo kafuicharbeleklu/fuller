@@ -1,18 +1,18 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-75z5y9j7
+  █████╗   /tmp/fuller-permission-b_zfu63_
   ██╔══╝ 
   ██║    
   ╚═╝    
+
+  Pasted text longer than a few lines is collapsed into [Pasted text #N +L lines].
 
 
 ❯ please ask permission                                                                                                      
 
 ● Bash(sudo ip link set tun0 down && sudo ip link set tun1 down)
   ⎿  Running…
-
-
 
 
 
