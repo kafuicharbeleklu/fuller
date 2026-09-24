@@ -1,0 +1,144 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`terminal lifecycle (screen and scrollback replay) > fits a permission card in fullscreen at 60x12 1`] = `
+"───────────────────────────────────────────────────────────
+ Bash command
+   sudo ip link set tun0 down && sudo ip link set tun1
+   down
+ ⚠ Commande dangereuse : sudo (privilèges / système)
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No"
+`;
+
+exports[`terminal lifecycle (screen and scrollback replay) > fits a permission card in fullscreen at 60x16 1`] = `
+"───────────────────────────────────────────────────────────
+ Bash command
+   sudo ip link set tun0 down && sudo ip link set tun1
+   down
+   Bring down VPN tunnel interfaces
+ ⚠ Commande dangereuse : sudo (privilèges / système)
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel · Tab to amend"
+`;
+
+exports[`terminal lifecycle (screen and scrollback replay) > fits a permission card in fullscreen at 80x24 1`] = `
+"───────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   sudo ip link set tun0 down && sudo ip link set tun1 down
+   Bring down VPN tunnel interfaces
+
+ ⚠ Commande dangereuse : sudo (privilèges / système)
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend"
+`;
+
+exports[`terminal lifecycle (screen and scrollback replay) > removes permission and retry frames at 60x12 1`] = `
+"───────────────────────────────────────────────────────────
+ Bash command
+   sudo printf RESULT_UNIQUE
+ ⚠ Commande dangereuse : sudo (privilèges / système)
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No"
+`;
+
+exports[`terminal lifecycle (screen and scrollback replay) > removes permission and retry frames at 60x12 2`] = `
+"❯ Run a simulated command
+
+● Bash(sudo printf RESULT_UNIQUE)
+  ⎿  RESULT_UNIQUE
+  ⎿  FINAL_ERROR_UNIQUE
+                                        ◐ medium · /effort
+───────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents"
+`;
+
+exports[`terminal lifecycle (screen and scrollback replay) > removes permission and retry frames at 60x16 1`] = `
+"───────────────────────────────────────────────────────────
+ Bash command
+   sudo printf RESULT_UNIQUE
+   Run a simulated privileged command
+ ⚠ Commande dangereuse : sudo (privilèges / système)
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel · Tab to amend"
+`;
+
+exports[`terminal lifecycle (screen and scrollback replay) > removes permission and retry frames at 60x16 2`] = `
+"❯ Run a simulated command
+
+● Bash(sudo printf RESULT_UNIQUE)
+  ⎿  RESULT_UNIQUE
+  ⎿  FINAL_ERROR_UNIQUE
+                                        ◐ medium · /effort
+───────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents"
+`;
+
+exports[`terminal lifecycle (screen and scrollback replay) > removes permission and retry frames at 80x24 1`] = `
+"───────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   sudo printf RESULT_UNIQUE
+   Run a simulated privileged command
+
+ ⚠ Commande dangereuse : sudo (privilèges / système)
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend"
+`;
+
+exports[`terminal lifecycle (screen and scrollback replay) > removes permission and retry frames at 80x24 2`] = `
+"❯ Run a simulated command
+
+● Bash(sudo printf RESULT_UNIQUE)
+  ⎿  RESULT_UNIQUE
+  ⎿  FINAL_ERROR_UNIQUE
+                                                            ◐ medium · /effort
+───────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents"
+`;
+
+exports[`terminal lifecycle (screen and scrollback replay) > removes permission and retry frames at 126x35 1`] = `
+"─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   sudo printf RESULT_UNIQUE
+   Run a simulated privileged command
+
+ ⚠ Commande dangereuse : sudo (privilèges / système)
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend"
+`;
+
+exports[`terminal lifecycle (screen and scrollback replay) > removes permission and retry frames at 126x35 2`] = `
+"❯ Run a simulated command
+
+● Bash(sudo printf RESULT_UNIQUE)
+  ⎿  RESULT_UNIQUE
+  ⎿  FINAL_ERROR_UNIQUE
+                                                                                                          ◐ medium · /effort
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents"
+`;

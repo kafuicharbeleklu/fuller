@@ -1,0 +1,33 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Coolors-inspired themes > renders a stable colored terminal preview of each palette > amethyst 1`] = `
+"[38;2;216;180;226mamethyst accent[39m
+[38;2;189;169;196msecondary text[39m
+[38;2;169;217;178msuccess[39m
+[38;2;245;161;172merror[39m
+[48;2;53;32;68m[38;2;245;234;247muser message[39m[49m"
+`;
+
+exports[`Coolors-inspired themes > renders a stable colored terminal preview of each palette > citrus 1`] = `
+"[38;2;155;78;14mcitrus accent[39m
+[38;2;97;95;84msecondary text[39m
+[38;2;33;107;87msuccess[39m
+[38;2;179;50;54merror[39m
+[48;2;255;242;191m[38;2;41;44;41muser message[39m[49m"
+`;
+
+exports[`Coolors-inspired themes > renders a stable colored terminal preview of each palette > lagoon 1`] = `
+"[38;2;101;196;219mlagoon accent[39m
+[38;2;166;187;194msecondary text[39m
+[38;2;131;217;174msuccess[39m
+[38;2;255;146;155merror[39m
+[48;2;23;56;71m[38;2;234;246;248muser message[39m[49m"
+`;
+
+exports[`Coolors-inspired themes > renders a stable colored terminal preview of each palette > olive 1`] = `
+"[38;2;200;213;154molive accent[39m
+[38;2;184;190;167msecondary text[39m
+[38;2;182;212;125msuccess[39m
+[38;2;242;160;156merror[39m
+[48;2;40;54;24m[38;2;254;250;224muser message[39m[49m"
+`;

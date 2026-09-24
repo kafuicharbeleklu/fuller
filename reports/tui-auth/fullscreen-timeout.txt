@@ -1,0 +1,28 @@
+
+
+  ██████╗  Fuller v0.3.0
+  ██╔═══╝  Gemini 3.6 Flash · Gemini API
+  █████╗   /tmp/fuller-auth-mql_tdry
+  ██╔══╝ 
+  ██║    
+  ╚═╝    
+
+
+! sudo fuller-auth-test timeout                                                                    
+
+  ⎿  exit 124
+
+
+
+
+
+
+
+
+
+
+                                                                                ◐ medium · /effort
+───────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "fix the error above"
+───────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents

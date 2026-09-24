@@ -7,9 +7,8 @@ Usage: python3 scripts/resize-test-vte.py <scratch-dir> <project-dir> [steps] [i
 
 Requires python3-gi with Vte 2.91 (GTK 3) and a display. Prints, for each phase, how
 many input boxes / placeholders / broken box lines are present in the terminal
-history: a clean run shows exactly one input box after every resize.
+history: inspect the Fuller header, prompt rows and horizontal input rules after each resize.
 """
-import gi, os, sys, re
 import gi, os, sys, re
 gi.require_version('Gtk', '3.0'); gi.require_version('Vte', '2.91')
 from gi.repository import Gtk, Vte, GLib
@@ -31,6 +30,7 @@ def resize(cols, rows=40):
     return False
 win.add(term); win.show_all()
 resize(120, 40)
+env = [f'{k}={v}' for k, v in os.environ.items()]
 term.spawn_async(Vte.PtyFlags.DEFAULT, PROJ, ['npx', 'tsx', 'src/index.tsx', '-d', S + '/ws'], env, GLib.SpawnFlags.DEFAULT, None, None, -1, None, lambda t, pid, err, *a: print('spawned pid', pid, 'err', err, flush=True))
 captures = {}
 def full_text():
@@ -47,12 +47,11 @@ term.connect('child-exited', lambda t, status: print('child exited', status, flu
 def report(label):
     lines = full_text().split('\n')
     captures[label] = lines
-    ph = sum('Try "fix the failing test"' in l for l in lines)
-    wel = sum('Welcome to Fuller' in l for l in lines)
-    tops = sum(l.lstrip().startswith('╭') for l in lines)
-    inputs = sum(l.startswith('│ >') for l in lines)
-    broken = sum(1 for l in lines if l.startswith('│ >') and not l.rstrip().endswith('│'))
-    print(f'[{label}] cols={term.get_column_count()} placeholders={ph} welcome={wel} box-tops={tops} input-lines={inputs} broken-input-lines={broken} nonempty={sum(1 for l in lines if l.strip())}', flush=True)
+    ph = sum('Try "' in l for l in lines)
+    headers = sum('Fuller v' in l for l in lines)
+    rules = sum(l.lstrip().startswith('─') for l in lines)
+    inputs = sum(l.lstrip().startswith('> ') for l in lines)
+    print(f'[{label}] cols={term.get_column_count()} placeholders={ph} headers={headers} input-rules={rules} prompt-lines={inputs} nonempty={sum(1 for l in lines if l.strip())}', flush=True)
 
 def feed(s):
     term.feed_child(s.encode()); return False

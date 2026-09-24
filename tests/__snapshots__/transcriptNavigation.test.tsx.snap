@@ -1,0 +1,27 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`transcript navigation > opens an editor and restores terminal ownership after scrollback export 1`] = `
+" ❯ hello
+ ⏺ world
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Transcript · q to close · ? for shortcuts"
+`;

@@ -10,6 +10,7 @@ import { APP_NAME, APP_SLUG, APP_VERSION } from './branding.js';
 import { PERMISSION_MODES, type PermissionMode } from './agent/types.js';
 import { listChatModels, formatModelTable, knownContextWindow } from './agent/models.js';
 import { installFrameWriter } from './ui/frameWriter.js';
+import { runScreenReader } from './ui/screenReader.js';
 
 const program = new Command();
 
@@ -33,7 +34,9 @@ program
   .option('-r, --resume [id]', 'Resume a session (interactive picker when no id is given)')
   .option('--list-models', 'List recent, free-of-charge chat models available to your API key and exit', false)
   .option('--all', 'With --list-models: include every chat model (paid and older ones)', false)
-  .option('--theme <name>', 'Theme (dark, light, dark-daltonized, light-daltonized, *-ansi, monokai, ocean, forest)')
+  .option('--theme <name>', 'Theme (auto, dark, light, *-daltonized, *-ansi, monokai, ocean, forest, lagoon, olive, amethyst, citrus)')
+  .option('--screen-reader', 'Use a plain, linear interactive interface for screen readers')
+  .option('--tui <mode>', 'Terminal renderer: fullscreen (default) | classic; FULLER_DISABLE_ALTERNATE_SCREEN=1 forces classic')
   .action(async (promptArgs: string[], options) => {
     let permissionMode: PermissionMode | undefined = options.permissionMode;
     if (permissionMode && !PERMISSION_MODES.includes(permissionMode)) {
@@ -114,13 +117,35 @@ program
       }
     }
 
+    if (options.screenReader || process.env.FULLER_SCREEN_READER === '1') {
+      if (!config.apiKey) { process.stderr.write('Error: GEMINI_API_KEY is required.\n'); process.exit(1); }
+      await runScreenReader(config, initialPrompt, restoredSession, pickSession);
+      return;
+    }
+
+    // Like Claude Code, start fullscreen unless the classic renderer is asked for.
+    options.tui ??= process.env.FULLER_DISABLE_ALTERNATE_SCREEN === '1' ? 'classic' : 'fullscreen';
+    if (!['classic', 'fullscreen'].includes(options.tui)) {
+      process.stderr.write('Invalid --tui mode. Expected classic or fullscreen.\n');
+      process.exit(2);
+    }
+
     // ---------------------------------------------------------------- terminal setup
     const stdout = process.stdout;
     const originalWrite = stdout.write.bind(stdout);
-    // Frame writer: exact erase counts after a resize (reflow-aware) + synchronized output (DEC 2026).
-    const frameWriter = installFrameWriter(stdout, { reflow: process.env.FULLER_NO_REFLOW !== '1' });
+    const fullscreen = options.tui === 'fullscreen';
+    if (fullscreen) {
+      originalWrite('\x1b[?1049h\x1b[H');
+    } else {
+      originalWrite('\x1b[2J\x1b[3J\x1b[H');
+    }
+    // Frame writer: exact erase counts after a resize + synchronized output (DEC 2026).
+    const reflow = process.env.FULLER_NO_REFLOW === '1' ? false : (process.env.FULLER_REFLOW ? process.env.FULLER_REFLOW === '1' : true);
+    const frameWriter = installFrameWriter(stdout, { reflow });
     // Bracketed paste so multi-line pastes arrive as one event.
     originalWrite('\x1b[?2004h');
+    const mouse = fullscreen && process.env.FULLER_DISABLE_MOUSE !== '1';
+    if (mouse) originalWrite('\x1b[?1000h\x1b[?1006h');
 
     // Lay out one column narrower than the terminal so that no line ever ends in the
     // last column (the "pending wrap" state confuses some terminals' reflow).
@@ -135,20 +160,24 @@ program
 
     let summary = '';
     const app = render(
-      <App config={config} initialPrompt={initialPrompt} restoredSession={restoredSession} pickSession={pickSession} onExitSummary={(s) => { summary = s; }} frameWriter={frameWriter} />,
+      <App config={config} initialPrompt={initialPrompt} restoredSession={restoredSession} pickSession={pickSession} onExitSummary={(s) => { summary = s; }} frameWriter={frameWriter} fullscreen={fullscreen} />,
       { stdout: inkStdout, exitOnCtrlC: false, patchConsole: true }
     );
 
-    // Ink re-renders on every 'resize' event, racing with the terminal's own reflow
-    // during a drag-resize. Fuller renders once the size has settled instead (App.tsx).
+    // Remove Ink's eager resize listener, then relay native resize events to App's
+    // debounced listener through a separate event. Removing every native listener
+    // previously also removed App's listener when its effect had already mounted.
     for (const listener of stdout.listeners('resize')) stdout.off('resize', listener as (...args: any[]) => void);
+    const relayResize = () => stdout.emit('fuller:resize');
+    stdout.on('resize', relayResize);
 
     let cleaned = false;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
+      stdout.off('resize', relayResize);
       frameWriter.restore();
-      originalWrite('\x1b[?2004l\x1b[?25h\x1b]0;\x07');
+      originalWrite(`\x1b[?2004l\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b]0;\x07${fullscreen ? '\x1b[?1049l' : ''}`);
     };
     process.on('exit', cleanup);
     process.on('SIGTERM', () => { cleanup(); process.exit(143); });

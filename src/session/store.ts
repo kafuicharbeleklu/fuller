@@ -15,6 +15,8 @@ export interface SessionMeta {
   messageCount: number;
   tokenCount: number;
   gitBranch?: string;
+  /** Size of the session file, filled in by listSessions (not stored). */
+  sizeBytes?: number;
 }
 
 export interface SessionData {
@@ -23,6 +25,17 @@ export interface SessionData {
   /** Gemini chat history, used to really restore the model context. */
   history?: Content[];
   todos?: TodoItem[];
+  turnCheckpoints?: ConversationCheckpoint[];
+}
+
+export interface ConversationCheckpoint {
+  id: string;
+  timestamp: number;
+  prompt: string;
+  messageIndex: number;
+  /** Model context immediately before this prompt; older sessions may store it inline. */
+  history?: Content[];
+  historyFile?: string;
 }
 
 export function encodeWorkspace(workspaceDir: string): string {
@@ -92,11 +105,42 @@ export function listSessions(workspaceDir: string): SessionMeta[] {
   for (const file of fs.readdirSync(dir)) {
     if (!file.endsWith('.json')) continue;
     try {
-      const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8')) as SessionData;
-      if (data?.meta?.id && data.meta.messageCount > 0) sessions.push(data.meta);
+      const full = path.join(dir, file);
+      const data = JSON.parse(fs.readFileSync(full, 'utf8')) as SessionData;
+      if (data?.meta?.id && data.meta.messageCount > 0) sessions.push({ ...data.meta, sizeBytes: fs.statSync(full).size });
     } catch {}
   }
   return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Sessions of every project (Claude Code's Ctrl+A in /resume), newest first. */
+export function listAllSessions(limit = 50): SessionMeta[] {
+  const root = path.join(os.homedir(), CONFIG_DIR_NAME, 'projects');
+  if (!fs.existsSync(root)) return [];
+  const sessions: SessionMeta[] = [];
+  for (const project of fs.readdirSync(root)) {
+    const dir = path.join(root, project);
+    let files: string[];
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      try {
+        const full = path.join(dir, file);
+        const data = JSON.parse(fs.readFileSync(full, 'utf8')) as SessionData;
+        if (data?.meta?.id && data.meta.messageCount > 0) sessions.push({ ...data.meta, sizeBytes: fs.statSync(full).size });
+      } catch {}
+    }
+  }
+  return sessions.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit);
+}
+
+/** Sets a stored session's title (Ctrl+R in /resume). */
+export function renameStoredSession(workspaceDir: string, id: string, title: string): boolean {
+  const data = loadSession(workspaceDir, id);
+  if (!data) return false;
+  data.meta.title = title;
+  saveSessionSync(data);
+  return true;
 }
 
 export function getLatestSession(workspaceDir: string): SessionData | null {

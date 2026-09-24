@@ -46,9 +46,23 @@ export class BackgroundTaskManager {
     });
     fs.closeSync(out);
     const task: BackgroundTask = { id, command, description: options.description, status: 'running', startedAt: Date.now(), logFile, reportedBytes: 0, child };
+    this.track(task, options.timeoutMs);
+    return task;
+  }
+
+  /** Transfer ownership of a running process without executing the command again. */
+  public adopt(command: string, child: ChildProcess, logFile: string, startedAt: number): BackgroundTask {
+    const task: BackgroundTask = { id: `bg${++this.counter}`, command, status: 'running', startedAt, logFile, reportedBytes: 0, child };
+    this.track(task, 600_000);
+    return task;
+  }
+
+  private track(task: BackgroundTask, timeoutMs?: number): void {
+    const { id, child, logFile } = task;
+    if (!child) return;
     this.tasks.set(id, task);
-    const timer = options.timeoutMs && options.timeoutMs > 0
-      ? setTimeout(() => { if (task.status === 'running') { task.status = 'timed_out'; this.killTree(task, 'SIGTERM'); } }, options.timeoutMs)
+    const timer = timeoutMs && timeoutMs > 0
+      ? setTimeout(() => { if (task.status === 'running') { task.status = 'timed_out'; this.killTree(task, 'SIGTERM'); } }, timeoutMs)
       : null;
     child.on('error', (err) => {
       try { fs.appendFileSync(logFile, `\n[spawn error] ${err.message}\n`); } catch {}
@@ -62,7 +76,6 @@ export class BackgroundTaskManager {
       this.onFinish?.(task, this.tail(task, 2000));
     });
     child.unref();
-    return task;
   }
 
   private killTree(task: BackgroundTask, signal: NodeJS.Signals) {

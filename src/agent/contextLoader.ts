@@ -9,7 +9,7 @@ export interface MemoryFile {
   scope: 'user' | 'project' | 'local';
 }
 
-const CANDIDATES = [MEMORY_FILE, path.join(CONFIG_DIR_NAME, MEMORY_FILE), 'AGENTS.md', 'GEMINI.md', 'CLAUDE.md'];
+const CANDIDATES = [MEMORY_FILE, path.join(CONFIG_DIR_NAME, MEMORY_FILE)];
 const MAX_IMPORT_DEPTH = 4;
 const MAX_FILE_BYTES = 200 * 1024;
 

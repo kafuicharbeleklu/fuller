@@ -49,6 +49,8 @@ describe('evaluatePermission', () => {
     const ev = evaluatePermission('execute_bash', { command: 'git reset --hard' }, cwd, 'default', settings);
     expect(ev.decision).toBe('ask');
     expect(ev.danger).toBeTruthy();
+    expect(ev.options.map((option) => option.value)).toEqual(['yes', 'no']);
+    expect(evaluatePermission('execute_bash', { command: 'sudo ip link set tun0 down && sudo ip link set tun1 down' }, cwd, 'default', {}).options.map((option) => option.value)).toEqual(['yes', 'no']);
   });
   it('acceptEdits auto-accepts fs edits inside the project but not test runs', () => {
     expect(evaluatePermission('execute_bash', { command: 'mkdir src/x' }, cwd, 'acceptEdits', {}).decision).toBe('allow');
@@ -57,5 +59,37 @@ describe('evaluatePermission', () => {
   it('offers a prefix rule for bash', () => {
     const ev = evaluatePermission('execute_bash', { command: 'npm run build' }, cwd, 'default', {});
     expect(ev.options[1].rule).toBe('Bash(npm run:*)');
+  });
+  it('offers one rule per subcommand needing approval for a compound command, like Claude Code', () => {
+    const ev = evaluatePermission('execute_bash', { command: 'cd src && npm test && wget https://example.com/file' }, cwd, 'default', {});
+    expect(ev.options.map((option) => option.value)).toEqual(['yes', 'always', 'no']);
+    expect(ev.options[1].rules).toEqual(['Bash(npm test:*)', 'Bash(wget:*)']);
+    expect(ev.options[1].label).toBe(`Yes, and don't ask again for \`npm test\` and \`wget\` commands in \`${cwd}\``);
+    const allowed = { permissions: { allow: ['Bash(npm test:*)'] } };
+    expect(evaluatePermission('execute_bash', { command: 'npm test && wget https://example.com/file' }, cwd, 'default', allowed).options[1].rules).toBeUndefined();
+    expect(evaluatePermission('execute_bash', { command: 'npm test && wget https://example.com/file' }, cwd, 'default', allowed).options[1].rule).toBe('Bash(wget:*)');
+  });
+  it('offers only a one-time approval beyond 5 rules', () => {
+    const command = ['npm test', 'make', 'cargo build', 'go test', 'wget x', 'curl -o y x'].join(' && ');
+    expect(evaluatePermission('execute_bash', { command }, cwd, 'default', {}).options.map((option) => option.value)).toEqual(['yes', 'no']);
+  });
+  it('matches allow rules against every subcommand and deny rules against any', () => {
+    const settings = { permissions: { allow: ['Bash(npm test:*)'] } };
+    expect(evaluatePermission('execute_bash', { command: 'npm test && git push' }, cwd, 'default', settings).decision).toBe('ask');
+    expect(evaluatePermission('execute_bash', { command: 'cd src && npm test' }, cwd, 'default', settings).decision).toBe('allow');
+    const both = { permissions: { allow: ['Bash(npm test:*)', 'Bash(git push:*)'] } };
+    expect(evaluatePermission('execute_bash', { command: 'npm test && git push' }, cwd, 'default', both).decision).toBe('allow');
+    const deny = { permissions: { deny: ['Bash(git push:*)'] } };
+    expect(evaluatePermission('execute_bash', { command: 'npm test && git push' }, cwd, 'bypassPermissions', deny).decision).toBe('deny');
+  });
+});
+
+describe('ask rules', () => {
+  it('prompt even when an allow rule or the mode would allow', async () => {
+    const { evaluatePermission } = await import('../src/permissions/rules.js');
+    const settings = { permissions: { allow: ['Bash(git:*)'], ask: ['Bash(git push:*)'] } };
+    expect(evaluatePermission('execute_bash', { command: 'git status' }, '/tmp/p', 'default', settings as any).decision).toBe('allow');
+    expect(evaluatePermission('execute_bash', { command: 'git push origin main' }, '/tmp/p', 'bypassPermissions', settings as any).decision).toBe('ask');
+    expect(evaluatePermission('read_file', { path: 'a.txt' }, '/tmp/p', 'default', { permissions: { ask: ['Read'] } } as any).decision).toBe('ask');
   });
 });

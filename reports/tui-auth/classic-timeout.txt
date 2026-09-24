@@ -1,0 +1,21 @@
+
+  ██████╗  Fuller v0.3.0
+  ██╔═══╝  Gemini 3.6 Flash · Gemini API
+  █████╗   /tmp/fuller-auth-i38b9t4s
+  ██╔══╝ 
+  ██║    
+  ╚═╝    
+
+
+! sudo fuller-auth-test timeout                                                                    
+Authentication in the terminal · Ctrl+C to cancel
+SIMULATED_PASSWORD: 
+SIMULATED_WAITING
+
+
+  ⎿  exit 124
+                                                                                ◐ medium · /effort
+───────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "fix the error above"
+───────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents

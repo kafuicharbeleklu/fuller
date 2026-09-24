@@ -13,14 +13,17 @@ describe('Markdown', () => {
     expect(frame).not.toContain('# Title');
     expect(frame).toContain('bold');
     expect(frame).not.toContain('**');
-    expect(frame).toContain('• item one');
+    expect(frame).toContain('- item one');
     expect(frame).toContain('☑');
-    expect(frame).toMatch(/a\s+b/);
+    // Claude Code 2.1.281 boxes tables.
+    expect(frame).toContain('┌───┬───┐');
+    expect(frame).toContain('│ a │ b │');
+    expect(frame).toContain('├───┼───┤');
   });
-  it('renders code blocks with a language label', () => {
+  it('renders code blocks without a language label, like Claude Code', () => {
     const { lastFrame } = render(<Markdown content={'```ts\nconst x = 1;\n```'} width={60} />);
     expect(lastFrame()).toContain('const');
-    expect(lastFrame()).toContain('ts');
+    expect(lastFrame()).not.toMatch(/^\s*ts\s*$/m);
   });
 });
 
@@ -30,9 +33,9 @@ describe('DiffView', () => {
     const parsed = parseUnifiedDiff(patch);
     expect(parsed.additions).toBe(2);
     expect(parsed.removals).toBe(1);
-    const { lastFrame } = render(<DiffView diff={patch} />);
-    expect(lastFrame()).toContain('- two');
-    expect(lastFrame()).toContain('+ 2');
-    expect(lastFrame()).toContain('+ four');
+    const { lastFrame } = render(<DiffView diff={patch} width={40} />);
+    // Claude Code 2.1.281: " <line> <sign><text>", the sign glued to the text, no trailing empty context.
+    const rows = (lastFrame() || '').split('\n').map((row) => row.trimEnd());
+    expect(rows).toEqual([' 1  one', ' 2 -two', ' 2 +2', ' 3  three', ' 4 +four']);
   });
 });

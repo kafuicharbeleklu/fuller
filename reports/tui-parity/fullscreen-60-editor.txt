@@ -1,0 +1,6 @@
+❯ printf 'PARITY_BEFORE\n'; sleep 1; printf 'PARITY_AFTER\n'
+
+⏺ Bash(printf 'PARITY_BEFORE\n'; sleep 1; printf 'PARITY_AFTER\n')  [background bg1]
+  ⎿ Command continues as background task bg1.
+
+  ⎿ ⏵ Background task bg1 completed (exit 0) · printf 'PARITY_BEFORE\n'; sleep 1; printf 'PARITY_AFTER\n'

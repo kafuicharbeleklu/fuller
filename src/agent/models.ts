@@ -8,6 +8,7 @@ export interface ModelInfo {
   /** Short id usable with -m / /model, e.g. "gemini-3.8-flash". */
   id: string;
   displayName: string;
+  description?: string;
   inputTokenLimit: number;
   outputTokenLimit: number;
   actions: string[];
@@ -75,6 +76,7 @@ export async function listModels(apiKey: string, options: { force?: boolean; sig
     models.push({
       id: m.name.replace(/^models\//, ''),
       displayName: m.displayName ?? m.name,
+      description: m.description,
       inputTokenLimit: m.inputTokenLimit ?? 0,
       outputTokenLimit: m.outputTokenLimit ?? 0,
       actions: m.supportedActions ?? [],

@@ -79,7 +79,7 @@ export function transformChunk(chunk: string, state: FrameWriterState, columns: 
     state.lastFrame = [];
     return prefix;
   }
-  if (rest.includes(CLEAR_SCREEN)) {
+  if (rest.includes(CLEAR_SCREEN) || rest.includes('\x1b[?1049')) {
     state.lastFrame = [];
     state.expectStatic = false;
     return prefix + rest;
@@ -138,6 +138,9 @@ export function composeRepaint(tail: string[], frame: string[], rows: number, co
 }
 
 export interface FrameWriter {
+  /** Clear the live frame and defer renderer writes while a child owns the TTY. */
+  /** Hand the terminal over; `banner` replaces the default authentication line. */
+  suspend: (fullscreen: boolean, banner?: string) => () => void;
   restore: () => void;
   reset: () => void;
   /** Repaint the visible screen with the transcript tail + the current frame. */
@@ -157,7 +160,15 @@ export function installFrameWriter(stdout: NodeJS.WriteStream, options: { reflow
   const state: FrameWriterState = { lastFrame: [], expectStatic: false };
   const reflow = options.reflow ?? true;
   const sync = options.syncOutput ?? true;
+  let deferred: Array<[any, any[]]> | null = null;
   (stdout as any).write = (chunk: any, ...rest: any[]) => {
+    if (deferred) {
+      // Keep stream callbacks moving; replay text only when the child has exited.
+      deferred.push([chunk, []]);
+      const callback = rest.find((value) => typeof value === 'function');
+      if (callback) queueMicrotask(callback);
+      return true;
+    }
     if (typeof chunk !== 'string') return original(chunk, ...rest);
     const before = { frame: state.lastFrame.length, expectStatic: state.expectStatic };
     const out = transformChunk(chunk, state, stdout.columns || 80, reflow);
@@ -173,6 +184,26 @@ export function installFrameWriter(stdout: NodeJS.WriteStream, options: { reflow
   };
   const emit = (text: string) => { if (text.length) original(sync ? `\x1b[?2026h${text}\x1b[?2026l` : text); };
   return {
+    suspend: (fullscreen, banner = 'Authentication in the terminal · Ctrl+C to cancel\r\n') => {
+      if (deferred) throw new Error('The terminal is already in use.');
+      const frame = [...state.lastFrame];
+      const expectStatic = state.expectStatic;
+      emit(eraseLines(physicalRows(frame, stdout.columns || 80, reflow)));
+      deferred = [];
+      emit('\x1b[?2004l\x1b[?1000l\x1b[?1006l\x1b[?25h' + (fullscreen ? '\x1b[?1049l' : '') + banner);
+      let resumed = false;
+      return () => {
+        if (resumed) return;
+        resumed = true;
+        const pending = deferred!;
+        deferred = null;
+        emit('\r\n' + (fullscreen ? '\x1b[?1049h' : '') + '\x1b[?2004h\x1b[?25l' + (fullscreen && process.env.FULLER_DISABLE_MOUSE !== '1' ? '\x1b[?1000h\x1b[?1006h' : ''));
+        state.lastFrame = frame;
+        state.expectStatic = expectStatic;
+        emit(frame.join('\n'));
+        for (const [chunk, rest] of pending) (stdout as any).write(chunk, ...rest);
+      };
+    },
     restore: () => { (stdout as any).write = original; },
     reset: () => { state.lastFrame = []; state.expectStatic = false; },
     needsRepaint: () => !!state.lastEraseWrapped,
@@ -185,6 +216,7 @@ export function installFrameWriter(stdout: NodeJS.WriteStream, options: { reflow
       state.expectStatic = false;
     },
     writeStatic: (text) => {
+      if (deferred) { deferred.push([text, []]); return; }
       state.expectStatic = false;
       emit(text);
     },

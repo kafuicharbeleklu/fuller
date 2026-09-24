@@ -4,7 +4,6 @@ import os from 'node:os';
 import { CONFIG_DIR_NAME } from '../branding.js';
 
 const HISTORY_FILE = path.join(os.homedir(), CONFIG_DIR_NAME, 'history.jsonl');
-const MAX_ENTRIES = 1000;
 
 export interface HistoryEntry {
   ts: number;
@@ -12,19 +11,19 @@ export interface HistoryEntry {
   text: string;
 }
 
-export function loadPromptHistory(cwd: string, limit = 500): string[] {
+export function loadPromptHistory(cwd: string, limit = Infinity, scope: 'project' | 'all' = 'project'): string[] {
   try {
     if (!fs.existsSync(HISTORY_FILE)) return [];
     const lines = fs.readFileSync(HISTORY_FILE, 'utf8').split('\n').filter(Boolean);
     const entries: HistoryEntry[] = [];
-    for (const line of lines.slice(-MAX_ENTRIES)) {
+    for (const line of lines) {
       try {
         const e = JSON.parse(line) as HistoryEntry;
         if (e && typeof e.text === 'string') entries.push(e);
       } catch {}
     }
     const project = entries.filter((e) => e.cwd === cwd);
-    const chosen = project.length > 0 ? project : entries;
+    const chosen = scope === 'all' ? entries : project;
     const out: string[] = [];
     for (const e of chosen) {
       if (out[out.length - 1] !== e.text) out.push(e.text);
@@ -33,6 +32,22 @@ export function loadPromptHistory(cwd: string, limit = 500): string[] {
   } catch {
     return [];
   }
+}
+
+/** Latest time each prompt was sent, for the ages in ctrl+r ("11m ago"). */
+export function loadPromptTimes(): Map<string, number> {
+  const times = new Map<string, number>();
+  try {
+    if (!fs.existsSync(HISTORY_FILE)) return times;
+    for (const line of fs.readFileSync(HISTORY_FILE, 'utf8').split('\n')) {
+      if (!line) continue;
+      try {
+        const e = JSON.parse(line) as HistoryEntry;
+        if (e && typeof e.text === 'string' && typeof e.ts === 'number') times.set(e.text, Math.max(e.ts, times.get(e.text) ?? 0));
+      } catch {}
+    }
+  } catch {}
+  return times;
 }
 
 export function appendPromptHistory(cwd: string, text: string): void {

@@ -1,5 +1,6 @@
 import { GeminiAgentSession, type ToolResponsePayload, type TurnUsage } from './gemini.js';
 import { dispatchTool, toolLabel, toolArgSummary, geminiToolDeclarations } from '../tools/registry.js';
+import type { RunInTerminal } from '../tools/nativeTerminal.js';
 import { evaluatePermission, type Evaluation } from '../permissions/rules.js';
 import type { AppConfig } from '../config.js';
 import type { SubagentDefinition } from './subagents.js';
@@ -8,8 +9,10 @@ import type { ToolCallState, PermissionDecision } from './types.js';
 import type { CheckpointManager } from '../checkpoint/manager.js';
 import type { BackgroundTaskManager } from '../tools/background.js';
 import { uid } from './transcript.js';
+import type { Content } from '@google/genai';
 
 export interface SubagentRunParams {
+  runInTerminal?: RunInTerminal;
   config: AppConfig;
   definition: SubagentDefinition;
   prompt: string;
@@ -22,6 +25,8 @@ export interface SubagentRunParams {
   checkpointManager?: CheckpointManager;
   background?: BackgroundTaskManager;
   messageId?: string;
+  /** Parent conversation to start from: a fork (/btw f) inherits it. */
+  history?: Content[];
 }
 
 export interface SubagentResult {
@@ -44,7 +49,7 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
     (definition.tools.length ? definition.tools : geminiToolDeclarations.map((d) => d.name!)).filter((t) => !NEVER.has(t))
   );
   const subConfig: AppConfig = { ...config, model: definition.model ?? config.model, settings: config.settings };
-  const session = new GeminiAgentSession(subConfig);
+  const session = new GeminiAgentSession(subConfig, params.history);
   session.setSkills(params.skills);
   session.setToolFilter([...allowed]);
   session.setExtraInstructions(
@@ -89,9 +94,11 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
         progress(`✗ ${label} — denied`);
         continue;
       }
+      let approvalComment: string | undefined;
       if (evaluation.decision === 'ask') {
         progress(`? ${label} — waiting for permission`);
         const decision = await params.askPermission(state, evaluation);
+        if (decision.kind === 'yes') approvalComment = decision.feedback;
         if (decision.kind === 'no') {
           responses.push({ id: call.id, name: call.name, output: `Error: the user declined this tool call.${decision.feedback ? ` They said: "${decision.feedback}".` : ''}` });
           progress(`✗ ${label} — rejected by user`);
@@ -100,6 +107,7 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
       }
       try {
         const out = await dispatchTool(call.name, call.args, {
+          runInTerminal: params.runInTerminal,
           cwd: config.workspaceDir,
           extraDirs: config.additionalDirectories,
           checkpointManager: params.checkpointManager,
@@ -110,7 +118,7 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
           background: params.background,
         });
         toolCount++;
-        responses.push({ id: call.id, name: call.name, output: out.output });
+        responses.push({ id: call.id, name: call.name, output: out.output + (approvalComment ? `\n\n[User comment on this approval]\n${approvalComment}` : '') });
         progress(`⏺ ${label}${out.summary ? ` · ${out.summary}` : ''}`);
       } catch (err: any) {
         if (err?.message === 'Interrupted' || signal.aborted) throw new Error('Interrupted');

@@ -1,0 +1,20 @@
+
+  ██████╗  Fuller v0.3.0
+  ██╔═══╝  Gemini 3.6 Flash · Gemini API
+  █████╗   /tmp/fuller-auth-v447qe5f
+  ██╔══╝ 
+  ██║    
+  ╚═╝    
+
+
+! sudo fuller-auth-test success                                                                    
+Authentication in the terminal · Ctrl+C to cancel
+SIMULATED_PASSWORD: 
+
+
+  ⎿  AUTH_RESULT_UNIQUE
+                                                                                ◐ medium · /effort
+───────────────────────────────────────────────────────────────────────────────────────────────────
+❯  
+───────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents

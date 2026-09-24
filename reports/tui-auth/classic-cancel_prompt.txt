@@ -1,0 +1,19 @@
+
+  ██████╗  Fuller v0.3.0
+  ██╔═══╝  Gemini 3.6 Flash · Gemini API
+  █████╗   /tmp/fuller-auth-h92ik6mf
+  ██╔══╝ 
+  ██║    
+  ╚═╝    
+
+
+! sudo fuller-auth-test cancel_prompt                                                              
+Authentication in the terminal · Ctrl+C to cancel
+SIMULATED_PASSWORD: 
+
+  ⎿  exit 124
+                                                                                ◐ medium · /effort
+───────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "fix the error above"
+───────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents

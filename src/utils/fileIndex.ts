@@ -33,13 +33,16 @@ export async function getFileIndex(cwd: string): Promise<string[]> {
 /** Simple fuzzy scoring: substring on basename > substring on path > subsequence. */
 export function fuzzyFilter(items: string[], query: string, limit = 8): string[] {
   const q = query.toLowerCase();
-  if (!q) return items.slice(0, limit);
+  // Like Claude Code, a bare "@" lists the top-level entries only.
+  if (!q) return items.filter((item) => !item.replace(/\/$/, '').includes('/')).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })).slice(0, limit);
   const scored: Array<{ item: string; score: number }> = [];
   for (const item of items) {
     const lower = item.toLowerCase();
     const base = path.basename(lower);
     let score = -1;
     if (base.startsWith(q)) score = 1000 - item.length;
+    // A directory of the path starting with the query ("ut" → src/utils/logger.ts) comes next.
+    else if (lower.split('/').some((segment) => segment.startsWith(q))) score = 900 - item.length;
     else if (base.includes(q)) score = 800 - item.length;
     else if (lower.includes(q)) score = 600 - item.length;
     else {

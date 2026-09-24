@@ -24,25 +24,33 @@ export function isRetryable(err: any): boolean {
 export function describeError(err: any): string {
   const status = errorStatus(err);
   let msg = String(err?.message ?? err ?? 'Unknown error');
-  try {
-    const parsed = JSON.parse(msg);
-    if (parsed?.error?.message) msg = parsed.error.message;
-  } catch {}
+  // The SDK can wrap a JSON error message in another JSON error envelope.
+  for (let depth = 0; depth < 4; depth++) {
+    try {
+      const parsed = JSON.parse(msg);
+      const inner = parsed?.error?.message ?? parsed?.message;
+      if (typeof inner !== 'string' || inner === msg) break;
+      msg = inner;
+    } catch { break; }
+  }
   msg = msg.replace(/\s+/g, ' ').trim();
   if (msg.length > 300) msg = msg.slice(0, 300) + '…';
-  return status ? `API Error (${status}): ${msg}` : msg;
+  // Claude Code's final form: "API Error: 500 Internal server error".
+  return status ? `API Error: ${status} ${msg}` : msg;
 }
 
 export async function withRetry<T>(
   fn: (attempt: number) => Promise<T>,
-  options: { signal?: AbortSignal; onRetry?: (info: RetryInfo) => void; maxAttempts?: number; baseDelayMs?: number } = {}
+  options: { signal?: AbortSignal; onRetry?: (info: RetryInfo) => void; onAttempt?: () => void; maxAttempts?: number; baseDelayMs?: number } = {}
 ): Promise<T> {
-  const maxAttempts = options.maxAttempts ?? 5;
+  // Claude Code retries transient failures up to 10 times with exponential backoff.
+  const maxAttempts = options.maxAttempts ?? 10;
   const base = options.baseDelayMs ?? 1000;
   let attempt = 0;
   for (;;) {
     attempt++;
     if (options.signal?.aborted) throw new Error('Interrupted');
+    options.onAttempt?.();
     try {
       return await fn(attempt);
     } catch (err: any) {
@@ -58,6 +66,7 @@ export async function withRetry<T>(
 
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new Error('Interrupted')); return; }
     const t = setTimeout(() => {
       signal?.removeEventListener('abort', onAbort);
       resolve();

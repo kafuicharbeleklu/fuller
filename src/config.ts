@@ -1,3 +1,4 @@
+import type { AutoModeSettings } from './permissions/autoMode.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -5,6 +6,7 @@ import dotenv from 'dotenv';
 import { CONFIG_DIR_NAME } from './branding.js';
 import type { PermissionMode } from './agent/types.js';
 import type { HooksConfig } from './hooks/runner.js';
+import type { ThinkingLevelSetting } from './agent/thinking.js';
 
 dotenv.config();
 
@@ -16,15 +18,22 @@ export type NotificationSetting = 'off' | 'permission' | 'all';
 export interface Settings {
   permissions?: {
     allow?: string[];
+    /** Rules that always prompt, even when an allow rule or the mode would allow. */
+    ask?: string[];
     deny?: string[];
     additionalDirectories?: string[];
     defaultMode?: PermissionMode;
   };
   model?: string;
+  thinkingLevel?: ThinkingLevelSetting;
   theme?: string;
   contextWindow?: number;
   autoCompact?: boolean;
   autoCompactThreshold?: number;
+  /** Auto mode: the user's rules and disabled built-in groups. */
+  autoMode?: AutoModeSettings;
+  /** Have the model answer after a `!` command (Claude Code does); default true. */
+  replyAfterShell?: boolean;
   notifications?: NotificationSetting;
   spinnerVerbs?: string[];
   bashTimeoutMs?: number;
@@ -39,6 +48,7 @@ export interface Settings {
 export interface AppConfig {
   apiKey: string;
   model: string;
+  thinkingLevel?: ThinkingLevelSetting;
   workspaceDir: string;
   permissionMode: PermissionMode;
   additionalDirectories: string[];
@@ -109,6 +119,7 @@ export function mergeSettings(sources: Settings[]): Settings {
         ...merged.permissions,
         ...permissions,
         allow: [...(merged.permissions?.allow ?? []), ...(permissions.allow ?? [])],
+        ask: [...(merged.permissions?.ask ?? []), ...(permissions.ask ?? [])],
         deny: [...(merged.permissions?.deny ?? []), ...(permissions.deny ?? [])],
         additionalDirectories: [
           ...(merged.permissions?.additionalDirectories ?? []),
@@ -125,11 +136,35 @@ export function loadSettings(workspaceDir: string): Settings {
   return mergeSettings(loadSettingsSources(workspaceDir).map((s) => s.settings));
 }
 
+/** Sets one user setting (e.g. ['permissions', 'defaultMode']) without touching the others. */
+export function saveUserSetting(keys: string[], value: unknown, configDir = userConfigDir()): string {
+  const file = path.join(configDir, 'settings.json');
+  const current = readJson(file) ?? {};
+  let node: Record<string, any> = current;
+  for (const key of keys.slice(0, -1)) node = node[key] = typeof node[key] === 'object' && node[key] ? node[key] : {};
+  node[keys[keys.length - 1]] = value;
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(current, null, 2) + '\n', 'utf8');
+  return file;
+}
+
+/** Save the model used by new sessions without replacing other user settings. */
+export function saveDefaultModel(model: string, configDir = userConfigDir(), thinkingLevel?: ThinkingLevelSetting): string {
+  const file = path.join(configDir, 'settings.json');
+  const current = readJson(file) ?? {};
+  current.model = model;
+  if (thinkingLevel) current.thinkingLevel = thinkingLevel;
+  else delete current.thinkingLevel;
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(current, null, 2) + '\n', 'utf8');
+  return file;
+}
+
 /** Append a permission rule to a settings file (creates it if needed). */
 export function addPermissionRule(
   workspaceDir: string,
   rule: string,
-  list: 'allow' | 'deny' = 'allow',
+  list: 'allow' | 'ask' | 'deny' = 'allow',
   scope: SettingsSource['scope'] = 'local'
 ): string {
   const target = settingsFiles(workspaceDir).find((s) => s.scope === scope)!;
@@ -149,7 +184,7 @@ export function removePermissionRule(workspaceDir: string, rule: string): boolea
   for (const { file } of settingsFiles(workspaceDir)) {
     const current = readJson(file);
     if (!current?.permissions) continue;
-    for (const list of ['allow', 'deny'] as const) {
+    for (const list of ['allow', 'ask', 'deny'] as const) {
       const arr = current.permissions[list];
       if (arr && arr.includes(rule)) {
         current.permissions[list] = arr.filter((r) => r !== rule);
@@ -191,6 +226,7 @@ export function getConfig(overrides: ConfigOverrides = {}): AppConfig {
   return {
     apiKey,
     model,
+    thinkingLevel: settings.thinkingLevel,
     workspaceDir,
     permissionMode,
     additionalDirectories,

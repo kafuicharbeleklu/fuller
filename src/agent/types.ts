@@ -1,6 +1,8 @@
-export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
+export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions';
 
-export const PERMISSION_MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+export const PERMISSION_MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'];
+/** Shift+Tab order, as in Claude Code: manual → accept edits → plan → auto. Bypass joins only when the session started in it. */
+export const CYCLE_MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto'];
 
 export type Role = 'user' | 'assistant' | 'system';
 
@@ -17,13 +19,17 @@ export interface ToolCallState {
   name: string;
   args: Record<string, any>;
   status: ToolStatus;
-  /** Raw result sent back to the model (already truncated). */
+  /** Result sent back to the model (may be truncated). */
   result?: string;
+  /** Full foreground Bash output, saved separately from the model result. */
+  outputFile?: string;
   error?: string;
   /** Unified diff (edit_file / write_file) computed against the real file. */
   diff?: string;
   /** Short human summary, e.g. "Read 120 lines". */
   summary?: string;
+  /** 'user' for a command typed with "!": shown as the user's own, never folded into a tool summary. */
+  origin?: 'user';
   startTime?: number;
   endTime?: number;
 }
@@ -32,7 +38,7 @@ export type MessagePart =
   | { type: 'text'; id: string; content: string }
   | { type: 'tool'; id: string; toolCall: ToolCallState };
 
-export type MessageKind = 'normal' | 'command' | 'bash' | 'compact' | 'notice';
+export type MessageKind = 'normal' | 'command' | 'bash' | 'compact' | 'notice' | 'context' | 'warning' | 'event';
 
 export interface AttachmentMeta {
   name: string;
@@ -52,17 +58,31 @@ export interface ChatMessage {
   attachments?: AttachmentMeta[];
 }
 
+/** A background agent shown in the agents view (← on an empty prompt). */
+export interface AgentTask {
+  id: string;
+  title: string;
+  status: 'working' | 'completed' | 'failed';
+  startedAt: number;
+  endedAt?: number;
+  /** Last progress line while it works. */
+  progress?: string;
+  /** Final report, or the error. */
+  report?: string;
+}
+
 export type AgentStatus =
   | 'idle'
   | 'thinking'
+  | 'retrying'
   | 'streaming'
   | 'running_tool'
   | 'awaiting_permission'
   | 'compacting';
 
 export type PermissionDecision =
-  | { kind: 'yes' }
-  | { kind: 'always'; rule: string }
+  | { kind: 'yes'; feedback?: string }
+  | { kind: 'always'; rule: string; rules?: string[] }
   | { kind: 'no'; feedback?: string };
 
 export interface PermissionOption {
@@ -70,6 +90,8 @@ export interface PermissionOption {
   label: string;
   /** Rule persisted when value === 'always'. */
   rule?: string;
+  /** Every rule to persist, one per subcommand of a compound Bash command (up to 5). */
+  rules?: string[];
   /** Switch the permission mode when chosen (e.g. acceptEdits). */
   switchMode?: PermissionMode;
 }

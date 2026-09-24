@@ -1,0 +1,28 @@
+
+
+  ██████╗  Fuller v0.3.0
+  ██╔═══╝  Gemini 3.6 Flash · Gemini API
+  █████╗   /tmp/fuller-auth-nuj3j_z1
+  ██╔══╝ 
+  ██║    
+  ╚═╝    
+
+
+! sudo fuller-auth-test success                                                                    
+
+  ⎿  AUTH_RESULT_UNIQUE
+
+
+
+
+
+
+
+
+
+
+                                                                                ◐ medium · /effort
+───────────────────────────────────────────────────────────────────────────────────────────────────
+❯  
+───────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents

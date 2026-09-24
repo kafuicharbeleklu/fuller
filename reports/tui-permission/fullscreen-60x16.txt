@@ -1,0 +1,15 @@
+  ██║    
+  ╚═╝    
+
+  Ctrl+O toggles the detailed transcript with full tool 
+  output.
+
+
+❯ please ask permission                                    
+
+  Ran 1 shell command
+                                       ◌ minimal · /effort
+───────────────────────────────────────────────────────────
+❯  
+───────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents

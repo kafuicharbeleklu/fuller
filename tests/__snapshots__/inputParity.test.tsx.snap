@@ -1,0 +1,39 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`permission parity > retains comments on Yes and No when closing the field 1`] = `
+"
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+
+ Do you want to proceed?
+ ❯ 1. Yes, run once
+   2. Always
+   3. No · use tests
+
+ Esc to cancel"
+`;
+
+exports[`prompt parity > completes slash commands mid-prompt without executing them 1`] = `
+"  /compact                                Compact
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ then /com
+────────────────────────────────────────────────────────────────────────────────────────────────────"
+`;
+
+exports[`prompt parity > loads a fullscreen history result without submitting and restores the draft on Escape 1`] = `
+"  Search prompts · project
+  ❯ project prompt                                  ╭─────────────────────────────────────────────╮
+                                                    │ project prompt                              │
+                                                    ╰─────────────────────────────────────────────╯
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ project                                                                                    │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑/↓ to nav · Enter to use · Esc to cancel · ctrl+s to scope"
+`;
+
+exports[`prompt parity > opens multiple classic matches with Tab before inserting a command 1`] = `
+"────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ then /compact +1
+────────────────────────────────────────────────────────────────────────────────────────────────────"
+`;

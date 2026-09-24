@@ -1,0 +1,15 @@
+❯ please ask permission                                    
+
+● Bash(sudo ip link set tun0 down && sudo ip link set tun1…
+  ⎿  Running…
+
+───────────────────────────────────────────────────────────
+ Bash command
+   sudo ip link set tun0 down && sudo ip link set tun1 
+   down
+   Bring down VPN tunnel interfaces
+ ⚠ Commande dangereuse : sudo (privilèges / système)
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel · Tab to amend

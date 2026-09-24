@@ -27,6 +27,12 @@ export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, res
   const theme = useTheme();
   const [elapsed, setElapsed] = useState(0);
   const [verbIndex, setVerbIndex] = useState(() => Math.floor(Math.random() * verbs.length));
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 120);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 500);
@@ -42,17 +48,45 @@ export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, res
 
   const verb =
     status === 'compacting' ? 'Compacting conversation'
+    : status === 'retrying' ? 'Waiting to retry'
     : status === 'running_tool' ? 'Running'
     : elapsed > 45 ? 'Deep in thought'
     : verbs[verbIndex] ?? 'Thinking';
 
+  // Claude Code shows the timer only once the wait gets noticeable, then what the model is doing.
+  const detail = status === 'thinking' ? 'thinking' : responseTokens > 0 ? `↓ ${formatTokens(responseTokens)} tokens` : '';
+  const showTimer = elapsed >= SPINNER_TIMER_AFTER_S;
+
   return (
     <Box>
       <Text color={theme.accent}>{frame} </Text>
-      <Text color={theme.accent}>{verb}… </Text>
-      <Text color={theme.subtle}>
-        (esc to interrupt · {elapsed}s{responseTokens > 0 ? ` · ↓ ${formatTokens(responseTokens)} tokens` : ''})
-      </Text>
+      <ShimmerText text={`${verb}…`} tick={tick} />
+      {showTimer ? <Text color={theme.subtle}> ({elapsed}s{detail ? ` · ${detail}` : ''})</Text> : null}
     </Box>
+  );
+};
+
+/** Seconds before the spinner shows its timer (Claude Code: none at 4 s, shown at 6 s). */
+export const SPINNER_TIMER_AFTER_S = 5;
+
+/** `color` mixed with white (hex colours), or its bright ANSI variant; the spinner glint. */
+export function lighten(color: string, amount = 0.45): string {
+  const hex = color.match(/^#([0-9a-f]{6})$/i)?.[1];
+  if (!hex) return /^[a-z]+$/.test(color) && !color.endsWith('Bright') ? `${color}Bright` : color;
+  const mix = (i: number) => Math.round(parseInt(hex.slice(i, i + 2), 16) * (1 - amount) + 255 * amount).toString(16).padStart(2, '0');
+  return `#${mix(0)}${mix(2)}${mix(4)}`;
+}
+
+/** The verb in the accent colour with a lighter glint sweeping across it, like Claude Code's shimmer. */
+const ShimmerText: React.FC<{ text: string; tick: number }> = ({ text, tick }) => {
+  const theme = useTheme();
+  const chars = [...text];
+  const span = chars.length + 6;
+  const at = (tick % span) - 3;
+  const glint = lighten(theme.accent);
+  return (
+    <Text color={theme.accent}>
+      {chars.map((ch, i) => (Math.abs(i - at) <= 1 ? <Text key={i} color={glint}>{ch}</Text> : ch))}
+    </Text>
   );
 };

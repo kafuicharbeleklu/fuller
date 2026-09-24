@@ -8,7 +8,7 @@ import { render } from 'ink';
  * roots synchronously, and in debug mode it writes the full static output on
  * every render, so the last write holds everything exactly once.
  */
-export function renderToString(element: React.ReactElement, columns: number, rows = 40): string {
+export function renderToString(element: React.ReactElement, columns: number, rows = 40, trimTrailing = true): string {
   const writes: string[] = [];
   const stdout = {
     columns,
@@ -28,5 +28,5 @@ export function renderToString(element: React.ReactElement, columns: number, row
     instance.unmount();
   } catch {}
   const last = writes[writes.length - 1] ?? '';
-  return last.replace(/\n+$/, '');
+  return trimTrailing ? last.replace(/\n+$/, '') : last;
 }

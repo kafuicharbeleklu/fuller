@@ -1,0 +1,34 @@
+
+  ██████╗  Fuller v0.3.0
+  ██╔═══╝  Gemini 3.6 Flash · Gemini API
+  █████╗   /tmp/fuller-permission-c68k4sc0
+  ██╔══╝ 
+  ██║    
+  ╚═╝    
+
+  Type / for commands, @ to mention a file, ! to run a shell command.
+
+
+❯ please ask permission                                                                                                      
+
+● Bash(sudo ip link set tun0 down && sudo ip link set tun1 down)
+  ⎿  Running…
+
+
+
+
+
+
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   sudo ip link set tun0 down && sudo ip link set tun1 down
+   Bring down VPN tunnel interfaces
+
+ ⚠ Commande dangereuse : sudo (privilèges / système)
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend

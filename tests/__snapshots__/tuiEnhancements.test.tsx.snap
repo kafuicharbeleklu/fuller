@@ -1,0 +1,35 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`TUI improvements > renders stable transcript and fullscreen viewport frames 1`] = `
+" ❯ hello
+ ⏺ world
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Transcript viewer · q to close · ? for shortcuts"
+`;
+
+exports[`TUI improvements > renders stable transcript and fullscreen viewport frames 2`] = `
+"❯ hello
+⏺ world
+
+
+"
+`;

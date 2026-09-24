@@ -1,0 +1,9 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`native terminal commands > defers paints and preserves committed output while the child owns the terminal 1`] = `
+"Authentication in the terminal · Ctrl+C to cancel
+SIMULATED_PASSWORD: 
+
+BACKGROUND_RESULT_UNIQUE
+RUNNING_NEW"
+`;

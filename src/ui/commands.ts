@@ -2,16 +2,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import type { AgentLoop } from '../agent/loop.js';
-import { addPermissionRule, removePermissionRule, loadSettingsSources, type AppConfig } from '../config.js';
+import { addPermissionRule, removePermissionRule, loadSettingsSources, saveDefaultModel, saveUserSetting, userConfigDir, type AppConfig } from '../config.js';
 import { loadProjectContext, memoryFilePath } from '../agent/contextLoader.js';
 import { getSystemPrompt } from '../agent/systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
 import { executeBash } from '../tools/bash.js';
 import { listSessions, formatRelative, sessionsDir } from '../session/store.js';
 import { getThemeNames, type Theme } from './theme.js';
-import { APP_NAME, APP_VERSION, PROVERBS, MEMORY_FILE } from '../branding.js';
+import { APP_NAME, APP_VERSION, MEMORY_FILE, CONFIG_DIR_NAME } from '../branding.js';
+import type { CommandEntry, ConfigItem, InfoRow, ListItem, SettingsTab } from './InfoDialogs.js';
+import { completeDirectory } from './InfoDialogs.js';
+import type { Denial } from './PermissionsDialog.js';
+import type { ContextData } from './ContextView.js';
+import type { ThinkingLevelSetting } from '../agent/thinking.js';
+import { contextLabel } from './ModelPicker.js';
+import { modelLabel } from './modelLabel.js';
 import { formatTokens } from '../tools/truncate.js';
 import { listChatModels, formatModelTable, freeTierStatus } from '../agent/models.js';
+import { defaultThinkingLevel } from '../agent/thinking.js';
 import { PERMISSION_MODES, type MessageKind, type PermissionMode, type UsageInfo } from '../agent/types.js';
 import type { GitInfo } from '../utils/git.js';
 import { expandSkill, commandPrompt, type SkillDefinition } from '../skills/loader.js';
@@ -33,13 +41,174 @@ export interface CommandContext {
   clearConversation: () => void;
   exit: () => void;
   openRewind: () => void;
+  openDiffViewer: () => void;
   toggleVerbose: () => void;
   transcriptMarkdown: () => string;
   addDir: (dir: string) => void;
   openModelPicker: () => void;
+  openThemePicker: () => void;
+  openSessionPicker: () => void;
+  /** Opens a Claude Code style dialog (/help, /status, /usage). */
+  openDialog: (dialog: InfoDialog) => void;
+  /** Open a file in $VISUAL/$EDITOR (VS Code when installed), creating it if needed. */
+  editFile: (file: string, initialContent?: string) => void;
+  /** Effort levels of the current model and the level in use. */
+  effort: () => { levels: ThinkingLevelSetting[]; current?: ThinkingLevelSetting };
+  setEffort: (level: ThinkingLevelSetting, scope: 'default' | 'session') => void;
   setContextWindow: (tokens: number) => void;
   skills: SkillDefinition[];
   reloadSkills: () => SkillDefinition[];
+}
+
+export type InfoDialog =
+  | { kind: 'help'; commands: CommandEntry[]; custom: CommandEntry[] }
+  | { kind: 'settings'; tab: SettingsTab; status: InfoRow[]; usage: InfoRow[]; config: ConfigItem[] }
+  | { kind: 'btw'; question: string }
+  | { kind: 'effort' }
+  | { kind: 'input'; title: string; description?: string; label?: string; placeholder?: string; hint?: string; complete?: (value: string) => string; onSubmit: (value: string) => void }
+  | { kind: 'list'; title: string; header?: string[]; items: ListItem[]; empty?: string; footer?: string; numbered?: boolean; hint?: string }
+  | { kind: 'permissions'; allow: string[]; ask: string[]; deny: string[]; directories: string[]; denials: Denial[]; autoRules: string[]; disabledBuiltin: Array<'softAllow' | 'softDeny'>; onAddRule: (kind: 'allow' | 'ask' | 'deny', rule: string) => void; onRemoveRule: (rule: string) => void; onAddAutoRule: (rule: string) => void; onRemoveAutoRule: (rule: string) => void; onToggleBuiltin: (group: 'softAllow' | 'softDeny') => void; onAddDirectory: () => void };
+
+/** /permissions dialog data; its actions update the settings and reopen it. */
+function permissionsDialog(ctx: CommandContext): InfoDialog {
+  const perms = ctx.config.settings.permissions ?? {};
+  return {
+    kind: 'permissions',
+    allow: perms.allow ?? [],
+    ask: perms.ask ?? [],
+    deny: perms.deny ?? [],
+    denials: ctx.agent.getRecentDenials(),
+    autoRules: ctx.config.settings.autoMode?.rules ?? [],
+    disabledBuiltin: ctx.config.settings.autoMode?.disabledBuiltin ?? [],
+    onAddAutoRule: (rule) => {
+      const auto = ctx.config.settings.autoMode ?? {};
+      ctx.config.settings.autoMode = { ...auto, rules: [...(auto.rules ?? []), rule] };
+      saveUserSetting(['autoMode', 'rules'], ctx.config.settings.autoMode.rules);
+      ctx.openDialog(permissionsDialog(ctx));
+    },
+    onRemoveAutoRule: (rule) => {
+      const auto = ctx.config.settings.autoMode ?? {};
+      ctx.config.settings.autoMode = { ...auto, rules: (auto.rules ?? []).filter((r) => r !== rule) };
+      saveUserSetting(['autoMode', 'rules'], ctx.config.settings.autoMode.rules);
+      ctx.openDialog(permissionsDialog(ctx));
+    },
+    onToggleBuiltin: (group) => {
+      const auto = ctx.config.settings.autoMode ?? {};
+      const disabled = auto.disabledBuiltin ?? [];
+      ctx.config.settings.autoMode = { ...auto, disabledBuiltin: disabled.includes(group) ? disabled.filter((g) => g !== group) : [...disabled, group] };
+      saveUserSetting(['autoMode', 'disabledBuiltin'], ctx.config.settings.autoMode.disabledBuiltin);
+      ctx.openDialog(permissionsDialog(ctx));
+    },
+    directories: [ctx.config.workspaceDir, ...ctx.config.additionalDirectories],
+    onAddRule: (kind, rule) => {
+      addPermissionRule(ctx.config.workspaceDir, rule, kind);
+      const p = ctx.config.settings.permissions ?? {};
+      ctx.config.settings.permissions = { ...p, [kind]: [...(p[kind] ?? []), rule] };
+      ctx.openDialog(permissionsDialog(ctx));
+    },
+    onRemoveRule: (rule) => {
+      if (removePermissionRule(ctx.config.workspaceDir, rule)) {
+        const p = ctx.config.settings.permissions ?? {};
+        ctx.config.settings.permissions = { ...p, allow: (p.allow ?? []).filter((r) => r !== rule), ask: (p.ask ?? []).filter((r) => r !== rule), deny: (p.deny ?? []).filter((r) => r !== rule) };
+      }
+      ctx.openDialog(permissionsDialog(ctx));
+    },
+    onAddDirectory: () => {
+      ctx.openDialog({
+        kind: 'input',
+        title: 'Add directory to workspace',
+        description: `${APP_NAME} will be able to read files in this directory and make edits when auto-accept edits is on.`,
+        label: 'Enter the path to the directory:',
+        placeholder: 'Directory path…',
+        hint: 'Tab to complete · Enter to add · Esc to cancel',
+        complete: (value) => completeDirectory(value, ctx.config.workspaceDir, fs, path),
+        onSubmit: (value) => {
+          const dir = path.resolve(ctx.config.workspaceDir, value);
+          if (fs.existsSync(dir)) ctx.addDir(dir);
+          ctx.openDialog(permissionsDialog(ctx));
+        },
+      });
+    },
+  };
+}
+
+/** Hook events in Claude Code's /hooks order, with its descriptions. */
+const HOOK_DESCRIPTIONS: Array<[string, string]> = [
+  ['PreToolUse', 'Before tool execution'],
+  ['PostToolUse', 'After tool execution'],
+  ['PermissionRequest', 'When a permission dialog is shown'],
+  ['UserPromptSubmit', 'When the user submits a prompt'],
+  ['SessionStart', 'When a new session is started'],
+  ['SessionEnd', 'When a session is ending'],
+  ['Stop', 'Right before the agent concludes its response'],
+  ['Notification', 'When notifications are sent'],
+  ['PreCompact', 'Before conversation compaction'],
+];
+
+const MODE_NAMES: Record<string, string> = { default: 'Default', acceptEdits: 'Accept edits', plan: 'Plan mode', auto: 'Auto' };
+
+/** The Config tab: settings Fuller really has, saved to the user settings. */
+function configItems(ctx: CommandContext): ConfigItem[] {
+  const { levels, current } = ctx.effort();
+  const bool = (value: boolean) => (value ? 'true' : 'false');
+  return [
+    {
+      label: 'Auto-compact', value: bool(ctx.config.autoCompact), options: ['true', 'false'],
+      onChange: (value) => { ctx.config.autoCompact = value === 'true'; saveUserSetting(['autoCompact'], ctx.config.autoCompact); },
+    },
+    levels.length
+      ? { label: 'Effort', value: current ?? levels[0], options: levels, onChange: (value) => ctx.setEffort(value as ThinkingLevelSetting, 'default') }
+      : { label: 'Effort', value: 'n/a', description: `${modelLabel(ctx.config.model)} has no thinking levels` },
+    {
+      label: 'Reply after ! commands', value: bool(ctx.config.settings.replyAfterShell !== false), options: ['true', 'false'],
+      onChange: (value) => { ctx.config.settings.replyAfterShell = value === 'true'; saveUserSetting(['replyAfterShell'], value === 'true'); },
+    },
+    { label: 'Verbose output', value: bool(ctx.verbose), options: ['true', 'false'], onChange: () => ctx.toggleVerbose() },
+    {
+      label: 'Notifications', value: ctx.config.notifications, options: ['off', 'permission', 'all'],
+      onChange: (value) => { ctx.config.notifications = value as AppConfig['notifications']; saveUserSetting(['notifications'], value); },
+    },
+    {
+      label: 'Default permission mode', value: MODE_NAMES[ctx.config.settings.permissions?.defaultMode ?? 'default'] ?? 'Default', options: Object.values(MODE_NAMES),
+      onChange: (value) => {
+        const mode = Object.keys(MODE_NAMES).find((key) => MODE_NAMES[key] === value) as PermissionMode;
+        ctx.config.settings.permissions = { ...ctx.config.settings.permissions, defaultMode: mode };
+        saveUserSetting(['permissions', 'defaultMode'], mode);
+      },
+    },
+    { label: 'Theme', value: ctx.theme.name, onOpen: () => ctx.openThemePicker() },
+    { label: 'Model', value: modelLabel(ctx.config.model), onOpen: () => ctx.openModelPicker() },
+  ];
+}
+
+/** Rows of the Settings dialog, shared by /status and /usage. */
+function settingsRows(ctx: CommandContext): { status: InfoRow[]; usage: InfoRow[] } {
+  const sources = loadSettingsSources(ctx.config.workspaceDir);
+  const memory = loadProjectContext(ctx.config.workspaceDir);
+  const allow = ctx.config.settings.permissions?.allow ?? [];
+  const deny = ctx.config.settings.permissions?.deny ?? [];
+  const u = ctx.usage;
+  return {
+    status: [
+      { label: 'Version', value: APP_VERSION },
+      { label: 'Session name', value: ctx.agent.sessionName, placeholder: '/rename to add a name' },
+      { label: 'Session ID', value: ctx.agent.sessionId },
+      { label: 'cwd', value: `${ctx.config.workspaceDir}${ctx.config.additionalDirectories.length ? ` (+ ${ctx.config.additionalDirectories.join(', ')})` : ''}` },
+      { label: 'Model', value: `${modelLabel(ctx.config.model)} (${contextLabel(ctx.config.contextWindow)})` },
+      { label: 'Git', value: ctx.gitInfo?.isGit ? `${ctx.gitInfo.branch}${ctx.gitInfo.isDirty ? ' (dirty)' : ' (clean)'}` : undefined, placeholder: 'not a git repository' },
+      { label: 'Permission mode', value: `${ctx.config.permissionMode} · ${allow.length} allow · ${deny.length} deny rules` },
+      { label: 'Theme', value: ctx.theme.name },
+      { label: 'Memory files', value: memory.map((m) => m.path).join(', ') || undefined, placeholder: `none · /init to create ${MEMORY_FILE}` },
+      { label: 'Setting sources', value: sources.map((src) => `${src.scope} (${src.file})`).join(', ') || undefined, placeholder: 'none' },
+    ],
+    usage: [
+      { label: 'Total tokens', value: u.cumulativeTokens.toLocaleString('en-US') },
+      { label: 'Last request', value: `${u.promptTokens.toLocaleString('en-US')} prompt · ${u.responseTokens.toLocaleString('en-US')} response` },
+      { label: 'API calls', value: `${u.apiCalls} · ${u.turns} tool turns` },
+      { label: 'Total duration', value: fmtDuration(Date.now() - ctx.startedAt) },
+      { label: 'Pricing', value: `https://ai.google.dev/pricing (${ctx.config.model})` },
+    ],
+  };
 }
 
 export interface SlashCommand {
@@ -61,76 +230,75 @@ const fmtDuration = (ms: number) => {
 export const COMMANDS: SlashCommand[] = [
   {
     name: '/help',
-    description: 'Afficher les commandes et raccourcis',
-    run: (ctx) => {
-      const lines = COMMANDS.map((c) => `- \`${c.name}${c.usage ? ' ' + c.usage : ''}\` — ${c.description}`).join('\n');
-      ctx.addSystem(`**Commandes**\n${lines}\n\n**Raccourcis**\n- \`shift+tab\` cycle des modes (default → accept edits → plan → bypass)\n- \`esc\` interrompre · \`esc esc\` rewind (ou vider la saisie)\n- \`ctrl+o\` transcript détaillé · \`ctrl+l\` redessiner · \`ctrl+r\` recherche dans l'historique\n- \`!\` mode shell · \`@fichier\` insérer un fichier · \`\\⏎\` ou \`ctrl+j\` nouvelle ligne\n- \`?\` (saisie vide) aide clavier · \`ctrl+c\` vider / quitter (×2)`);
-    },
+    description: 'Show help and available commands',
+    run: (ctx) => ctx.openDialog({
+      kind: 'help',
+      commands: COMMANDS.map((c) => ({ name: c.name, description: c.description })),
+      custom: ctx.skills.filter((sk) => sk.userInvocable).map((sk) => ({ name: `/${sk.name}`, description: sk.description ?? '' })),
+    }),
   },
   {
     name: '/clear',
-    description: "Nouvelle conversation (efface l'écran et le contexte)",
+    description: 'Start a new conversation with empty context',
+    aliases: ['/reset', '/new'],
     run: (ctx) => ctx.clearConversation(),
   },
   {
     name: '/compact',
-    description: 'Résumer la conversation pour libérer du contexte',
+    description: 'Free up context by summarizing the conversation so far',
     usage: '[focus]',
     takesArg: true,
     run: (ctx, arg) => ctx.agent.compact(arg || undefined),
   },
   {
     name: '/status',
-    description: 'Session, modèle, git, mode, mémoire et réglages',
-    run: (ctx) => {
-      const sources = loadSettingsSources(ctx.config.workspaceDir);
-      const memory = loadProjectContext(ctx.config.workspaceDir);
-      const allow = ctx.config.settings.permissions?.allow ?? [];
-      const deny = ctx.config.settings.permissions?.deny ?? [];
-      ctx.addSystem(
-        `**${APP_NAME} v${APP_VERSION}**\n` +
-        `- Session: \`${ctx.agent.sessionId}\` (${sessionsDir(ctx.config.workspaceDir)})\n` +
-        `- Model: ${ctx.config.model} · context window ${formatTokens(ctx.config.contextWindow)}\n` +
-        `- Directory: ${ctx.config.workspaceDir}${ctx.config.additionalDirectories.length ? ` (+ ${ctx.config.additionalDirectories.join(', ')})` : ''}\n` +
-        `- Git: ${ctx.gitInfo?.isGit ? `${ctx.gitInfo.branch}${ctx.gitInfo.isDirty ? ' (dirty)' : ' (clean)'}` : 'not a git repository'}\n` +
-        `- Permission mode: ${ctx.config.permissionMode} · allow rules: ${allow.length} · deny rules: ${deny.length}\n` +
-        `- Theme: ${ctx.theme.name} · verbose: ${ctx.verbose ? 'on' : 'off'}\n` +
-        `- Memory files: ${memory.length ? memory.map((m) => m.path).join(', ') : `none (create ${MEMORY_FILE} with /init)`}\n` +
-        `- Settings sources: ${sources.length ? sources.map((s) => `${s.scope} (${s.file})`).join(', ') : 'none'}`
-      );
-    },
+    description: 'Show information about the current session',
+    run: (ctx) => ctx.openDialog({ kind: 'settings', tab: 'status', ...settingsRows(ctx), config: configItems(ctx) }),
   },
   {
-    name: '/cost',
-    description: 'Tokens, appels API et durée de la session',
-    aliases: ['/usage'],
-    run: (ctx) => {
-      const u = ctx.usage;
-      ctx.addSystem(
-        `**Session usage**\n- Total tokens (all API calls): ${u.cumulativeTokens.toLocaleString('en-US')}\n- Last request: ${u.promptTokens.toLocaleString('en-US')} prompt · ${u.responseTokens.toLocaleString('en-US')} response\n- API calls: ${u.apiCalls} · tool turns: ${u.turns}\n- Wall time: ${fmtDuration(Date.now() - ctx.startedAt)}\n- Pricing: see https://ai.google.dev/pricing (${ctx.config.model})`
-      );
-    },
+    name: '/usage',
+    description: 'Show token usage and duration of this session',
+    aliases: ['/cost'],
+    run: (ctx) => ctx.openDialog({ kind: 'settings', tab: 'usage', ...settingsRows(ctx), config: configItems(ctx) }),
+  },
+  {
+    name: '/config',
+    description: 'Open settings',
+    run: (ctx) => ctx.openDialog({ kind: 'settings', tab: 'config', ...settingsRows(ctx), config: configItems(ctx) }),
   },
   {
     name: '/context',
-    description: 'Répartition estimée du contexte',
+    description: 'Visualize current context usage as a colored grid',
     run: (ctx) => {
       const sys = getSystemPrompt({ workspaceDir: ctx.config.workspaceDir, model: ctx.config.model, permissionMode: ctx.config.permissionMode });
       const memory = loadProjectContext(ctx.config.workspaceDir);
       const memChars = memory.reduce((a, m) => a + m.content.length, 0);
       const toolChars = JSON.stringify(geminiToolDeclarations).length;
-      const msgs = ctx.agent.getMessages();
+      const msgs = ctx.agent.getMessages().filter((m) => m.kind !== 'context');
       const msgChars = msgs.reduce((a, m) => a + m.content.length + (m.parts ?? []).reduce((b, p) => b + (p.type === 'tool' ? (p.toolCall.result?.length ?? 0) + JSON.stringify(p.toolCall.args).length : p.content.length), 0), 0);
-      const est = (c: number) => `~${formatTokens(Math.round(c / 4))} tokens`;
-      const pct = ctx.usage.promptTokens ? `${((ctx.usage.promptTokens / ctx.config.contextWindow) * 100).toFixed(1)}%` : 'n/a';
-      ctx.addSystem(
-        `**Context usage** (last request: ${ctx.usage.promptTokens.toLocaleString('en-US')} tokens = ${pct} of ${formatTokens(ctx.config.contextWindow)})\n- System prompt: ${est(sys.length - memChars)}\n- Memory files (${memory.length}): ${est(memChars)}\n- Tool definitions: ${est(toolChars)}\n- Messages & tool results: ${est(msgChars)} (${msgs.length} messages)\n- Auto-compact at ${Math.round(ctx.config.autoCompactThreshold * 100)}%`
-      );
+      const skillChars = ctx.skills.reduce((sum, sk) => sum + sk.name.length + (sk.description ?? '').length, 0);
+      const tokens = (chars: number) => Math.round(chars / 4);
+      // Claude Code 2.1.281 draws this as a coloured grid (ContextView).
+      const data: ContextData = {
+        modelLabel: `${modelLabel(ctx.config.model)} (${contextLabel(ctx.config.contextWindow)})`,
+        modelId: ctx.config.model,
+        window: ctx.config.contextWindow,
+        bufferShare: Math.max(0, 1 - ctx.config.autoCompactThreshold),
+        categories: [
+          { name: 'System prompt', tokens: tokens(sys.length - memChars), color: 'promptBorder' },
+          { name: 'System tools', tokens: tokens(toolChars), color: 'subtle' },
+          { name: 'Memory files', tokens: tokens(memChars), color: 'permission' },
+          { name: 'Skills', tokens: tokens(skillChars), color: 'warning' },
+          { name: 'Messages', tokens: tokens(msgChars), color: 'autoAccept' },
+        ].filter((category) => category.tokens > 0 || category.name === 'Messages') as ContextData['categories'],
+        skills: { count: ctx.skills.length, tokens: tokens(skillChars) },
+      };
+      ctx.addSystem(JSON.stringify(data), 'context');
     },
   },
   {
     name: '/model',
-    description: 'Choisir un modèle (liste depuis l\'API, historique conservé)',
+    description: 'Switch the AI model and save it as your default for new sessions',
     usage: '[name|list|list all]',
     takesArg: true,
     run: async (ctx, arg) => {
@@ -142,24 +310,61 @@ export const COMMANDS: SlashCommand[] = [
         return;
       }
       const name = arg.trim().replace(/^models\//, '');
-      ctx.agent.switchModel(name);
+      const thinkingLevel = defaultThinkingLevel(name);
+      ctx.agent.switchModel(name, thinkingLevel);
       try {
         const known = (await listChatModels(ctx.config.apiKey, { all: true })).find((m) => m.id === name);
         if (known?.inputTokenLimit) ctx.setContextWindow(known.inputTokenLimit);
         if (!known) ctx.addSystem(`⚠ "${name}" is not in the list of chat models for this key (\`/model list all\`). Trying anyway.`, 'notice');
         else if (freeTierStatus(name) === 'paid') ctx.addSystem(`⚠ "${name}" has no free tier (billing required).`, 'notice');
       } catch {}
-      ctx.addSystem(`Model switched to **${name}** (conversation history kept).`);
+      let savedDefault = false;
+      try {
+        saveDefaultModel(name, undefined, thinkingLevel);
+        ctx.config.settings.model = name;
+        ctx.config.settings.thinkingLevel = thinkingLevel;
+        savedDefault = true;
+      } catch (err: any) {
+        ctx.addSystem(`Could not save the default model: ${err.message || String(err)}. Using it for this session.`, 'notice');
+      }
+      ctx.addSystem(`Switched model to ${name}${savedDefault ? ' · default for new sessions' : ' · this session only'}. Conversation history kept.`, 'notice');
+    },
+  },
+  {
+    name: '/effort',
+    description: 'Set the effort level (the levels the model supports); status prints it',
+    usage: '[level|status]',
+    takesArg: true,
+    run: (ctx, arg) => {
+      const { levels, current } = ctx.effort();
+      if (!levels.length) { ctx.addSystem('The current model has no effort levels.'); return; }
+      const value = arg.trim().toLowerCase();
+      if (value === 'status') { ctx.addSystem(`Effort level: ${current ?? 'default'}`); return; }
+      if (value) {
+        if (!levels.includes(value as ThinkingLevelSetting)) { ctx.addSystem(`✗ Unknown effort level "${value}". Choose one of: ${levels.join(', ')}`, 'notice'); return; }
+        ctx.setEffort(value as ThinkingLevelSetting, 'default');
+        return;
+      }
+      ctx.openDialog({ kind: 'effort' });
+    },
+  },
+  {
+    name: '/keybindings',
+    description: 'Open your keyboard shortcuts file',
+    run: (ctx) => {
+      const file = path.join(userConfigDir(), 'keybindings.json');
+      ctx.editFile(file, '{\n  "bindings": {\n    "ctrl+g": "externalEditor"\n  }\n}\n');
+      ctx.addSystem(`Opened ${file} · actions: transcript, diff, externalEditor, tasks, redraw, historySearch, undo, cycleMode`);
     },
   },
   {
     name: '/theme',
-    description: 'Changer le thème',
+    description: 'Change the display theme',
     usage: '[name]',
     takesArg: true,
     run: (ctx, arg) => {
       const names = getThemeNames();
-      if (!arg) { ctx.addSystem(`Current theme: **${ctx.theme.name}**\nAvailable: ${names.join(', ')}\nUsage: \`/theme <name>\``); return; }
+      if (!arg) { ctx.openThemePicker(); return; }
       if (!names.includes(arg)) { ctx.addSystem(`Unknown theme "${arg}". Available: ${names.join(', ')}`); return; }
       ctx.setTheme(arg);
       ctx.addSystem(`Theme set to **${arg}**.`);
@@ -167,7 +372,8 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/permissions',
-    description: 'Lister / ajouter / retirer des règles de permission',
+    aliases: ['/allowed-tools'],
+    description: 'Manage allow and deny rules for tool permissions',
     usage: '[add|remove <rule>]',
     takesArg: true,
     run: (ctx, arg) => {
@@ -189,31 +395,32 @@ export const COMMANDS: SlashCommand[] = [
         const ok = removePermissionRule(ctx.config.workspaceDir, rule);
         if (ok) {
           const p = ctx.config.settings.permissions ?? {};
-          ctx.config.settings.permissions = { ...p, allow: (p.allow ?? []).filter((r) => r !== rule), deny: (p.deny ?? []).filter((r) => r !== rule) };
+          ctx.config.settings.permissions = { ...p, allow: (p.allow ?? []).filter((r) => r !== rule), ask: (p.ask ?? []).filter((r) => r !== rule), deny: (p.deny ?? []).filter((r) => r !== rule) };
         }
         ctx.addSystem(ok ? `Rule removed: \`${rule}\`` : `Rule not found: \`${rule}\``);
         return;
       }
-      const allow = ctx.config.settings.permissions?.allow ?? [];
-      const deny = ctx.config.settings.permissions?.deny ?? [];
-      ctx.addSystem(
-        `**Permission mode:** ${ctx.config.permissionMode}\n**Allow** (${allow.length})\n${allow.map((r) => `- \`${r}\``).join('\n') || '- (none)'}\n**Deny** (${deny.length})\n${deny.map((r) => `- \`${r}\``).join('\n') || '- (none)'}\n\nRules use the \`Tool(spec)\` syntax: \`Bash(npm test:*)\`, \`Edit(src/**)\`, \`WebFetch(domain:example.com)\`.\nUsage: \`/permissions add <rule>\`, \`/permissions deny <rule>\`, \`/permissions remove <rule>\``
-      );
+      // Claude Code opens the Permissions dialog; add/deny/remove stay available as text.
+      ctx.openDialog(permissionsDialog(ctx));
     },
   },
   {
     name: '/plan',
-    description: 'Activer / désactiver le plan mode (lecture seule)',
-    run: (ctx) => ctx.setMode(ctx.config.permissionMode === 'plan' ? 'default' : 'plan'),
+    description: 'Enter plan mode directly from the prompt',
+    run: (ctx) => {
+      const entering = ctx.config.permissionMode !== 'plan';
+      ctx.setMode(entering ? 'plan' : 'default');
+      ctx.addSystem(entering ? 'Enabled plan mode' : 'Disabled plan mode');
+    },
   },
   {
     name: '/accept-edits',
-    description: 'Activer / désactiver accept edits (shift+tab)',
+    description: 'Toggle accept edits mode (shift+tab)',
     run: (ctx) => ctx.setMode(ctx.config.permissionMode === 'acceptEdits' ? 'default' : 'acceptEdits'),
   },
   {
     name: '/mode',
-    description: 'Changer le mode de permission',
+    description: 'Set the permission mode',
     usage: `<${PERMISSION_MODES.join('|')}>`,
     takesArg: true,
     run: (ctx, arg) => {
@@ -223,7 +430,7 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/init',
-    description: `Générer un fichier ${MEMORY_FILE} pour le projet`,
+    description: `Initialize project with a ${MEMORY_FILE} guide`,
     run: (ctx) => {
       const target = memoryFilePath(ctx.config.workspaceDir);
       void ctx.agent.handleUserInput(
@@ -234,24 +441,32 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/memory',
-    description: 'Lister les fichiers mémoire chargés',
+    description: `Edit ${MEMORY_FILE} files`,
     run: (ctx) => {
-      const memory = loadProjectContext(ctx.config.workspaceDir);
-      ctx.addSystem(
-        memory.length
-          ? `**Memory files**\n${memory.map((m) => `- ${m.path} (${m.scope}, ${m.content.length} chars)`).join('\n')}\n\nEdit them with your editor; changes apply on the next message.`
-          : `No memory file loaded. Create \`${MEMORY_FILE}\` (or \`AGENTS.md\`) at the project root, or run \`/init\`. A user-level file is read from \`~/.fuller/${MEMORY_FILE}\`.`
-      );
+      const home = process.env.HOME ?? '';
+      const user = path.join(home, CONFIG_DIR_NAME, MEMORY_FILE);
+      const project = path.join(ctx.config.workspaceDir, MEMORY_FILE);
+      const tilde = (file: string) => (home && file.startsWith(home) ? `~${file.slice(home.length)}` : file);
+      ctx.openDialog({
+        kind: 'list',
+        title: 'Memory',
+        items: [
+          { label: 'User instructions', hint: `Saved in ${tilde(user)}`, onSelect: () => ctx.editFile(user) },
+          { label: 'Project instructions', hint: `Saved in ./${MEMORY_FILE}`, onSelect: () => ctx.editFile(project) },
+        ],
+        footer: 'Changes apply on the next message.',
+        hint: 'Enter to confirm · Esc to cancel',
+      });
     },
   },
   {
     name: '/rewind',
-    description: 'Restaurer les fichiers à un checkpoint (esc esc)',
+    description: 'Roll code and conversation back to a checkpoint, or summarize part of the conversation',
     run: (ctx) => ctx.openRewind(),
   },
   {
     name: '/checkpoints',
-    description: 'Lister les checkpoints de fichiers',
+    description: 'List file checkpoints',
     run: (ctx) => {
       const cps = ctx.agent.getCheckpoints();
       ctx.addSystem(cps.length ? `**Checkpoints**\n${cps.slice(0, 20).map((c) => `- ${new Date(c.timestamp).toLocaleTimeString()} — ${c.description} (${c.files.length} file${c.files.length === 1 ? '' : 's'})`).join('\n')}` : 'No checkpoints yet.');
@@ -259,8 +474,7 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/sessions',
-    description: 'Lister les sessions du projet',
-    aliases: ['/resume'],
+    description: 'List the sessions of this project',
     run: (ctx) => {
       const sessions = listSessions(ctx.config.workspaceDir).slice(0, 15);
       ctx.addSystem(
@@ -271,34 +485,51 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: '/resume',
+    description: 'Return to an earlier conversation',
+    run: (ctx) => ctx.openSessionPicker(),
+  },
+  {
     name: '/diff',
-    description: 'Afficher les changements git non commités',
-    run: async (ctx) => {
-      const stat = await executeBash('git status --short && echo "---" && git diff --stat', ctx.config.workspaceDir, { timeoutMs: 10_000 });
-      if (stat.exitCode !== 0) { ctx.addSystem(`git: ${stat.stderr || 'not a git repository'}`); return; }
-      const diff = await executeBash('git diff', ctx.config.workspaceDir, { timeoutMs: 10_000 });
-      const body = diff.stdout.split('\n').slice(0, ctx.verbose ? 800 : 120).join('\n');
-      ctx.addSystem(`\`\`\`\n${stat.stdout || '(clean)'}\n\`\`\`${body ? `\n\`\`\`diff\n${body}\n\`\`\`${diff.stdout.split('\n').length > 120 && !ctx.verbose ? '\n… (ctrl+o then /diff for the full diff)' : ''}` : ''}`);
-    },
+    description: 'Review the changes in your working tree',
+    run: (ctx) => ctx.openDiffViewer(),
   },
   {
     name: '/export',
-    description: 'Exporter la conversation en Markdown',
+    description: 'Export the current conversation',
     usage: '[file]',
     takesArg: true,
     run: (ctx, arg) => {
-      const file = path.resolve(ctx.config.workspaceDir, arg || `fuller-${ctx.agent.sessionId}.md`);
-      try {
-        fs.writeFileSync(file, ctx.transcriptMarkdown(), 'utf8');
-        ctx.addSystem(`Conversation exported → ${file}`);
-      } catch (err: any) {
-        ctx.addSystem(`✗ Export failed: ${err.message}`, 'notice');
-      }
+      const save = (target: string) => {
+        const file = path.resolve(ctx.config.workspaceDir, target);
+        try {
+          fs.writeFileSync(file, ctx.transcriptMarkdown(), 'utf8');
+          ctx.addSystem(`Conversation exported to ${file}`);
+        } catch (err: any) {
+          ctx.addSystem(`✗ Export failed: ${err.message}`, 'notice');
+        }
+      };
+      if (arg) { save(arg); return; }
+      // Claude Code asks how to export: clipboard or file.
+      ctx.openDialog({
+        kind: 'list',
+        title: 'Export conversation',
+        header: ['Select export method'],
+        items: [
+          {
+            label: 'Copy to clipboard', hint: 'Copy the conversation to your system clipboard',
+            onSelect: () => { void copyToClipboard(ctx.transcriptMarkdown()).then((via) => ctx.addSystem(`Conversation copied to the clipboard (${via})`)).catch((err) => ctx.addSystem(`✗ Copy failed: ${err?.message ?? err}`, 'notice')); },
+          },
+          { label: 'Save to file', hint: 'Save the conversation to a file in the current directory', onSelect: () => save(`fuller-${ctx.agent.sessionId}.md`) },
+        ],
+        hint: 'Esc to cancel',
+      });
     },
   },
   {
     name: '/doctor',
-    description: "Diagnostic de l'installation",
+    aliases: ['/checkup'],
+    description: 'Run a setup checkup',
     run: (ctx) => {
       const check = (ok: boolean, label: string) => `${ok ? '✔' : '✘'} ${label}`;
       const has = (cmd: string) => { try { execSync(`command -v ${cmd}`, { stdio: 'ignore' }); return true; } catch { return false; } };
@@ -319,21 +550,35 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/btw',
-    description: "Question rapide hors contexte (n'affecte pas l'historique)",
+    description: 'Ask a side question about the current session without adding to the conversation',
     usage: '<question>',
     takesArg: true,
     run: (ctx, arg) => {
       if (!arg) { ctx.addSystem('Usage: `/btw <question>`'); return; }
-      void ctx.agent.sideChat(arg);
+      // Claude Code answers in a panel, outside the conversation.
+      ctx.openDialog({ kind: 'btw', question: arg });
     },
   },
   {
     name: '/add-dir',
-    description: 'Autoriser un dossier supplémentaire',
+    description: 'Add a working directory for file access during the current session',
     usage: '<path>',
     takesArg: true,
     run: (ctx, arg) => {
-      if (!arg) { ctx.addSystem('Usage: `/add-dir <path>`'); return; }
+      if (!arg) {
+        // Claude Code asks for the path in a dialog, with Tab completion.
+        ctx.openDialog({
+          kind: 'input',
+          title: 'Add directory to workspace',
+          description: `${APP_NAME} will be able to read files in this directory and make edits when auto-accept edits is on.`,
+          label: 'Enter the path to the directory:',
+          placeholder: 'Directory path…',
+          hint: 'Tab to complete · Enter to add · Esc to cancel',
+          complete: (value) => completeDirectory(value, ctx.config.workspaceDir, fs, path),
+          onSubmit: (value) => COMMANDS.find((c) => c.name === '/add-dir')?.run(ctx, value),
+        });
+        return;
+      }
       const dir = path.resolve(ctx.config.workspaceDir, arg);
       if (!fs.existsSync(dir)) { ctx.addSystem(`Directory not found: ${dir}`); return; }
       ctx.addDir(dir);
@@ -342,7 +587,7 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/skills',
-    description: 'Lister les commandes personnalisées et skills (reload pour rafraîchir)',
+    description: 'List custom commands and skills (reload to refresh)',
     usage: '[reload]',
     takesArg: true,
     run: (ctx, arg) => {
@@ -357,14 +602,14 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/copy',
-    description: 'Copier la dernière réponse (ou la N-ième depuis la fin) dans le presse-papiers',
+    description: 'Copy the last assistant response to clipboard',
     usage: '[N]',
     takesArg: true,
     run: async (ctx, arg) => {
       const n = Math.max(1, parseInt(arg, 10) || 1);
       const texts = ctx.agent.getMessages().filter((m) => m.role === 'assistant' && (m.content || m.parts?.some((p) => p.type === 'text')));
       const msg = texts[texts.length - n];
-      if (!msg) { ctx.addSystem('Nothing to copy yet.'); return; }
+      if (!msg) { ctx.addSystem('No assistant message to copy'); return; }
       const text = msg.content || (msg.parts ?? []).filter((p) => p.type === 'text').map((p: any) => p.content).join('\n\n');
       try {
         const via = await copyToClipboard(text);
@@ -376,7 +621,7 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/rename',
-    description: 'Renommer la session (titre dans /sessions et le sélecteur --resume)',
+    description: 'Rename the current session',
     usage: '<title>',
     takesArg: true,
     run: (ctx, arg) => {
@@ -387,33 +632,37 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/agents',
-    description: 'Sous-agents disponibles (outil agent)',
+    description: 'Explain how to create or manage subagents',
     run: (ctx) => {
-      const defs = ctx.agent.getSubagents();
-      ctx.addSystem(`**Subagents** (${defs.length})\n${defs.map((d) => `- **${d.name}** (${d.scope}) — ${d.description}${d.tools.length ? ` · tools: ${d.tools.join(', ')}` : ' · all tools'}`).join('\n')}\n\nDefine your own in \`.fuller/agents/<name>.md\` (frontmatter: description, tools, model, maxTurns; body = instructions). \`.claude/agents\` is read too.`);
+      // Claude Code 2.1.281 no longer has an /agents wizard; it points to the files.
+      const names = ctx.agent.getSubagents().map((d) => d.name).join(', ');
+      ctx.addSystem(`Ask ${APP_NAME} to create or update subagents for you (e.g. "create a code-reviewer subagent that ..."),\nor edit the files directly:\n  • .fuller/agents/       (this project)\n  • .claude/agents/       (read too)\n\nAvailable now: ${names || 'none'}`);
     },
   },
   {
     name: '/mcp',
-    description: 'Serveurs MCP : statut et outils exposés',
+    description: 'Show MCP server connections and their tools',
     run: (ctx) => {
       const statuses = ctx.agent.mcpStatuses();
-      if (statuses.length === 0) {
-        ctx.addSystem('No MCP server configured. Add `.mcp.json` in the project (or `~/.fuller/mcp.json`):\n```json\n{ "mcpServers": { "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } }, "docs": { "url": "https://example.com/mcp" } } }\n```\nTools appear as `mcp__<server>__<tool>`; allow them with rules like `mcp__github` (whole server) or `mcp__github__search_issues`.');
-        return;
-      }
       const tools = ctx.agent.mcpTools();
-      const lines = statuses.map((s) => {
-        const glyph = s.status === 'connected' ? '✔' : s.status === 'failed' ? '✘' : '…';
-        const own = tools.filter((t) => t.server === s.name).map((t) => `\`${t.name}\``).join(', ');
-        return `- ${glyph} **${s.name}** (${s.scope}, ${s.transport}) — ${s.status}${s.error ? `: ${s.error}` : ''}${own ? `\n  ${own}` : ''}`;
+      ctx.openDialog({
+        kind: 'list',
+        title: 'Manage MCP servers',
+        header: [`${statuses.length} server${statuses.length === 1 ? '' : 's'}`],
+        numbered: false,
+        items: statuses.map((st) => ({
+          glyph: st.status === 'connected' ? '✔' : st.status === 'failed' ? '✘' : '◯',
+          label: st.name,
+          hint: st.status === 'connected' ? `${tools.filter((t) => t.server === st.name).length} tools` : st.error ? `${st.status}: ${st.error}` : st.status,
+        })),
+        empty: 'No MCP servers configured.',
+        footer: 'Add servers in .mcp.json or ~/.fuller/mcp.json · tools appear as mcp__<server>__<tool>',
       });
-      ctx.addSystem(`**MCP servers**\n${lines.join('\n')}`);
     },
   },
   {
     name: '/tasks',
-    description: "Tâches en arrière-plan (kill <id> pour arrêter)",
+    description: 'List background work in this session',
     usage: '[kill <id>]',
     takesArg: true,
     run: (ctx, arg) => {
@@ -424,38 +673,51 @@ export const COMMANDS: SlashCommand[] = [
         return;
       }
       const lines = ctx.agent.describeBackgroundTasks();
-      ctx.addSystem(lines.length ? `**Background tasks**\n${lines.map((l) => `- ${l}`).join('\n')}\n\nLogs in ~/.fuller/tasks/<session>/ · \`/tasks kill <id>\` to stop one.` : 'No background task. The model starts one with execute_bash(run_in_background=true).');
+      ctx.openDialog({
+        kind: 'list',
+        title: 'Background',
+        items: lines.map((line) => ({ label: line })),
+        empty: 'No tasks currently running',
+        hint: lines.length ? '↑/↓ to select · Enter to view · Esc to close' : 'Esc to close',
+      });
     },
   },
   {
     name: '/hooks',
-    description: 'Lister les hooks configurés (settings.json)',
+    description: 'View hook configurations for tool events',
     run: (ctx) => {
-      const lines = describeHooks(ctx.config.settings.hooks);
-      ctx.addSystem(
-        lines.length
-          ? `**Hooks** (${lines.length})\n${lines.map((l) => `- ${l}`).join('\n')}\n\nEvents: SessionStart, UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, Notification, Stop, PreCompact, SessionEnd. Exit 2 = block (stderr = reason); JSON stdout: decision, hookSpecificOutput.permissionDecision, updatedInput, additionalContext.`
-          : 'No hook configured. Add to `.fuller/settings.json`:\n```json\n{ "hooks": { "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.fuller/check-bash.sh", "timeout": 30 }] }] } }\n```\nThe command receives the same JSON as Claude Code hooks on stdin; exit 2 blocks with stderr as the reason.'
-      );
+      const config = ctx.config.settings.hooks ?? {};
+      const count = (event: string) => ((config as Record<string, Array<{ hooks?: unknown[] }>>)[event] ?? []).reduce((n, group) => n + (group.hooks?.length ?? 0), 0);
+      const total = HOOK_DESCRIPTIONS.reduce((n, [event]) => n + count(event), 0);
+      ctx.openDialog({
+        kind: 'list',
+        title: 'Hooks',
+        header: [`${total} hook${total === 1 ? '' : 's'} configured`, `This menu is read-only. To add or change a hook, edit settings.json or ask ${APP_NAME}.`],
+        items: HOOK_DESCRIPTIONS.map(([event, description]) => ({
+          label: event,
+          hint: `${description}${count(event) ? ` · ${count(event)} configured` : ''}`,
+          onSelect: () => ctx.addSystem(describeHooks(config).filter((line) => line.includes(event)).join('\n') || `No hook for ${event}.`),
+        })),
+      });
     },
   },
   {
     name: '/verbose',
-    description: 'Basculer le transcript détaillé (ctrl+o)',
+    description: 'Toggle the detailed transcript (ctrl+o)',
     run: (ctx) => ctx.toggleVerbose(),
   },
   {
     name: '/about',
-    description: `À propos de ${APP_NAME}`,
+    description: `About ${APP_NAME}`,
     run: (ctx) => {
       ctx.addSystem(
-        `**${APP_NAME} v${APP_VERSION}** — agent de programmation en terminal (Ink + Gemini).\n\nNommé en hommage à **Thomas Fuller (1654–1734)**, médecin anglais et compilateur de la *Gnomologia* (1732), recueil de plus de 6 000 proverbes — source de la plupart des aphorismes attribués à « Thomas Fuller ». À ne pas confondre avec Thomas Fuller (1608–1661), pasteur et historien, auteur de *The Worthies of England*.\n\n${PROVERBS.slice(0, 5).map((p) => `> “${p.text}” — ${p.source}`).join('\n')}`
+        `**${APP_NAME} v${APP_VERSION}** — terminal coding agent (Ink + Gemini).\n\nNamed after **Thomas Fuller (c. 1710–1790)**, known as *the Virginia Calculator*. Born in Africa and enslaved in Virginia from 1724, he never learned to read or write, yet solved long calculations in his head: asked how many seconds a man had lived at 70 years, 17 days and 12 hours, he answered in about a minute and a half, and pointed out that his examiner had forgotten the leap years.`
       );
     },
   },
   {
     name: '/exit',
-    description: `Quitter ${APP_NAME}`,
+    description: 'Exit the CLI',
     aliases: ['/quit'],
     run: (ctx) => ctx.exit(),
   },
@@ -482,7 +744,7 @@ export async function runCommand(input: string, ctx: CommandContext): Promise<bo
       }
       return true;
     }
-    ctx.addSystem(`Unknown command: \`${name}\`. Type \`/help\` for the list.`, 'notice');
+    ctx.addSystem(`Unknown command: ${name}`, 'warning');
     return true;
   }
   try {

@@ -1,7 +1,7 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useStdout } from 'ink';
 import { useTheme } from './theme.js';
-import { DiffView } from './DiffView.js';
+import { DiffView, diffStats } from './DiffView.js';
 import { toolLabel, toolArgSummary } from '../tools/registry.js';
 import { BULLET, BULLET_GAP } from './glyphs.js';
 import type { ToolCallState, TodoItem } from '../agent/types.js';
@@ -13,6 +13,7 @@ interface ToolRowProps {
   /** Spinner frame when the tool is live (running/confirming). */
   frame?: string;
   elapsedMs?: number;
+  permissionOpen?: boolean;
 }
 
 const COLLAPSED_LINES = 4;
@@ -23,32 +24,40 @@ function firstLines(text: string, max: number): { lines: string[]; hidden: numbe
   return { lines: all.slice(0, max), hidden: Math.max(0, all.length - max) };
 }
 
-export const ToolRow: React.FC<ToolRowProps> = ({ toolCall, verbose, frame, elapsedMs }) => {
+export const ToolRow: React.FC<ToolRowProps> = ({ toolCall, verbose, frame, elapsedMs, permissionOpen = false }) => {
   const theme = useTheme();
+  const { stdout } = useStdout();
+  const columns = stdout?.columns ?? 80;
   const { status, name, args } = toolCall;
-  const label = toolLabel(name);
+  // Claude Code names a file edit "Update".
+  const label = name === 'edit_file' ? 'Update' : toolLabel(name);
+  const fileArg = name === 'read_file' || name === 'edit_file' || name === 'write_file';
   const arg = toolArgSummary(name, args);
 
   const iconColor =
     status === 'completed' ? theme.success
     : status === 'failed' ? theme.error
     : status === 'rejected' ? theme.warning
-    : status === 'confirming' ? theme.permission
+    : status === 'confirming' ? theme.subtle
     : theme.accent;
-  const icon = status === 'running' || status === 'confirming' ? (frame ?? BULLET) : status === 'pending' ? '·' : BULLET;
+  const icon = status === 'confirming' && permissionOpen ? BULLET : status === 'running' || status === 'confirming' ? (frame ?? BULLET) : status === 'pending' ? '·' : BULLET;
   const iconGap = icon === BULLET ? BULLET_GAP : ' ';
 
   const body = renderBody();
 
+  // A command typed with "!": Claude Code shows only its output under the user's line.
+  if (toolCall.origin === 'user') return <Box flexDirection="column">{body}</Box>;
+
   return (
     <Box flexDirection="column">
       <Box>
-        <Text color={iconColor}>{icon}{iconGap}</Text>
-        <Text bold color={theme.tool}>{label}</Text>
-        <Text color={theme.subtle}>(</Text>
-        <Text color={theme.text} wrap="truncate-end">{arg}</Text>
-        <Text color={theme.subtle}>)</Text>
-        {name === 'execute_bash' && args.description ? <Text color={theme.subtle}> — {String(args.description)}</Text> : null}
+        <Text wrap="truncate-end">
+          <Text color={iconColor}>{icon}{iconGap}</Text>
+          <Text bold color={theme.tool}>{label}</Text>
+          <Text color={theme.subtle}>(</Text>
+          <Text color={theme.text} underline={fileArg}>{arg}</Text>
+          <Text color={theme.subtle}>)</Text>
+        </Text>
       </Box>
       {body}
     </Box>
@@ -76,7 +85,7 @@ export const ToolRow: React.FC<ToolRowProps> = ({ toolCall, verbose, frame, elap
 
   function renderBody(): React.ReactNode {
     if (status === 'pending') return null;
-    if (status === 'confirming') return lines([<Text key="w" color={theme.permission}>Waiting for permission…</Text>]);
+    if (status === 'confirming') return lines([<Text key="w" color={theme.subtle}>{permissionOpen ? 'Running…' : 'Waiting for permission…'}</Text>]);
     if (status === 'running') {
       const tail = (toolCall.result ?? '').replace(/\s+$/, '').split('\n').filter(Boolean).slice(-4);
       const nodes: React.ReactNode[] = tail.map((l, i) => <Text key={i} color={theme.subtle} wrap="truncate-end">{l}</Text>);
@@ -102,13 +111,22 @@ export const ToolRow: React.FC<ToolRowProps> = ({ toolCall, verbose, frame, elap
       case 'edit_file':
       case 'write_file': {
         const nodes: React.ReactNode[] = [];
-        if (toolCall.summary) nodes.push(<Text key="s" color={theme.subtle}>{toolCall.summary}</Text>);
-        if (toolCall.diff) nodes.push(<DiffView key="d" diff={toolCall.diff} maxLines={verbose ? 2000 : 30} />);
+        if (toolCall.diff) {
+          // Claude Code: "Added 1 line, removed 1 line" with the counts in bold, then the diff.
+          const { additions, removals } = diffStats(toolCall.diff);
+          const parts: React.ReactNode[] = [];
+          if (additions) parts.push(<React.Fragment key="a">Added <Text bold>{additions}</Text> {additions === 1 ? 'line' : 'lines'}</React.Fragment>);
+          if (removals) parts.push(<React.Fragment key="r">{parts.length ? ', removed' : 'Removed'} <Text bold>{removals}</Text> {removals === 1 ? 'line' : 'lines'}</React.Fragment>);
+          nodes.push(<Text key="s" color={theme.text}>{parts.length ? parts : toolCall.summary}</Text>);
+          nodes.push(<DiffView key="d" diff={toolCall.diff} maxLines={verbose ? 2000 : 30} width={Math.max(20, columns - 12)} />);
+        } else if (toolCall.summary) nodes.push(<Text key="s" color={theme.subtle}>{toolCall.summary}</Text>);
         return lines(nodes.length ? nodes : [<Text key="s" color={theme.subtle}>{toolCall.result}</Text>]);
       }
       case 'read_file': {
-        if (!verbose) return lines([<Text key="s" color={theme.subtle}>{toolCall.summary || 'Read file'}</Text>]);
-        return textLines(`${toolCall.summary}\n${toolCall.result ?? ''}`, 60);
+        // Claude Code: "Read 2 lines" with the count in bold, without the file content.
+        const summary = toolCall.summary || 'Read file';
+        const match = summary.match(/^(\D*)(\d+)(.*)$/);
+        return lines([<Text key="s" color={theme.text}>{match ? <>{match[1]}<Text bold>{match[2]}</Text>{match[3]}</> : summary}</Text>]);
       }
       case 'search_files':
       case 'glob':
@@ -125,6 +143,9 @@ export const ToolRow: React.FC<ToolRowProps> = ({ toolCall, verbose, frame, elap
       }
       case 'web_fetch':
         return textLines(`${toolCall.summary ?? ''}\n${toolCall.result ?? ''}`, verbose ? 200 : 3);
+      case 'execute_bash':
+        // Shell output in the text colour, as Claude Code prints it.
+        return textLines(toolCall.result || toolCall.summary || 'Done', max, theme.text);
       default:
         return textLines(toolCall.result || toolCall.summary || 'Done', max);
     }

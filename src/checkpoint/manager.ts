@@ -105,6 +105,27 @@ export class CheckpointManager {
     return this.rewindTo(checkpoints[0].id);
   }
 
+  /** Restore only edits belonging to selected assistant messages in this session. */
+  public rewindMessageIds(messageIds: Set<string>): string[] {
+    const checkpoints = this.load();
+    const selected = checkpoints.filter((checkpoint) => checkpoint.messageId && messageIds.has(checkpoint.messageId));
+    const restored = new Set<string>();
+    for (const checkpoint of selected) {
+      for (const file of checkpoint.files) {
+        const full = path.resolve(this.workspaceDir, file.filePath);
+        if (file.originalContent === null) {
+          if (fs.existsSync(full)) fs.unlinkSync(full);
+        } else {
+          fs.mkdirSync(path.dirname(full), { recursive: true });
+          fs.writeFileSync(full, file.originalContent, 'utf8');
+        }
+        restored.add(file.filePath);
+      }
+    }
+    if (selected.length) this.save(checkpoints.filter((checkpoint) => !selected.includes(checkpoint)));
+    return [...restored];
+  }
+
   public clear(): void {
     this.save([]);
   }

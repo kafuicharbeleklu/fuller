@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useContext, useEffect, useRef } from 'react';
+import { TerminalInputEnabled } from './useTerminalHandoff.js';
 import fs from 'node:fs';
 import { useStdin } from 'ink';
 
@@ -7,7 +8,7 @@ const DEBUG_KEYS = process.env.FULLER_DEBUG_KEYS;
 export type KeyName =
   | 'char' | 'return' | 'tab' | 'escape' | 'backspace' | 'delete'
   | 'up' | 'down' | 'left' | 'right' | 'home' | 'end' | 'pageup' | 'pagedown'
-  | 'paste' | 'unknown';
+  | 'paste' | 'mouse' | 'unknown';
 
 export interface KeyEvent {
   name: KeyName;
@@ -17,6 +18,7 @@ export interface KeyEvent {
   alt: boolean;
   shift: boolean;
   raw: string;
+  mouse?: { button: number; x: number; y: number; release: boolean };
 }
 
 const PASTE_START = '\x1b[200~';
@@ -43,6 +45,12 @@ export function parseKeys(data: string): KeyEvent[] {
     const ch = data[i];
     if (ch === '\x1b') {
       const rest = data.slice(i);
+      const mouse = rest.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])/);
+      if (mouse) {
+        push({ name: 'mouse', raw: mouse[0], mouse: { button: Number(mouse[1]), x: Number(mouse[2]), y: Number(mouse[3]), release: mouse[4] === 'm' } });
+        i += mouse[0].length;
+        continue;
+      }
       if (rest.startsWith(PASTE_START)) {
         const end = rest.indexOf(PASTE_END);
         const body = end === -1 ? rest.slice(PASTE_START.length) : rest.slice(PASTE_START.length, end);
@@ -127,7 +135,8 @@ export function parseKeys(data: string): KeyEvent[] {
  */
 export function useRawInput(handler: (event: KeyEvent) => void, options: { isActive?: boolean } = {}) {
   const { internal_eventEmitter, setRawMode, isRawModeSupported } = useStdin() as any;
-  const isActive = options.isActive !== false;
+  const inputEnabled = useContext(TerminalInputEnabled);
+  const isActive = inputEnabled && options.isActive !== false;
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
   const pasteBuffer = useRef<string | null>(null);
@@ -172,6 +181,7 @@ export function useRawInput(handler: (event: KeyEvent) => void, options: { isAct
     };
     internal_eventEmitter.on('input', onData);
     return () => {
+      pasteBuffer.current = null;
       internal_eventEmitter.removeListener('input', onData);
     };
   }, [isActive, internal_eventEmitter]);

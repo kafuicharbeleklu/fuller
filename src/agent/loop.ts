@@ -5,10 +5,11 @@ import { addPermissionRule, type AppConfig } from '../config.js';
 import { resolveMentions } from '../utils/mentions.js';
 import { describeError } from './retry.js';
 import { CheckpointManager, type Checkpoint } from '../checkpoint/manager.js';
-import { generateSessionId, saveSession, flushSessionSaves, sessionTitleFrom, type SessionData } from '../session/store.js';
+import { generateSessionId, saveSession, saveSessionSync, flushSessionSaves, sessionTitleFrom, sessionsDir, type SessionData, type ConversationCheckpoint } from '../session/store.js';
 import { executeBash } from '../tools/bash.js';
+import type { RunInTerminal } from '../tools/nativeTerminal.js';
 import { LIMITS, truncateMiddle } from '../tools/truncate.js';
-import { uid } from './transcript.js';
+import { uid, messagesToTranscript } from './transcript.js';
 import { loadSkills, type SkillDefinition } from '../skills/loader.js';
 import { runHooks, type HookEvent, type HookOutcome, type HookPayload } from '../hooks/runner.js';
 import { sessionFile } from '../session/store.js';
@@ -16,11 +17,13 @@ import { BackgroundTaskManager, describeTask, type BackgroundTask } from '../too
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { CONFIG_DIR_NAME } from '../branding.js';
 import { McpManager, type McpServerStatus } from '../mcp/manager.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { loadSubagents, type SubagentDefinition } from './subagents.js';
 import { runSubagent } from './subagent.js';
+import { autoModePrompt, parseVerdict, type AutoVerdict } from '../permissions/autoMode.js';
 import { findImagePaths, attachmentFromFile, readAttachmentBase64, type ImageAttachment } from '../utils/imageClipboard.js';
 import type { Part } from '@google/genai';
 import type {
@@ -36,6 +39,7 @@ import type {
   Notice,
   MessageKind,
   TodoItem,
+  AgentTask,
 } from './types.js';
 
 export interface TurnOptions {
@@ -45,7 +49,14 @@ export interface TurnOptions {
   stopHookActive?: boolean;
   /** Images pasted or dropped into the prompt. */
   attachments?: ImageAttachment[];
+  /** A notification for the model (a fork's report): not shown or kept as a user message. */
+  hidden?: boolean;
 }
+
+/** How long the auto mode classifier may take before the user is asked. */
+const AUTO_MODE_TIMEOUT_MS = 30_000;
+
+const PARALLEL_READ_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob']);
 
 function safeLoadMcp(cwd: string) {
   try {
@@ -72,6 +83,7 @@ function safeLoadSkills(cwd: string): SkillDefinition[] {
 }
 
 export interface AgentCallbacks {
+  runInTerminal?: RunInTerminal;
   onStatusChange: (status: AgentStatus) => void;
   onCommit: (item: TranscriptItem) => void;
   onLive: (live: LiveTurn | null) => void;
@@ -83,7 +95,10 @@ export interface AgentCallbacks {
   onNotify?: (event: 'permission' | 'done' | 'error') => void;
   onTodosChange?: (todos: TodoItem[]) => void;
   onBackgroundChange?: (running: number, tasks: BackgroundTask[]) => void;
+  /** Background agents changed (started, progressed, finished, deleted). */
+  onAgentsChange?: (tasks: AgentTask[]) => void;
   onMcpChange?: (statuses: McpServerStatus[]) => void;
+  onTranscriptReset?: (items: TranscriptItem[]) => void;
 }
 
 /** Coalesces streamed chunks so the UI re-renders at most every `intervalMs`. */
@@ -107,12 +122,15 @@ export class AgentLoop {
   private session: GeminiAgentSession;
   private config: AppConfig;
   private messages: ChatMessage[] = [];
+  private turnCheckpoints: ConversationCheckpoint[] = [];
   private callbacks: AgentCallbacks;
   private processing = false;
+  private stoppedByPermission = false;
+  private moveBashToBackground: (() => string | undefined) | undefined;
   private abortController: AbortController | null = null;
   private saveTimer: NodeJS.Timeout | null = null;
   private checkpointManager: CheckpointManager;
-  private queue: string[] = [];
+  private queue: Array<{ input: string; kind: MessageKind; options: TurnOptions; shell?: boolean }> = [];
   private pendingContext: string[] = [];
   private rejectConfirmation: (() => void) | null = null;
   private gitBranch?: string;
@@ -120,6 +138,11 @@ export class AgentLoop {
   private turnAllow: string[] = [];
   private todos: TodoItem[] = [];
   private background: BackgroundTaskManager;
+  /** Background agents: /btw then f, or a task typed in the agents view. */
+  private agentTasks: AgentTask[] = [];
+  /** Auto mode denials, newest first. */
+  private recentDenials: Array<{ action: string; reason: string; timestamp: number }> = [];
+  private agentControllers = new Map<string, AbortController>();
   private customTitle?: string;
   private mcp: McpManager;
   private subagents: SubagentDefinition[] = [];
@@ -131,6 +154,7 @@ export class AgentLoop {
     this.sessionId = restored?.meta.id ?? generateSessionId();
     this.createdAt = restored?.meta.createdAt ?? Date.now();
     this.messages = restored?.messages ?? [];
+    this.turnCheckpoints = restored?.turnCheckpoints ?? [];
     this.todos = restored?.todos ?? [];
     this.customTitle = restored?.meta.title && restored.meta.title !== sessionTitleFrom(restored.messages) ? restored.meta.title : undefined;
     this.gitBranch = restored?.meta.gitBranch;
@@ -197,6 +221,9 @@ export class AgentLoop {
   public getTodos(): TodoItem[] {
     return this.todos;
   }
+
+  /** Name given with /rename, if any. */
+  public get sessionName(): string | undefined { return this.customTitle; }
 
   public renameSession(title: string) {
     this.customTitle = title.trim() || undefined;
@@ -283,13 +310,32 @@ export class AgentLoop {
   }
 
   public getQueue(): string[] {
-    return [...this.queue];
+    return this.queue.map((entry) => (entry.shell ? '!' : '') + entry.input);
   }
 
   public popQueue(): string | undefined {
     const last = this.queue.pop();
-    this.callbacks.onQueueChange([...this.queue]);
-    return last;
+    this.callbacks.onQueueChange(this.getQueue());
+    return last?.input;
+  }
+
+  public takeQueue(empty: boolean): { text: string; attachments: ImageAttachment[]; bash: boolean } | undefined {
+    const shell = this.queue.length === 1 && this.queue[0].shell && empty;
+    const entries = shell ? this.queue.splice(0) : this.queue.filter((entry) => !entry.shell);
+    if (!entries.length) return;
+    if (!shell) this.queue = this.queue.filter((entry) => entry.shell);
+    this.callbacks.onQueueChange(this.getQueue());
+    return { text: entries.map((entry) => entry.input).join('\n'), attachments: entries.flatMap((entry) => entry.options.attachments ?? []), bash: !!shell };
+  }
+
+  public async sendNow(input: string, attachments: ImageAttachment[] = []): Promise<void> {
+    if (input.trim()) {
+      if (!this.processing) { await this.handleUserInput(input, 'normal', { attachments }); return; }
+      this.queue.push({ input, kind: 'normal', options: { attachments } });
+      this.callbacks.onQueueChange(this.getQueue());
+    }
+    if (this.processing) this.interrupt();
+    else this.processQueue();
   }
 
   public setGitBranch(branch?: string) {
@@ -299,6 +345,96 @@ export class AgentLoop {
 
   public getCheckpoints(): Checkpoint[] {
     return this.checkpointManager.getCheckpoints();
+  }
+
+  public getTurnCheckpoints(): ConversationCheckpoint[] {
+    return [...this.turnCheckpoints].reverse();
+  }
+
+  /** Files the agent edited in this session (workspace-relative), for the /diff panel. */
+  public sessionEditedFiles(): string[] {
+    const ids = new Set(this.messages.filter((m) => m.role === 'assistant').map((m) => m.id));
+    const files = new Set<string>();
+    for (const checkpoint of this.checkpointManager.getCheckpoints()) {
+      if (checkpoint.messageId && ids.has(checkpoint.messageId)) for (const file of checkpoint.files) files.add(path.relative(this.config.workspaceDir, path.resolve(this.config.workspaceDir, file.filePath)));
+    }
+    return [...files];
+  }
+
+  /** Files the agent edited during a turn (the prompt of checkpoint `id` and its answer). */
+  public turnCodeChanges(id: string): string[] {
+    const index = this.turnCheckpoints.findIndex((checkpoint) => checkpoint.id === id);
+    if (index < 0) return [];
+    const end = this.turnCheckpoints[index + 1]?.messageIndex ?? this.messages.length;
+    const ids = new Set(this.messages.slice(this.turnCheckpoints[index].messageIndex, end).filter((m) => m.role === 'assistant').map((m) => m.id));
+    const files = new Set<string>();
+    for (const checkpoint of this.checkpointManager.getCheckpoints()) {
+      if (checkpoint.messageId && ids.has(checkpoint.messageId)) for (const file of checkpoint.files) files.add(file.filePath);
+    }
+    return [...files];
+  }
+
+  public rewindTurn(id: string, scope: 'code' | 'conversation' | 'both'): string[] {
+    if (this.processing) throw new Error('Wait for the current turn to finish.');
+    const index = this.turnCheckpoints.findIndex((checkpoint) => checkpoint.id === id);
+    if (index < 0) throw new Error('Turn checkpoint not found.');
+    const checkpoint = this.turnCheckpoints[index];
+    const removed = this.messages.slice(checkpoint.messageIndex);
+    const assistantIds = new Set(removed.filter((message) => message.role === 'assistant').map((message) => message.id));
+    const history = scope === 'conversation' || scope === 'both'
+      ? checkpoint.historyFile ? JSON.parse(gunzipSync(fs.readFileSync(checkpoint.historyFile)).toString('utf8')) : checkpoint.history ?? []
+      : undefined;
+    const files = scope === 'code' || scope === 'both' ? this.checkpointManager.rewindMessageIds(assistantIds) : [];
+    if (scope === 'conversation' || scope === 'both') {
+      // Claude Code forks the conversation: the version before the rewind stays resumable.
+      try {
+        const copy = this.getSessionData();
+        saveSessionSync({ ...copy, meta: { ...copy.meta, id: generateSessionId() } });
+      } catch {}
+      this.messages = this.messages.slice(0, checkpoint.messageIndex);
+      this.session.initChat(history);
+      this.turnCheckpoints = this.turnCheckpoints.slice(0, index);
+      this.queue = [];
+      this.pendingContext = [];
+      this.callbacks.onQueueChange([]);
+      this.callbacks.onTranscriptReset?.(messagesToTranscript(this.messages));
+      this.usage.promptTokens = 0;
+      this.callbacks.onUsage({ ...this.usage });
+    }
+    this.scheduleSave();
+    return files;
+  }
+
+  public async summarizeTurn(id: string, scope: 'from' | 'upTo'): Promise<void> {
+    if (this.processing) throw new Error('Wait for the current turn to finish.');
+    const checkpoint = this.turnCheckpoints.find((item) => item.id === id);
+    if (!checkpoint) throw new Error('Turn checkpoint not found.');
+    const prefix = checkpoint.historyFile
+      ? JSON.parse(gunzipSync(fs.readFileSync(checkpoint.historyFile)).toString('utf8')) as ReturnType<GeminiAgentSession['getHistory']>
+      : checkpoint.history ?? [];
+    const current = this.session.getHistory();
+    const before = current.slice(0, prefix.length);
+    const after = current.slice(prefix.length);
+    const selected = scope === 'from' ? after : before;
+    if (!selected.length) { this.addSystemMessage('Nothing to summarize at this point.', 'notice'); return; }
+    this.processing = true;
+    this.stoppedByPermission = false;
+    this.abortController = new AbortController();
+    this.callbacks.onStatusChange('compacting');
+    try {
+      const summary = await this.session.compactHistory(historyToText(selected), undefined, this.abortController.signal);
+      const marker = [
+        { role: 'user' as const, parts: [{ text: `[Conversation summary]\n${summary}` }] },
+        { role: 'model' as const, parts: [{ text: 'I will continue from this summary.' }] },
+      ];
+      this.session.initChat(scope === 'from' ? [...before, ...marker] : [...marker, ...after]);
+      this.addSystemMessage(`Summarized conversation ${scope === 'from' ? 'from' : 'up to'} the selected prompt.\n${summary}`, 'compact');
+    } finally {
+      this.processing = false;
+      this.abortController = null;
+      this.callbacks.onStatusChange('idle');
+      this.scheduleSave();
+    }
   }
 
   public rewindTo(id: string): string[] {
@@ -325,6 +461,7 @@ export class AgentLoop {
       messages: this.messages,
       history: this.session.getHistory(),
       todos: this.todos,
+      turnCheckpoints: this.turnCheckpoints,
     };
   }
 
@@ -345,6 +482,7 @@ export class AgentLoop {
       await Promise.race([this.fireHooks('SessionEnd', { reason: 'exit' }, 'exit'), new Promise((r) => setTimeout(r, 3000))]);
     }
     this.background.killAll();
+    for (const controller of this.agentControllers.values()) controller.abort();
     await this.mcp.close();
   }
 
@@ -363,9 +501,16 @@ export class AgentLoop {
     this.callbacks.onUsage({ ...this.usage });
   }
 
-  public switchModel(model: string) {
+  public switchModel(model: string, thinkingLevel?: import('./thinking.js').ThinkingLevelSetting) {
     this.config.model = model;
-    this.session.switchModel(model);
+    this.config.thinkingLevel = thinkingLevel;
+    this.session.switchModel(model, thinkingLevel);
+    this.scheduleSave();
+  }
+
+  public setThinkingLevel(level?: import('./thinking.js').ThinkingLevelSetting) {
+    this.config.thinkingLevel = level;
+    this.session.setThinkingLevel(level);
     this.scheduleSave();
   }
 
@@ -377,11 +522,21 @@ export class AgentLoop {
     return msg;
   }
 
+  /** Record a local slash command in the transcript without sending it to Gemini. */
+  public addCommandMessage(content: string): ChatMessage {
+    const msg: ChatMessage = { id: uid(), role: 'user', content, kind: 'command', timestamp: Date.now() };
+    this.messages.push(msg);
+    this.callbacks.onCommit({ key: msg.id, kind: 'user', message: msg });
+    this.scheduleSave();
+    return msg;
+  }
+
   public clearHistory() {
     this.interrupt();
     this.queue = [];
     this.callbacks.onQueueChange([]);
     this.messages = [];
+    this.turnCheckpoints = [];
     this.pendingContext = [];
     this.setTodos([]);
     this.sessionId = generateSessionId();
@@ -391,6 +546,14 @@ export class AgentLoop {
   }
 
   // ---------------------------------------------------------------- control
+  public backgroundCurrentBash(): boolean {
+    const id = this.moveBashToBackground?.();
+    if (!id) return false;
+    this.callbacks.onNotice({ level: 'info', text: `Bash continues in background task ${id}` });
+    this.callbacks.onBackgroundChange?.(this.background.running(), this.background.list());
+    return true;
+  }
+
   public interrupt(): void {
     if (!this.processing) return;
     this.abortController?.abort();
@@ -404,8 +567,8 @@ export class AgentLoop {
    */
   public async handleUserInput(input: string, kind: MessageKind = 'normal', options: TurnOptions = {}): Promise<void> {
     if (this.processing) {
-      this.queue.push(input);
-      this.callbacks.onQueueChange([...this.queue]);
+      this.queue.push({ input, kind, options });
+      this.callbacks.onQueueChange(this.getQueue());
       return;
     }
     await this.runTurn(input, kind, options);
@@ -414,8 +577,10 @@ export class AgentLoop {
   private processQueue() {
     if (this.processing || this.queue.length === 0) return;
     const next = this.queue.shift()!;
-    this.callbacks.onQueueChange([...this.queue]);
-    setImmediate(() => void this.runTurn(next));
+    this.callbacks.onQueueChange(this.getQueue());
+    // Claim the next entry synchronously; no idle window can start a second turn.
+    if (next.shell) void this.runShell(next.input);
+    else void this.runTurn(next.input, next.kind, next.options);
   }
 
   private recordUsage(u?: TurnUsage) {
@@ -430,10 +595,17 @@ export class AgentLoop {
   // ---------------------------------------------------------------- main turn
   private async runTurn(input: string, kind: MessageKind = 'normal', options: TurnOptions = {}): Promise<void> {
     this.processing = true;
+    this.stoppedByPermission = false;
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
     const started = Date.now();
     this.turnAllow = options.allow ?? [];
+    const checkpointId = uid();
+    const historyFile = path.join(sessionsDir(this.config.workspaceDir), 'rewind', this.sessionId, `${checkpointId}.json.gz`);
+    fs.mkdirSync(path.dirname(historyFile), { recursive: true });
+    fs.writeFileSync(historyFile, gzipSync(JSON.stringify(this.session.getHistory())), { mode: 0o600 });
+    if (!options.hidden) this.turnCheckpoints.push({ id: checkpointId, timestamp: started, prompt: input, messageIndex: this.messages.length, historyFile });
+    if (this.turnCheckpoints.length > 100) this.turnCheckpoints.shift();
 
     // Images: explicit attachments (ctrl+v) plus image files named in the prompt (drag & drop, @path).
     const attachments: ImageAttachment[] = [...(options.attachments ?? [])];
@@ -445,8 +617,10 @@ export class AgentLoop {
       id: uid(), role: 'user', content: input, kind, timestamp: started,
       attachments: attachments.length ? attachments.map((a) => ({ name: a.name, mimeType: a.mimeType, bytes: a.bytes })) : undefined,
     };
-    this.messages.push(userMsg);
-    this.callbacks.onCommit({ key: userMsg.id, kind: 'user', message: userMsg });
+    if (!options.hidden) {
+      this.messages.push(userMsg);
+      this.callbacks.onCommit({ key: userMsg.id, kind: 'user', message: userMsg });
+    }
 
     let enriched = resolveMentions(options.prompt ?? input, this.config.workspaceDir, this.config.additionalDirectories);
     if (this.hasHooks('UserPromptSubmit')) {
@@ -482,10 +656,15 @@ export class AgentLoop {
     const streamOptions = {
       onChunk: batcher.push,
       signal,
+      onAttempt: () => {
+        this.callbacks.onNotice(null);
+        this.callbacks.onStatusChange('thinking');
+      },
       onRetry: (info: { attempt: number; maxAttempts: number; delayMs: number; status?: number }) => {
+        this.callbacks.onStatusChange('retrying');
         this.callbacks.onNotice({
           level: 'warn',
-          text: `API Error${info.status ? ` (${info.status})` : ''} · Retrying in ${Math.round(info.delayMs / 1000)} seconds… (attempt ${info.attempt}/${info.maxAttempts})`,
+          text: `API Error${info.status ? ` (${info.status})` : ''} · Retrying in ${Math.ceil(info.delayMs / 1000)} seconds… (attempt ${info.attempt + 1}/${info.maxAttempts})`,
         });
       },
     };
@@ -536,22 +715,31 @@ export class AgentLoop {
         emitLive();
 
         const responses: ToolResponsePayload[] = [];
-        for (let i = 0; i < states.length; i++) {
+        for (let i = 0; i < states.length;) {
           if (signal.aborted) throw new Error('Interrupted');
-          const state = states[i];
-          const update = (patch: Partial<ToolCallState>) => {
+          const canParallelize = !this.hasHooks('PreToolUse') && !this.hasHooks('PostToolUse') && !this.hasHooks('PermissionRequest');
+          let end = i + 1;
+          if (canParallelize && PARALLEL_READ_TOOLS.has(states[i].name)) {
+            while (end < states.length && PARALLEL_READ_TOOLS.has(states[end].name)) end++;
+          }
+          const start = i;
+          const batch = states.slice(start, end);
+          const outputs = await Promise.all(batch.map((state) => this.executeCall(state, assistant.id, signal, (patch) => {
             Object.assign(state, patch);
-            liveTools = states.slice(i);
+            liveTools = states.filter((s) => s.status === 'pending' || s.status === 'confirming' || s.status === 'running');
             emitLive();
-          };
-          const output = await this.executeCall(state, assistant.id, signal, update);
-          responses.push({ id: turn.functionCalls[i].id, name: state.name, output });
-          const snapshot = { ...state };
-          assistant.parts!.push({ type: 'tool', id: state.id, toolCall: snapshot });
-          liveTools = states.slice(i + 1);
+          })));
+          for (let offset = 0; offset < batch.length; offset++) {
+            const state = batch[offset];
+            responses.push({ id: turn.functionCalls[start + offset].id, name: state.name, output: outputs[offset] });
+            const snapshot = { ...state };
+            assistant.parts!.push({ type: 'tool', id: state.id, toolCall: snapshot });
+            this.callbacks.onCommit({ key: state.id, kind: 'tool', messageId: assistant.id, toolCall: snapshot });
+            toolCount++;
+          }
+          i = end;
+          liveTools = states.slice(i);
           emitLive();
-          this.callbacks.onCommit({ key: state.id, kind: 'tool', messageId: assistant.id, toolCall: snapshot });
-          toolCount++;
           this.scheduleSave();
         }
         liveTools = [];
@@ -575,19 +763,24 @@ export class AgentLoop {
         if (outcome.blocked && !options.stopHookActive) {
           const reason = outcome.reasons.join(' · ') || 'A Stop hook asked to continue.';
           this.addSystemMessage(`↺ Stop hook: ${reason}`, 'notice');
-          this.queue.unshift(`[Stop hook feedback] ${reason}`);
+          this.queue.unshift({ input: `[Stop hook feedback] ${reason}`, kind: 'notice', options: { stopHookActive: true } });
           stopHookContinue = true;
         }
       }
     } catch (err: any) {
       batcher.flush();
+      // Clear transient UI before the final error is committed to scrollback.
+      this.callbacks.onNotice(null);
+      this.callbacks.onLive(null);
+      this.callbacks.onRequestConfirmation(null);
+      this.callbacks.onStatusChange('idle');
       commitText(liveText);
       if (err?.message === 'Interrupted' || signal.aborted) {
-        this.addSystemMessage('Interrupted · What should Fuller do instead?', 'notice');
+        this.addSystemMessage(this.stoppedByPermission ? 'Permission denied · What should Fuller do instead?' : 'Interrupted · What should Fuller do instead?', 'notice');
         this.session.repairHistory();
       } else {
         const described = describeError(err);
-        const hint = /\(404\)|not found|no longer available/i.test(described) ? '\nUse /model to pick a model available to your API key.' : /\(429\)|quota/i.test(described) ? '\nQuota exhausted for this model — try another one with /model.' : '';
+        const hint = /: 404 |not found|no longer available/i.test(described) ? '\nUse /model to pick a model available to your API key.' : /: 429 |quota/i.test(described) ? '\nRate limit or quota reached. Wait and retry, or choose another model with /model.' : '';
         this.addSystemMessage(`✗ ${described}${hint}`, 'notice');
         this.callbacks.onNotify?.('error');
         this.session.repairHistory();
@@ -607,8 +800,8 @@ export class AgentLoop {
     await this.maybeAutoCompact();
     if (stopHookContinue) {
       const next = this.queue.shift()!;
-      this.callbacks.onQueueChange([...this.queue]);
-      await this.runTurn(next, 'notice', { stopHookActive: true });
+      this.callbacks.onQueueChange(this.getQueue());
+      await this.runTurn(next.input, next.kind, next.options);
       return;
     }
     this.processQueue();
@@ -624,6 +817,7 @@ export class AgentLoop {
     const label = toolLabel(name);
     if (name === 'exit_plan_mode' && this.config.permissionMode === 'plan') return this.handleExitPlanMode(state, update);
     if (name === 'agent') return this.handleAgentTool(state, messageId, signal, update);
+    let approvalComment: string | undefined;
     let hookAllow = false;
     if (this.hasHooks('PreToolUse')) {
       const outcome = await this.fireHooks('PreToolUse', { tool_name: label, tool_input: state.args }, label);
@@ -651,10 +845,13 @@ export class AgentLoop {
       skills: this.skills,
       setTodos: (todos: TodoItem[]) => this.setTodos(todos),
       background: this.background,
+      runInTerminal: this.callbacks.runInTerminal,
+      onBackgroundReady: (move: (() => string | undefined) | undefined) => { this.moveBashToBackground = move; },
       onOutput: (chunk: string) => {
         const current = (state.result ?? '') + chunk;
         update({ result: current.length > 4000 ? current.slice(-4000) : current });
       },
+      outputFile: name === 'execute_bash' ? path.join(sessionsDir(this.config.workspaceDir), 'outputs', this.sessionId, `${state.id}.log`) : undefined,
     };
 
     if (name === 'edit_file' || name === 'write_file') {
@@ -676,6 +873,17 @@ export class AgentLoop {
 
     let decisionOverride: PermissionDecision | null = null;
     if (evaluation.decision === 'ask' && hookAllow) decisionOverride = { kind: 'yes' };
+    if (evaluation.decision === 'ask' && !decisionOverride && this.config.permissionMode === 'auto') {
+      update({ summary: 'auto mode: checking…' });
+      const verdict = await this.autoDecide(state, evaluation, signal);
+      if (verdict?.decision === 'allow') decisionOverride = { kind: 'yes' };
+      else if (verdict?.decision === 'deny') {
+        const error = `Denied by auto mode · ${verdict.reason}`;
+        update({ status: 'rejected', error, summary: undefined, endTime: Date.now() });
+        return `Error: auto mode denied this tool call: ${verdict.reason}. Do not retry it; find another way or ask the user to run it or to switch modes (shift+tab).`;
+      }
+      update({ summary: undefined });
+    }
     if (evaluation.decision === 'ask' && !decisionOverride && this.hasHooks('PermissionRequest')) {
       const outcome = await this.fireHooks('PermissionRequest', { tool_name: label, tool_input: args }, label);
       if (outcome.updatedInput) update({ args: { ...state.args, ...outcome.updatedInput } });
@@ -691,22 +899,29 @@ export class AgentLoop {
         void this.fireHooks('Notification', { message: `Fuller needs your permission to use ${label}`, notification_type: 'permission_prompt' }, 'permission_prompt');
       }
       const decision = decisionOverride ?? await this.askPermission(state, evaluation);
+      if (decision.kind === 'yes') approvalComment = decision.feedback;
       if (decision.kind === 'always') {
         const option = evaluation.options.find((o) => o.value === 'always');
         if (option?.switchMode) this.setPermissionMode(option.switchMode);
         else if (decision.rule) {
-          const file = addPermissionRule(this.config.workspaceDir, decision.rule);
+          const rules = decision.rules?.length ? decision.rules : [decision.rule];
+          let file = '';
+          for (const rule of rules) file = addPermissionRule(this.config.workspaceDir, rule);
           this.config.settings.permissions = {
             ...this.config.settings.permissions,
-            allow: [...(this.config.settings.permissions?.allow ?? []), decision.rule],
+            allow: [...(this.config.settings.permissions?.allow ?? []), ...rules],
           };
-          this.callbacks.onNotice({ level: 'info', text: `Rule added: ${decision.rule} → ${file}` });
+          this.callbacks.onNotice({ level: 'info', text: `${rules.length > 1 ? 'Rules' : 'Rule'} added: ${rules.join(', ')} → ${file}` });
           setTimeout(() => this.callbacks.onNotice(null), 4000);
         }
       }
       if (decision.kind === 'no') {
         const error = decision.feedback ? `Rejected · ${decision.feedback}` : 'Rejected by user';
         update({ status: 'rejected', error, endTime: Date.now() });
+        if (!decisionOverride && !decision.feedback?.trim()) {
+          this.stoppedByPermission = true;
+          this.interrupt();
+        }
         return `Error: The user declined this tool call.${decision.feedback ? ` The user said: "${decision.feedback}".` : ''} Do not retry the same call; adapt your approach or ask the user.`;
       }
     }
@@ -717,9 +932,10 @@ export class AgentLoop {
       const out = name.startsWith('mcp__') && this.mcp.hasTool(name)
         ? await this.mcp.callTool(name, state.args, signal)
         : await dispatchTool(name, state.args, ctx);
-      update({ status: 'completed', result: out.output, summary: out.summary, diff: (out as any).diff ?? state.diff, endTime: Date.now() });
+      update({ status: 'completed', result: out.output, outputFile: 'outputFile' in out && typeof out.outputFile === 'string' ? out.outputFile : undefined, summary: out.summary, diff: (out as any).diff ?? state.diff, endTime: Date.now() });
       if (name === 'execute_bash' && state.args.run_in_background) this.callbacks.onBackgroundChange?.(this.background.running(), this.background.list());
       let output = out.output;
+      if (approvalComment) output += `\n\n[User comment on this approval]\n${approvalComment}`;
       if (this.hasHooks('PostToolUse')) {
         const outcome = await this.fireHooks('PostToolUse', { tool_name: label, tool_input: state.args, tool_response: { output: out.output.slice(0, 4000), summary: out.summary } }, label);
         const extra = [...(outcome.blocked ? [`[Hook feedback] ${outcome.reasons.join(' · ')}`] : []), ...outcome.context];
@@ -762,7 +978,9 @@ export class AgentLoop {
         description: String(state.args.description ?? definition.name),
         signal,
         skills: this.skills,
-        askPermission: (st, ev) => {
+        askPermission: async (st, ev) => {
+          const auto = this.config.permissionMode === 'auto' ? await this.autoDecide(st, ev, signal) : null;
+          if (auto) return auto.decision === 'allow' ? { kind: 'yes' } : { kind: 'no', feedback: `auto mode denied it: ${auto.reason}` };
           this.callbacks.onStatusChange('awaiting_permission');
           this.callbacks.onNotify?.('permission');
           return this.askPermission(st, ev).finally(() => this.callbacks.onStatusChange('running_tool'));
@@ -771,6 +989,7 @@ export class AgentLoop {
         onUsage: (u) => { this.usage.cumulativeTokens += u.totalTokens; this.usage.apiCalls++; this.callbacks.onUsage({ ...this.usage }); },
         checkpointManager: this.checkpointManager,
         background: this.background,
+        runInTerminal: this.callbacks.runInTerminal,
         messageId,
       });
       const summary = `Done · ${result.toolCount} tool use${result.toolCount === 1 ? '' : 's'} · ${result.turns} turn${result.turns === 1 ? '' : 's'} · ${result.tokens.toLocaleString('en-US')} tokens`;
@@ -815,7 +1034,7 @@ export class AgentLoop {
         options: [
           { value: 'yes', label: 'Yes, and auto-accept edits', switchMode: 'acceptEdits' },
           { value: 'always', label: 'Yes, manually approve edits', switchMode: 'default' },
-          { value: 'no', label: 'No, keep planning (tell Fuller what to change)' },
+          { value: 'no', label: 'No, keep planning' },
         ],
         onDecide: (d) => {
           this.rejectConfirmation = null;
@@ -832,6 +1051,49 @@ export class AgentLoop {
     this.setPermissionMode(mode);
     update({ status: 'completed', summary: `approved · ${mode}`, result: `Plan approved (${mode})${planFile ? ` · ${planFile}` : ''}`, endTime: Date.now() });
     return `The user approved the plan. Plan mode is off (permission mode: ${mode}${mode === 'acceptEdits' ? ', file edits are auto-accepted' : ', edits need approval'}). Implement the plan now, step by step.`;
+  }
+
+  /**
+   * Auto mode: a model call decides instead of the user. Dangerous actions are
+   * always denied; ask rules still prompt; if the classifier fails, the user is
+   * asked (null). Denials are kept for /permissions → Recently denied.
+   */
+  private async autoDecide(state: ToolCallState, evaluation: Evaluation, signal?: AbortSignal): Promise<AutoVerdict | null> {
+    if (evaluation.matchedRule && (this.config.settings.permissions?.ask ?? []).includes(evaluation.matchedRule)) return null;
+    const action = `${evaluation.displayName}(${evaluation.target})`;
+    let verdict: AutoVerdict | null;
+    if (evaluation.risk === 'danger') verdict = { decision: 'deny', reason: `Hard deny: ${evaluation.reason}` };
+    else {
+      try {
+        const userRequests = this.messages.filter((m) => m.role === 'user' && m.kind !== 'command').map((m) => m.content);
+        // A slow classifier (retries on an overloaded API) must not stall the turn: after 30 s the user decides.
+        const limit = new AbortController();
+        const timer = setTimeout(() => limit.abort(), AUTO_MODE_TIMEOUT_MS);
+        const relay = () => limit.abort();
+        signal?.addEventListener('abort', relay);
+        try {
+          const text = await this.session.oneShot(autoModePrompt({ action, risk: `${evaluation.risk} · ${evaluation.reason}`, userRequests, settings: this.config.settings.autoMode }), undefined, limit.signal, false, true);
+          verdict = parseVerdict(text);
+        } finally {
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', relay);
+        }
+      } catch (err: any) {
+        if (signal?.aborted) throw new Error('Interrupted');
+        this.callbacks.onNotice({ level: 'warn', text: `Auto mode could not decide (${err?.message === 'Interrupted' ? 'no answer in 30 s' : describeError(err)}) — asking you instead.` });
+        setTimeout(() => this.callbacks.onNotice(null), 5000);
+        return null;
+      }
+    }
+    if (verdict.decision === 'deny') {
+      this.recentDenials.unshift({ action, reason: verdict.reason, timestamp: Date.now() });
+      this.recentDenials = this.recentDenials.slice(0, 50);
+    }
+    return verdict;
+  }
+
+  public getRecentDenials(): Array<{ action: string; reason: string; timestamp: number }> {
+    return [...this.recentDenials];
   }
 
   private askPermission(state: ToolCallState, evaluation: Evaluation): Promise<PermissionDecision> {
@@ -858,33 +1120,38 @@ export class AgentLoop {
   // ---------------------------------------------------------------- shell mode ("!")
   public async runShell(command: string): Promise<void> {
     if (this.processing) {
-      this.callbacks.onNotice({ level: 'warn', text: 'Fuller is busy — wait for the current turn to finish.' });
+      this.queue.push({ input: command, kind: 'bash', options: {}, shell: true });
+      this.callbacks.onQueueChange(this.getQueue());
       return;
     }
     this.processing = true;
+    this.stoppedByPermission = false;
     this.abortController = new AbortController();
     const userMsg: ChatMessage = { id: uid(), role: 'user', content: command, kind: 'bash', timestamp: Date.now() };
     this.messages.push(userMsg);
     this.callbacks.onCommit({ key: userMsg.id, kind: 'user', message: userMsg });
-    const state: ToolCallState = { id: uid(), name: 'execute_bash', args: { command }, status: 'running', startTime: Date.now() };
+    const state: ToolCallState = { id: uid(), name: 'execute_bash', args: { command }, status: 'running', startTime: Date.now(), origin: 'user' };
+    let shellReport: string | null = null;
     this.callbacks.onLive({ text: '', tools: [state] });
     this.callbacks.onStatusChange('running_tool');
     try {
-      const res = await executeBash(command, this.config.workspaceDir, { timeoutMs: this.config.bashTimeoutMs, signal: this.abortController.signal });
-      const output = [res.stdout, res.stderr ? `[stderr]\n${res.stderr}` : ''].filter(Boolean).join('\n') || '(no output)';
+      const res = await executeBash(command, this.config.workspaceDir, { timeoutMs: this.config.bashTimeoutMs, signal: this.abortController.signal, background: this.background, runInTerminal: this.callbacks.runInTerminal, onBackgroundReady: (move) => { this.moveBashToBackground = move; }, outputFile: path.join(sessionsDir(this.config.workspaceDir), 'outputs', this.sessionId, `${state.id}.log`) });
+      const output = res.backgroundTaskId ? `Command continues as background task ${res.backgroundTaskId}.` : [res.stdout, res.stderr ? `[stderr]\n${res.stderr}` : ''].filter(Boolean).join('\n') || '(no output)';
       const finished: ToolCallState = {
         ...state,
         status: res.exitCode === 0 ? 'completed' : 'failed',
         result: truncateMiddle(output, LIMITS.bashOutput),
+        outputFile: res.backgroundTaskId ? undefined : res.outputFile,
         error: res.exitCode === 0 ? undefined : `exit ${res.exitCode}`,
-        summary: `${res.durationMs}ms`,
+        summary: res.backgroundTaskId ? `background ${res.backgroundTaskId}` : `${res.durationMs}ms`,
         endTime: Date.now(),
       };
       const assistant: ChatMessage = { id: uid(), role: 'assistant', content: '', parts: [{ type: 'tool', id: finished.id, toolCall: finished }], kind: 'bash', timestamp: Date.now() };
       this.messages.push(assistant);
       this.callbacks.onLive(null);
       this.callbacks.onCommit({ key: finished.id, kind: 'tool', messageId: assistant.id, toolCall: finished });
-      this.pendingContext.push(`[The user ran this shell command themselves: \`${command}\` (exit ${res.exitCode})]\n${truncateMiddle(output, 10_000)}`);
+      shellReport = `[The user ran this shell command themselves: \`${command}\` (exit ${res.exitCode})]\n${truncateMiddle(output, 10_000)}`;
+      if (res.backgroundTaskId || this.config.settings.replyAfterShell === false) { this.pendingContext.push(shellReport); shellReport = null; }
     } catch (err: any) {
       this.addSystemMessage(`✗ ${err.message || String(err)}`, 'notice');
     } finally {
@@ -893,17 +1160,110 @@ export class AgentLoop {
       this.abortController = null;
       this.callbacks.onStatusChange('idle');
       this.scheduleSave();
-      this.processQueue();
+      // Claude Code has the model answer a `!` command at once; queued prompts go first and carry it.
+      if (shellReport && this.queue.length === 0) void this.runTurn(shellReport, 'normal', { hidden: true });
+      else { if (shellReport) this.pendingContext.push(shellReport); this.processQueue(); }
     }
   }
 
   // ---------------------------------------------------------------- side chat ("/btw")
+  /**
+   * /btw: answer a side question with the session's context, without adding it
+   * to the conversation or blocking the current turn (Claude Code's panel).
+   */
+  public async askAside(question: string, onChunk: (text: string) => void, signal: AbortSignal): Promise<string> {
+    return this.session.oneShot(`${question}\n\n(Side question: answer briefly. Do not use tools.)`, onChunk, signal, true);
+  }
+
+  /**
+   * /btw then f: Claude Code forks the conversation into a background agent
+   * that works on the side question ("⑂ forked reply-with-the (d853)"). When
+   * it finishes, "● Agent "…" finished · 2s" appears and its report is handed
+   * to the model, which answers at once when idle.
+   */
+  public forkAside(question: string): void {
+    const userMsg: ChatMessage = { id: uid(), role: 'user', content: `/btw ${question}`, kind: 'command', timestamp: Date.now() };
+    this.messages.push(userMsg);
+    this.callbacks.onCommit({ key: userMsg.id, kind: 'user', message: userMsg });
+    this.startBackgroundAgent(question, true);
+  }
+
+  /** A new agent from the agents view (←): a fresh context, reported only in that view. */
+  public startAgent(task: string): void {
+    this.startBackgroundAgent(task, false);
+  }
+
+  public getAgentTasks(): AgentTask[] {
+    return this.agentTasks.map((task) => ({ ...task }));
+  }
+
+  /** ctrl+x in the agents view: stops the agent if it still works and forgets it. */
+  public deleteAgentTask(id: string): void {
+    this.agentControllers.get(id)?.abort();
+    this.agentTasks = this.agentTasks.filter((task) => task.id !== id);
+    this.callbacks.onAgentsChange?.(this.getAgentTasks());
+  }
+
+  private startBackgroundAgent(task: string, fork: boolean): void {
+    const definition = this.subagents.find((d) => d.name === 'general-purpose') ?? this.subagents[0];
+    if (!definition) { this.addSystemMessage('✗ No agent available', 'notice'); return; }
+    const slug = task.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').trim().split(/\s+/).slice(0, 3).join('-') || 'agent';
+    const id = Math.random().toString(16).slice(2, 6);
+    if (fork) this.addSystemMessage(`{{text:⑂ forked ${slug} (${id})}}`, 'notice');
+    const record: AgentTask = { id, title: task, status: 'working', startedAt: Date.now() };
+    this.agentTasks.push(record);
+    const controller = new AbortController();
+    this.agentControllers.set(id, controller);
+    this.callbacks.onAgentsChange?.(this.getAgentTasks());
+    const settle = (patch: Partial<AgentTask>) => {
+      Object.assign(record, patch, { endedAt: Date.now() });
+      this.callbacks.onAgentsChange?.(this.getAgentTasks());
+    };
+    void runSubagent({
+      config: this.config,
+      definition,
+      prompt: task,
+      description: task,
+      signal: controller.signal,
+      skills: this.skills,
+      history: fork ? this.session.getHistory() : undefined,
+      askPermission: async (st, ev) => {
+        const auto = this.config.permissionMode === 'auto' ? await this.autoDecide(st, ev, controller.signal) : null;
+        if (auto) return auto.decision === 'allow' ? { kind: 'yes' } : { kind: 'no', feedback: `auto mode denied it: ${auto.reason}` };
+        this.callbacks.onNotify?.('permission');
+        return this.askPermission(st, ev);
+      },
+      onProgress: (log) => { record.progress = log.split('\n').pop(); this.callbacks.onAgentsChange?.(this.getAgentTasks()); },
+      onUsage: (u) => { this.usage.cumulativeTokens += u.totalTokens; this.usage.apiCalls++; this.callbacks.onUsage({ ...this.usage }); },
+      checkpointManager: this.checkpointManager,
+      background: this.background,
+      runInTerminal: this.callbacks.runInTerminal,
+    }).then((result) => {
+      settle({ status: 'completed', report: result.text });
+      if (!fork) return;
+      const seconds = Math.max(1, Math.round((record.endedAt! - record.startedAt) / 1000));
+      this.addSystemMessage(`{{success:●}} Agent "${task}" finished {{subtle:· ${seconds}s}}`, 'event');
+      this.notifyFromFork(`[Forked agent ${id} finished the side question "${task}". Its report:]\n${result.text || '(empty report)'}`);
+    }).catch((err: any) => {
+      if (controller.signal.aborted) return;
+      settle({ status: 'failed', report: err?.message ?? String(err) });
+      if (fork) this.addSystemMessage(`{{error:●}} Agent "${task}" failed {{subtle:· ${err?.message ?? err}}}`, 'event');
+    }).finally(() => this.agentControllers.delete(id));
+  }
+
+  /** Hands a fork's report to the model: at once when idle, else with the next turn. */
+  private notifyFromFork(text: string): void {
+    if (this.processing) { this.pendingContext.push(text); return; }
+    void this.runTurn(text, 'normal', { hidden: true });
+  }
+
   public async sideChat(question: string): Promise<void> {
     if (this.processing) {
       this.callbacks.onNotice({ level: 'warn', text: 'Fuller is busy — wait for the current turn to finish.' });
       return;
     }
     this.processing = true;
+    this.stoppedByPermission = false;
     this.abortController = new AbortController();
     const userMsg: ChatMessage = { id: uid(), role: 'user', content: `/btw ${question}`, kind: 'command', timestamp: Date.now() };
     this.messages.push(userMsg);
@@ -942,7 +1302,7 @@ export class AgentLoop {
     }
     const history = this.session.getHistory();
     if (history.length < 2) {
-      this.addSystemMessage('Nothing to compact yet.', 'notice');
+      this.addSystemMessage('✗ Error: No messages to compact', 'notice');
       return;
     }
     if (this.hasHooks('PreCompact')) {
@@ -953,6 +1313,7 @@ export class AgentLoop {
       }
     }
     this.processing = true;
+    this.stoppedByPermission = false;
     this.abortController = new AbortController();
     this.callbacks.onStatusChange('compacting');
     try {

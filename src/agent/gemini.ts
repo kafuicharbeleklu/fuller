@@ -1,10 +1,11 @@
-import { GoogleGenAI, type Content, type FunctionDeclaration, type GenerateContentConfig, type Part } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, type Content, type FunctionDeclaration, type GenerateContentConfig, type Part } from '@google/genai';
 import { getSystemPrompt } from './systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
 import { withRetry, type RetryInfo } from './retry.js';
 import type { AppConfig } from '../config.js';
 import type { SkillDefinition } from '../skills/loader.js';
 import type { SubagentDefinition } from './subagents.js';
+import { effectiveThinkingLevel, supportedThinkingLevels, type ThinkingLevelSetting } from './thinking.js';
 
 export interface FunctionCallInfo {
   id?: string;
@@ -35,6 +36,7 @@ export interface StreamOptions {
   onChunk?: (text: string) => void;
   signal?: AbortSignal;
   onRetry?: (info: RetryInfo) => void;
+  onAttempt?: () => void;
   gitBranch?: string;
 }
 
@@ -87,6 +89,7 @@ export class GeminiAgentSession {
   }
 
   public initChat(history?: Content[]) {
+    const thinkingLevel = effectiveThinkingLevel(this.config.model, this.config.thinkingLevel);
     this.chatConfig = {
       systemInstruction: getSystemPrompt({
         workspaceDir: this.config.workspaceDir,
@@ -100,6 +103,9 @@ export class GeminiAgentSession {
       }),
       tools: [{ functionDeclarations: [...geminiToolDeclarations.filter((d) => !this.toolFilter || this.toolFilter.has(d.name!)), ...(this.toolFilter ? [] : this.extraTools)] }],
       temperature: 0.2,
+      ...(thinkingLevel
+        ? { thinkingConfig: { thinkingLevel: ThinkingLevel[thinkingLevel.toUpperCase() as keyof typeof ThinkingLevel] } }
+        : {}),
     };
     this.chat = this.ai.chats.create({
       model: this.config.model,
@@ -121,9 +127,15 @@ export class GeminiAgentSession {
     }
   }
 
-  public switchModel(model: string) {
+  public switchModel(model: string, thinkingLevel: ThinkingLevelSetting | undefined = this.config.thinkingLevel) {
     this.config.model = model;
+    this.config.thinkingLevel = thinkingLevel;
     this.initChat(this.getHistory());
+  }
+
+  public setThinkingLevel(level?: ThinkingLevelSetting) {
+    this.config.thinkingLevel = level;
+    this.refresh();
   }
 
   /** Replace the whole history by a summary (compaction). */
@@ -214,6 +226,7 @@ export class GeminiAgentSession {
       },
       {
         signal,
+        onAttempt: options.onAttempt,
         onRetry: (info) => {
           if (delivered) throw info.error;
           options.onRetry?.(info);
@@ -240,9 +253,14 @@ ${historyText}`;
     return res.text || 'Context compacted.';
   }
 
-  public async oneShot(question: string, onChunk?: (t: string) => void, signal?: AbortSignal): Promise<string> {
+  /** A question answered once, outside the conversation; `withHistory` gives it the session's context (/btw). */
+  public async oneShot(question: string, onChunk?: (t: string) => void, signal?: AbortSignal, withHistory = false, lowThinking = false): Promise<string> {
+    const contents = withHistory ? [...sanitizeHistory(this.getHistory()), { role: 'user', parts: [{ text: question }] }] : question;
+    // Quick decisions (the auto mode classifier) use the model's lightest thinking level.
+    const lowest = lowThinking ? supportedThinkingLevels(this.config.model)[0] : undefined;
+    const thinking = lowest ? { thinkingConfig: { thinkingLevel: ThinkingLevel[lowest.toUpperCase() as keyof typeof ThinkingLevel] } } : {};
     const stream = await withRetry(
-      () => this.ai.models.generateContentStream({ model: this.config.model, contents: question, config: { abortSignal: signal } }),
+      () => this.ai.models.generateContentStream({ model: this.config.model, contents, config: { abortSignal: signal, ...thinking } }),
       { signal }
     );
     let full = '';

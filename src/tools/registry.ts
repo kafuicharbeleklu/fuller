@@ -1,5 +1,6 @@
 import { Type, type FunctionDeclaration } from '@google/genai';
-import { executeBash } from './bash.js';
+import { executeBash, type BackgroundReady } from './bash.js';
+import { needsNativeTerminal, type RunInTerminal } from './nativeTerminal.js';
 import { readFile, writeFile, editFile, previewEdit, previewWrite } from './fileOps.js';
 import { listDirectory, searchFiles, globFiles, formatSearchOutput } from './search.js';
 import { webFetch } from './web.js';
@@ -214,6 +215,9 @@ export interface ToolContext {
   background?: BackgroundTaskManager;
   /** Streaming output of a foreground command (tail shown live). */
   onOutput?: (chunk: string) => void;
+  onBackgroundReady?: BackgroundReady;
+  runInTerminal?: RunInTerminal;
+  outputFile?: string;
 }
 
 const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
@@ -237,6 +241,7 @@ export interface ToolOutput {
   output: string;
   summary?: string;
   diff?: string;
+  outputFile?: string;
 }
 
 /** Compute a preview (diff) before asking for permission, without side effects. */
@@ -264,6 +269,7 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       if (!command.trim()) throw new Error('command est requis.');
       const timeoutMs = Math.min(Number(args.timeout) || ctx.bashTimeoutMs, 600_000);
       if (args.run_in_background) {
+        if (ctx.runInTerminal && needsNativeTerminal(command)) throw new Error('Run sudo in the foreground so the user can authenticate in the terminal.');
         if (!ctx.background) throw new Error('Background tasks are not available in this context.');
         const task = ctx.background.start(command, { description: args.description ? String(args.description) : undefined, timeoutMs: Math.max(timeoutMs, 600_000) });
         return {
@@ -271,8 +277,9 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
           summary: `background ${task.id}`,
         };
       }
-      const res = await executeBash(command, ctx.cwd, { timeoutMs, signal: ctx.signal, onOutput: ctx.onOutput });
+      const res = await executeBash(command, ctx.cwd, { timeoutMs, signal: ctx.signal, onOutput: ctx.onOutput, outputFile: ctx.outputFile, background: ctx.background, onBackgroundReady: ctx.onBackgroundReady, runInTerminal: ctx.runInTerminal });
       if (res.interrupted) throw new Error('Interrupted');
+      if (res.backgroundTaskId) return { output: `Moved running command to background task ${res.backgroundTaskId} (log: ${res.outputFile}). Use task_output to read its output.`, summary: `background ${res.backgroundTaskId}` };
       const parts = [
         res.stdout,
         res.stderr ? (res.stdout ? `\n[stderr]\n${res.stderr}` : res.stderr) : '',
@@ -285,6 +292,7 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       return {
         output,
         summary: res.exitCode === 0 ? `${lineCount} line${lineCount === 1 ? '' : 's'} · ${res.durationMs}ms` : `exit ${res.exitCode} · ${res.durationMs}ms`,
+        outputFile: res.outputFile,
       };
     }
 

@@ -44,6 +44,7 @@ export function getSystemPrompt(env: PromptEnv): string {
 
 # Tools
 - execute_bash(command, description?, timeout?, run_in_background?): run a shell command in the working directory; use run_in_background for servers or long builds and task_output(task_id) to read their output.
+- In the interactive TUI, foreground commands invoking sudo can let sudo ask the user for their password directly in the terminal after command approval. Use ordinary sudo, without -S, pipes of passwords or askpass helpers; never ask for a password in chat. Authentication is unavailable in headless mode. The user can cancel with Ctrl+C.
 - read_file(file_path, offset?, limit?): numbered file contents.
 - write_file(file_path, content): create or overwrite a file.
 - edit_file(file_path, target_content, replacement_content, replace_all?): exact replacement in an existing file.

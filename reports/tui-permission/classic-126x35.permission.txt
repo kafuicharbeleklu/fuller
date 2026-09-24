@@ -1,0 +1,28 @@
+
+  ██████╗  Fuller v0.3.0
+  ██╔═══╝  Gemini 3.6 Flash · Gemini API
+  █████╗   /tmp/fuller-permission-a1w9jw8o
+  ██╔══╝ 
+  ██║    
+  ╚═╝    
+
+  Add a FULLER.md at the project root to give Fuller lasting context.
+
+
+❯ please ask permission                                                                                                      
+
+● Bash(sudo ip link set tun0 down && sudo ip link set tun1 down)
+  ⎿  Running…
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   sudo ip link set tun0 down && sudo ip link set tun1 down
+   Bring down VPN tunnel interfaces
+
+ ⚠ Commande dangereuse : sudo (privilèges / système)
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend

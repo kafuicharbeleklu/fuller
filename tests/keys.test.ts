@@ -34,4 +34,10 @@ describe('parseKeys', () => {
     expect(keys).toHaveLength(1);
     expect(keys[0]).toMatchObject({ name: 'paste', text: 'line1\nline2' });
   });
+  it('parses SGR mouse wheel events in fullscreen mode', () => {
+    expect(parseKeys('\x1b[<64;12;8M\x1b[<65;12;8M')).toMatchObject([
+      { name: 'mouse', mouse: { button: 64, x: 12, y: 8, release: false } },
+      { name: 'mouse', mouse: { button: 65, x: 12, y: 8, release: false } },
+    ]);
+  });
 });
