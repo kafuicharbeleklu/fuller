@@ -4,6 +4,9 @@ import { needsNativeTerminal, type RunInTerminal } from './nativeTerminal.js';
 import { readFile, writeFile, editFile, previewEdit, previewWrite } from './fileOps.js';
 import { listDirectory, searchFiles, globFiles, formatSearchOutput } from './search.js';
 import { webFetch } from './web.js';
+import { resolveInWorkspace } from './paths.js';
+import type { FileTracker } from './fileTracker.js';
+import { addMemory, loadMemories, removeMemory } from '../agent/autoMemory.js';
 import { LIMITS, truncateMiddle, truncateHead, formatBytes } from './truncate.js';
 import type { CheckpointManager } from '../checkpoint/manager.js';
 import { expandSkill, type SkillDefinition } from '../skills/loader.js';
@@ -189,6 +192,21 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'memory',
+    description: 'Keep notes across sessions (learned memory). add: save one fact the user taught you (a correction, a preference, a project convention or constraint the code does not show, an external reference). remove: delete a note by id when it is wrong or outdated. list: show the notes. Never save secrets or things the code already shows.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        action: { type: Type.STRING, description: 'add | remove | list' },
+        note: { type: Type.STRING, description: 'add: the fact, one per note, useful out of context (include why when known).' },
+        type: { type: Type.STRING, description: 'add: feedback (how to work) | preference | project | reference' },
+        scope: { type: Type.STRING, description: 'add: project (default) or user (applies to every project).' },
+        id: { type: Type.STRING, description: 'remove: the note id shown in the system prompt.' },
+      },
+      required: ['action'],
+    },
+  },
+  {
     name: 'web_fetch',
     description: 'Fetch a web page (http/https) and return its text content (max 20000 characters).',
     parameters: {
@@ -218,6 +236,8 @@ export interface ToolContext {
   onBackgroundReady?: BackgroundReady;
   runInTerminal?: RunInTerminal;
   outputFile?: string;
+  /** Read-before-edit guard; absent in contexts that do not edit (tests, headless helpers). */
+  fileTracker?: FileTracker;
 }
 
 const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
@@ -244,9 +264,19 @@ export interface ToolOutput {
   outputFile?: string;
 }
 
+/** Read-before-edit guard: throws Claude Code's message when the file must be (re)read first. */
+function guardWrite(filePath: unknown, ctx: ToolContext): string {
+  const full = resolveInWorkspace(String(filePath ?? ''), ctx.cwd, ctx.extraDirs);
+  const problem = ctx.fileTracker?.check(full);
+  if (problem) throw new Error(problem);
+  return full;
+}
+
 /** Compute a preview (diff) before asking for permission, without side effects. */
 export async function previewTool(name: string, args: Record<string, any>, ctx: ToolContext): Promise<{ diff?: string; error?: string }> {
   try {
+    // No permission prompt for an edit that would be refused.
+    if (name === 'edit_file' || name === 'write_file') guardWrite(args.file_path, ctx);
     if (name === 'edit_file') {
       const p = await previewEdit(args.file_path, args.target_content, args.replacement_content, { cwd: ctx.cwd, extraDirs: ctx.extraDirs }, !!args.replace_all);
       return { diff: p.diff };
@@ -318,16 +348,21 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
 
     case 'read_file': {
       const r = await readFile(args.file_path, fileCtx, args.offset, args.limit);
+      ctx.fileTracker?.record(resolveInWorkspace(String(args.file_path), ctx.cwd, ctx.extraDirs));
       return { output: r.content, summary: r.summary };
     }
 
     case 'write_file': {
+      const full = guardWrite(args.file_path, ctx);
       const r = await writeFile(args.file_path, String(args.content ?? ''), fileCtx);
+      ctx.fileTracker?.record(full);
       return { output: `${r.summary} (${formatBytes(r.bytesWritten)}).`, summary: r.summary, diff: r.diff };
     }
 
     case 'edit_file': {
+      const full = guardWrite(args.file_path, ctx);
       const r = await editFile(args.file_path, args.target_content, args.replacement_content, fileCtx, !!args.replace_all);
+      ctx.fileTracker?.record(full);
       return { output: r.message, summary: r.summary, diff: r.diff };
     }
 
@@ -390,6 +425,23 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       return { output: `# Skill: ${skill.name}\n${skill.description ? `${skill.description}\n` : ''}\n${body}`, summary: `Loaded ${skill.name}` };
     }
 
+    case 'memory': {
+      const action = String(args.action ?? 'add');
+      if (action === 'list') {
+        const entries = loadMemories(ctx.cwd);
+        return { output: entries.length ? entries.map((e) => `[${e.id}] (${e.scope} · ${e.type} · ${e.date}) ${e.text}`).join('\n') : 'No notes yet.', summary: `${entries.length} note${entries.length === 1 ? '' : 's'}` };
+      }
+      if (action === 'remove') {
+        const removed = removeMemory(ctx.cwd, String(args.id ?? ''));
+        if (!removed) throw new Error(`No note with id "${args.id}".`);
+        return { output: `Removed note ${removed.id}: ${removed.text}`, summary: `Forgot: ${removed.text}` };
+      }
+      const res = addMemory(ctx.cwd, { text: String(args.note ?? ''), type: args.type, scope: args.scope });
+      if (res.error) throw new Error(res.error);
+      if (res.duplicate) return { output: `Already saved as ${res.duplicate.id}: ${res.duplicate.text}`, summary: 'Already saved' };
+      return { output: `Saved note ${res.entry!.id} (${res.entry!.scope} · ${res.entry!.type}).`, summary: `Saved: ${res.entry!.text}` };
+    }
+
     case 'web_fetch': {
       const res = await webFetch(String(args.url ?? ''), { signal: ctx.signal });
       return { output: `HTTP ${res.statusCode} (${res.contentType || 'unknown'})\n\n${res.content}`, summary: `HTTP ${res.statusCode} · ${res.content.length} chars` };
@@ -410,6 +462,7 @@ export function toolLabel(name: string): string {
     case 'search_files': return 'Grep';
     case 'glob': return 'Glob';
     case 'web_fetch': return 'WebFetch';
+    case 'memory': return 'Memory';
     case 'skill': return 'Skill';
     case 'todo_write': return 'Update Todos';
     case 'task_output': return 'TaskOutput';
@@ -430,6 +483,7 @@ export function toolArgSummary(name: string, args: Record<string, any>): string 
     case 'search_files': return `pattern: "${args.query}"${args.glob ? `, glob: "${args.glob}"` : ''}${args.path ? `, path: "${args.path}"` : ''}`;
     case 'glob': return `pattern: "${args.pattern}"${args.path ? `, path: "${args.path}"` : ''}`;
     case 'web_fetch': return String(args.url ?? '');
+    case 'memory': return args.action === 'remove' ? `forget ${args.id ?? ''}` : args.action === 'list' ? 'list' : String(args.note ?? '').slice(0, 80);
     case 'skill': return `${args.name}${args.args ? ` ${args.args}` : ''}`;
     case 'todo_write': return `${Array.isArray(args.todos) ? args.todos.length : 0} items`;
     case 'task_output': case 'task_kill': return String(args.task_id ?? '');

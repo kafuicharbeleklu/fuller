@@ -1,17 +1,17 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-p2jz2mg9
+  █████╗   /tmp/fuller-permission-mlio1rb3
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  /compact summarizes the conversation when the context grows large.
 
 
 ❯ please ask permission                                                                            
 
   Ran 1 shell command
+
+
 
 
 

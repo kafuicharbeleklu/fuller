@@ -9,6 +9,7 @@ import type { ToolCallState, PermissionDecision } from './types.js';
 import type { CheckpointManager } from '../checkpoint/manager.js';
 import type { BackgroundTaskManager } from '../tools/background.js';
 import { uid } from './transcript.js';
+import { FileTracker } from '../tools/fileTracker.js';
 import type { Content } from '@google/genai';
 
 export interface SubagentRunParams {
@@ -36,8 +37,8 @@ export interface SubagentResult {
   tokens: number;
 }
 
-/** Tools a subagent can never use (no recursion, no plan/todo state of the parent). */
-const NEVER = new Set(['agent', 'exit_plan_mode', 'todo_write']);
+/** Tools a subagent can never use (no recursion, no plan/todo state or memory of the parent). */
+const NEVER = new Set(['agent', 'exit_plan_mode', 'todo_write', 'memory']);
 
 /**
  * Run a delegated task in an isolated model session. Tool calls go through the
@@ -57,6 +58,8 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
   );
   session.refresh();
 
+  // A subagent reads what it edits, like the main agent.
+  const fileTracker = new FileTracker();
   let toolCount = 0;
   let turns = 0;
   let tokens = 0;
@@ -116,6 +119,7 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
           messageId: params.messageId,
           skills: params.skills,
           background: params.background,
+          fileTracker,
         });
         toolCount++;
         responses.push({ id: call.id, name: call.name, output: out.output + (approvalComment ? `\n\n[User comment on this approval]\n${approvalComment}` : '') });

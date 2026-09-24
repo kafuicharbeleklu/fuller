@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { APP_NAME, MEMORY_FILE } from '../branding.js';
 import { loadProjectContext } from './contextLoader.js';
+import { loadMemories, memoryPrompt } from './autoMemory.js';
 import type { PermissionMode } from './types.js';
 import { skillsForPrompt, type SkillDefinition } from '../skills/loader.js';
 import { subagentsForPrompt, type SubagentDefinition } from './subagents.js';
@@ -15,6 +16,8 @@ export interface PromptEnv {
   skills?: SkillDefinition[];
   subagents?: SubagentDefinition[];
   extraInstructions?: string;
+  /** Learned memory on (default): the notes and how to keep them. */
+  autoMemory?: boolean;
 }
 
 export function getSystemPrompt(env: PromptEnv): string {
@@ -52,6 +55,7 @@ export function getSystemPrompt(env: PromptEnv): string {
 - web_fetch(url): read documentation from the web.
 - todo_write(todos): keep a visible task list for multi-step work (one item in_progress at a time; mark items completed promptly).
 - exit_plan_mode(plan): in plan mode only, submit your plan for approval.
+- memory(action, note?, type?, scope?, id?): keep notes across sessions (see Learned memory).
 - agent(description, prompt, subagent_type?): delegate a self-contained task (broad exploration, parallel research, a long sub-task) to a subagent that works in its own context and returns a report. Give it a complete, standalone prompt.
 You may request several independent tool calls in one turn; they are executed in order.`;
 
@@ -64,6 +68,8 @@ You may request several independent tool calls in one turn; they are executed in
   if (skillList) {
     prompt += `\n\n# Skills\nThe user has defined skills (reusable instructions). When one matches the task, call the skill tool with its name to load its instructions, then follow them.\n${skillList}`;
   }
+
+  if (env.autoMemory !== false) prompt += `\n\n${memoryPrompt(loadMemories(env.workspaceDir))}`;
 
   if (memory.length > 0) {
     prompt += `\n\n# Project memory\nThe following instructions come from the user's memory files (${MEMORY_FILE} and equivalents). Follow them.`;

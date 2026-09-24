@@ -32,6 +32,8 @@ export interface Settings {
   autoCompactThreshold?: number;
   /** Auto mode: the user's rules and disabled built-in groups. */
   autoMode?: AutoModeSettings;
+  /** Learned memory: the agent saves notes across sessions (default true). */
+  autoMemory?: boolean;
   /** Have the model answer after a `!` command (Claude Code does); default true. */
   replyAfterShell?: boolean;
   notifications?: NotificationSetting;

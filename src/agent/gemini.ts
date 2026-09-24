@@ -100,8 +100,10 @@ export class GeminiAgentSession {
         skills: this.skills,
         subagents: this.toolFilter ? [] : this.subagents,
         extraInstructions: this.extraInstructions || undefined,
+        // Subagents (tool filter) neither see nor write the learned memory.
+        autoMemory: !this.toolFilter && this.config.settings.autoMemory !== false,
       }),
-      tools: [{ functionDeclarations: [...geminiToolDeclarations.filter((d) => !this.toolFilter || this.toolFilter.has(d.name!)), ...(this.toolFilter ? [] : this.extraTools)] }],
+      tools: [{ functionDeclarations: [...geminiToolDeclarations.filter((d) => (!this.toolFilter || this.toolFilter.has(d.name!)) && (d.name !== 'memory' || this.config.settings.autoMemory !== false)), ...(this.toolFilter ? [] : this.extraTools)] }],
       temperature: 0.2,
       ...(thinkingLevel
         ? { thinkingConfig: { thinkingLevel: ThinkingLevel[thinkingLevel.toUpperCase() as keyof typeof ThinkingLevel] } }

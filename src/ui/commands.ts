@@ -9,6 +9,7 @@ import { geminiToolDeclarations } from '../tools/registry.js';
 import { executeBash } from '../tools/bash.js';
 import { listAllSessions, listSessions, formatRelative, sessionsDir, type SessionMeta } from '../session/store.js';
 import { loadPromptTimestamps } from '../session/history.js';
+import { loadMemories, memoryFile } from '../agent/autoMemory.js';
 import { getThemeNames, type Theme } from './theme.js';
 import { APP_NAME, APP_VERSION, MEMORY_FILE, CONFIG_DIR_NAME } from '../branding.js';
 import type { CommandEntry, ConfigItem, InfoRow, ListItem, SettingsTab } from './InfoDialogs.js';
@@ -163,6 +164,10 @@ function configItems(ctx: CommandContext): ConfigItem[] {
     {
       label: 'Reply after ! commands', value: bool(ctx.config.settings.replyAfterShell !== false), options: ['true', 'false'],
       onChange: (value) => { ctx.config.settings.replyAfterShell = value === 'true'; saveUserSetting(['replyAfterShell'], value === 'true'); },
+    },
+    {
+      label: 'Learned memory', value: bool(ctx.config.settings.autoMemory !== false), options: ['true', 'false'],
+      onChange: (value) => { ctx.config.settings.autoMemory = value === 'true'; saveUserSetting(['autoMemory'], value === 'true'); ctx.agent.reloadInstructions(); },
     },
     { label: 'Verbose output', value: bool(ctx.verbose), options: ['true', 'false'], onChange: () => ctx.toggleVerbose() },
     {
@@ -461,12 +466,18 @@ export const COMMANDS: SlashCommand[] = [
       const user = path.join(home, CONFIG_DIR_NAME, MEMORY_FILE);
       const project = path.join(ctx.config.workspaceDir, MEMORY_FILE);
       const tilde = (file: string) => (home && file.startsWith(home) ? `~${file.slice(home.length)}` : file);
+      const learned = loadMemories(ctx.config.workspaceDir);
       ctx.openDialog({
         kind: 'list',
         title: 'Memory',
         items: [
           { label: 'User instructions', hint: `Saved in ${tilde(user)}`, onSelect: () => ctx.editFile(user) },
           { label: 'Project instructions', hint: `Saved in ./${MEMORY_FILE}`, onSelect: () => ctx.editFile(project) },
+          ...(ctx.config.settings.autoMemory === false ? [] : [
+            // Notes the agent saved itself (memory tool), per project and for every project.
+            { label: `Learned memory (${learned.filter((e) => e.scope === 'project').length})`, hint: `Saved in ${tilde(memoryFile('project', ctx.config.workspaceDir))}`, onSelect: () => ctx.editFile(memoryFile('project', ctx.config.workspaceDir), '# Learned memory\n\n') },
+            { label: `Learned memory, all projects (${learned.filter((e) => e.scope === 'user').length})`, hint: `Saved in ${tilde(memoryFile('user', ctx.config.workspaceDir))}`, onSelect: () => ctx.editFile(memoryFile('user', ctx.config.workspaceDir), '# Learned memory\n\n') },
+          ]),
         ],
         footer: 'Changes apply on the next message.',
         hint: 'Enter to confirm · Esc to cancel',

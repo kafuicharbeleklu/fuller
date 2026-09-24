@@ -126,6 +126,20 @@ Fuller démarre en plein écran (écran alternatif), comme Claude Code : la mole
 
 Les raccourcis simples peuvent être redéfinis dans `~/.fuller/keybindings.json`, par exemple `{ "bindings": { "ctrl+g": "externalEditor", "ctrl+o": "transcript" } }`. Les actions disponibles sont `transcript`, `diff`, `externalEditor`, `tasks`, `redraw`, `historySearch`, `undo` et `cycleMode` ; `null` désactive un raccourci. Le fichier est lu au démarrage de l'interface.
 
+## Mémoire, garde-fous et banc d'essai
+
+**Mémoire apprise.** Quand tu le corriges, exprimes une préférence ou lui apprends un fait que le code ne montre pas (« ici on utilise pnpm »), Fuller l'enregistre avec son outil `memory`. Les notes vivent dans `~/.fuller/projects/<projet>/memory/MEMORY.md`, ou `~/.fuller/memory/MEMORY.md` pour tous les projets. Elles reviennent dans chaque nouvelle session. `/memory` les ouvre dans ton éditeur, et `/config` → « Learned memory » les désactive. Fuller refuse d'y enregistrer tout ce qui ressemble à un secret.
+
+**Lire avant de modifier.** Comme Claude Code, Fuller refuse de modifier ou d'écraser un fichier existant qu'il n'a pas lu dans la session, ou qui a changé depuis sa lecture (par toi, un formateur ou une commande). Il doit le relire, ce qui évite d'éditer de mémoire ou d'écraser tes changements.
+
+**Vérifier après chaque modification.** Un hook `PostToolUse` renvoie sa sortie au modèle, qui corrige de lui-même. Exemple pour un projet TypeScript, dans `.fuller/settings.json` :
+
+```json
+{ "hooks": { "PostToolUse": [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "npx tsc --noEmit -p . 2>&1 | head -30", "timeout": 120 }] }] } }
+```
+
+**Banc d'essai.** `evals/tasks/` contient des tâches types : un petit projet de départ, une consigne et une commande de vérification. `node scripts/eval.mjs` fait tourner Fuller sur chacune dans une copie isolée, puis note la réussite, les tokens, la durée et les appels d'outils dans `evals/results/`. Relance-le après chaque changement du prompt ou des outils, et compare avec `--compare evals/results/<fichier>.json`. `--baseline` vérifie que chaque tâche échoue sans l'agent ; `--only`, `--repeat` et `--model` restreignent ou répètent les essais.
+
 ## Configuration
 
 - `~/.fuller/settings.json` (utilisateur), `.fuller/settings.json` (projet), `.fuller/settings.local.json` (local, ignoré par git) :

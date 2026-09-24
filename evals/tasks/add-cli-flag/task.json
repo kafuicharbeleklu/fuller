@@ -1,0 +1,5 @@
+{
+  "prompt": "Add a --shout flag to cli.js: when present, print the greeting in upper case. Add a test for it in test/cli.test.js.",
+  "check": "node --test && [ \"$(node cli.js Ada --shout)\" = 'HELLO ADA' ] && [ \"$(node cli.js Ada)\" = 'Hello Ada' ]",
+  "timeoutSec": 240
+}

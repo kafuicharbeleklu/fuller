@@ -23,6 +23,7 @@ import { McpManager, type McpServerStatus } from '../mcp/manager.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { loadSubagents, type SubagentDefinition } from './subagents.js';
 import { runSubagent } from './subagent.js';
+import { FileTracker } from '../tools/fileTracker.js';
 import { autoModePrompt, parseVerdict, type AutoVerdict } from '../permissions/autoMode.js';
 import { findImagePaths, attachmentFromFile, readAttachmentBase64, type ImageAttachment } from '../utils/imageClipboard.js';
 import type { Part } from '@google/genai';
@@ -140,6 +141,8 @@ export class AgentLoop {
   private background: BackgroundTaskManager;
   /** Background agents: /btw then f, or a task typed in the agents view. */
   private agentTasks: AgentTask[] = [];
+  /** Files read in this session, for the read-before-edit guard. */
+  private fileTracker = new FileTracker();
   /** Auto mode denials, newest first. */
   private recentDenials: Array<{ action: string; reason: string; timestamp: number }> = [];
   private agentControllers = new Map<string, AbortController>();
@@ -492,6 +495,11 @@ export class AgentLoop {
     this.config.permissionMode = mode;
     this.session.refresh();
     this.callbacks.onModeChange?.(mode);
+  }
+
+  /** Rebuild the system prompt and tools (e.g. learned memory turned on or off). */
+  public reloadInstructions() {
+    this.session.refresh();
   }
 
   public setContextWindow(tokens: number) {
@@ -852,6 +860,7 @@ export class AgentLoop {
         update({ result: current.length > 4000 ? current.slice(-4000) : current });
       },
       outputFile: name === 'execute_bash' ? path.join(sessionsDir(this.config.workspaceDir), 'outputs', this.sessionId, `${state.id}.log`) : undefined,
+      fileTracker: this.fileTracker,
     };
 
     if (name === 'edit_file' || name === 'write_file') {

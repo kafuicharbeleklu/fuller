@@ -1,0 +1,5 @@
+{
+  "prompt": "In package.json, add a script named \"lint\" that runs \"node --check src/index.js\", and set the version to 1.2.0. Keep the file valid JSON.",
+  "check": "node -e \"const p=require('./package.json');if(p.scripts.lint!=='node --check src/index.js'||p.version!=='1.2.0'||p.scripts.test!=='node --test')process.exit(1)\"",
+  "timeoutSec": 240
+}

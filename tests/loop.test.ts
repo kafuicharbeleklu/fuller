@@ -153,6 +153,34 @@ describe('AgentLoop', () => {
     oneShotReply = '';
   });
 
+  it('refuses to edit a file it has not read, or that changed since it was read', async () => {
+    script = [
+      { functionCalls: [{ id: '1', name: 'edit_file', args: { file_path: 'a.txt', target_content: 'hello', replacement_content: 'bye' } }] },
+      { functionCalls: [{ id: '2', name: 'read_file', args: { file_path: 'a.txt' } }] },
+      { functionCalls: [{ id: '3', name: 'edit_file', args: { file_path: 'a.txt', target_content: 'hello', replacement_content: 'bye' } }] },
+      { text: 'done' },
+    ];
+    const asked: unknown[] = [];
+    const { cb } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) { asked.push(c); c.onDecide({ kind: 'yes' }); } } });
+    const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+    await loop.handleUserInput('edit it');
+    const outputs = calls.filter((c) => c.kind === 'tools').map((c) => c.responses[0].output);
+    expect(outputs[0]).toContain('File has not been read yet. Read it first before writing to it.');
+    // No permission prompt for the refused edit, one for the valid one.
+    expect(asked).toHaveLength(1);
+    expect(fs.readFileSync(path.join(cwd, 'a.txt'), 'utf8')).toBe('bye\n');
+
+    // Someone else changes the file: the agent must read it again.
+    calls.length = 0;
+    const later = new Date(Date.now() + 5000);
+    fs.writeFileSync(path.join(cwd, 'a.txt'), 'bye from the user\n');
+    fs.utimesSync(path.join(cwd, 'a.txt'), later, later);
+    script = [{ functionCalls: [{ id: '4', name: 'edit_file', args: { file_path: 'a.txt', target_content: 'bye', replacement_content: 'ciao' } }] }, { text: 'done' }];
+    await loop.handleUserInput('edit again');
+    expect(calls.find((c) => c.kind === 'tools').responses[0].output).toContain('File has been modified since read');
+    expect(fs.readFileSync(path.join(cwd, 'a.txt'), 'utf8')).toBe('bye from the user\n');
+  });
+
   it('waits for permission before handing sudo to the terminal', async () => {
     script = [{ functionCalls: [{ name: 'execute_bash', args: { command: 'sudo simulated' } }] }, { text: 'done' }];
     const order: string[] = [];
@@ -210,7 +238,9 @@ describe('AgentLoop', () => {
   });
 
   it('rewinds code and conversation to a selected prompt without touching earlier edits', async () => {
+    // a.txt already exists: the read-before-edit guard wants it read first.
     script = [
+      { functionCalls: [{ id: '0', name: 'read_file', args: { file_path: 'a.txt' } }] },
       { functionCalls: [{ id: '1', name: 'write_file', args: { file_path: 'a.txt', content: 'first' } }] },
       { text: 'first done' },
       { functionCalls: [{ id: '2', name: 'write_file', args: { file_path: 'a.txt', content: 'second' } }] },
@@ -235,6 +265,7 @@ describe('AgentLoop', () => {
 
   it('can restore code while keeping the conversation intact', async () => {
     script = [
+      { functionCalls: [{ id: '0', name: 'read_file', args: { file_path: 'a.txt' } }] },
       { functionCalls: [{ id: '1', name: 'write_file', args: { file_path: 'a.txt', content: 'changed' } }] },
       { text: 'done' },
     ];

@@ -1,0 +1,5 @@
+{
+  "prompt": "Add a function isEven(n) to src/math.js and a test for it in test/math.test.js.",
+  "check": "node --test && git diff --quiet HEAD -- legacy && grep -q 'isEven' src/math.js",
+  "timeoutSec": 240
+}

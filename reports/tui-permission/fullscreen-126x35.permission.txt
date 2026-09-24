@@ -1,18 +1,18 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-1c3ty1bt
+  █████╗   /tmp/fuller-permission-75z5y9j7
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Shift+Tab cycles modes: manual → accept edits → plan → bypass.
 
 
 ❯ please ask permission                                                                                                      
 
 ● Bash(sudo ip link set tun0 down && sudo ip link set tun1 down)
   ⎿  Running…
+
+
 
 
 
