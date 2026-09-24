@@ -33,6 +33,62 @@ describe('Claude Code style dialogs', () => {
   });
 });
 
+describe('/status navigation (Claude Code 2.1.282)', () => {
+  const config = [{ label: 'Auto-compact', value: 'true', options: ['true', 'false'] }, { label: 'Theme', value: 'dark', options: ['dark', 'light'] }];
+
+  it('walks through every tab with → and stays on the tab row at Config', async () => {
+    const screen = render(wrap(<SettingsDialog initialTab="status" status={[{ label: 'Version', value: '0.3.0' }]} usage={[{ label: 'Total tokens', value: '0' }]} config={config} onClose={() => {}} />));
+    await tick();
+    screen.stdin.write('\x1b[C'); await tick();
+    expect(screen.lastFrame()).toContain('Search settings…');
+    expect(screen.lastFrame()).toContain('←/→/tab to switch · ↓ to return · Esc to close');
+    screen.stdin.write('\x1b[C'); await tick();
+    expect(screen.lastFrame()).toContain('Total tokens:');
+    screen.stdin.write('\x1b[C'); await tick();
+    expect(screen.lastFrame()).toContain('Version:');
+    screen.stdin.write('\x1b[D'); await tick();
+    expect(screen.lastFrame()).toContain('Total tokens:');
+    screen.unmount();
+  });
+
+  it('goes down from the tab row to the search field and the list, and back up', async () => {
+    const screen = render(wrap(<SettingsDialog initialTab="status" status={[]} usage={[]} config={config} onClose={() => {}} />));
+    await tick();
+    screen.stdin.write('\t'); await tick();
+    screen.stdin.write('\x1b[B'); await tick();
+    expect(screen.lastFrame()).toContain('Type to filter · Enter/↓ to select · ↑ to tabs · Esc to clear');
+    screen.stdin.write('\x1b[B'); await tick();
+    expect(screen.lastFrame()).toContain('❯ Auto-compact');
+    expect(screen.lastFrame()).toContain('Enter/Space to change · / to search · Esc to close');
+    screen.stdin.write('\x1b[A'); await tick();
+    expect(screen.lastFrame()).toContain('Type to filter');
+    screen.stdin.write('\x1b[A'); await tick();
+    expect(screen.lastFrame()).toContain('←/→/tab to switch · ↓ to return · Esc to close');
+    screen.unmount();
+  });
+
+  it('scrolls a Status tab taller than the screen, with ↑/↓ marks on the right edge', async () => {
+    const status = Array.from({ length: 30 }, (_, i) => ({ label: `Row ${i + 1}`, value: `value ${i + 1}` }));
+    const screen = render(wrap(<SettingsDialog initialTab="status" status={status} usage={[]} onClose={() => {}} />));
+    await tick();
+    const lines = () => screen.lastFrame()!.split('\n');
+    expect(screen.lastFrame()).toContain('Row 1:');
+    expect(screen.lastFrame()).not.toContain('Row 30:');
+    expect(lines().some((l) => /Row 16:.*↓\s*$/.test(l))).toBe(true);
+    screen.stdin.write('\x1b[B'); await tick();
+    expect(screen.lastFrame()).not.toContain('Row 1:');
+    expect(lines().some((l) => /Row 2:.*↑\s*$/.test(l))).toBe(true);
+    screen.stdin.write('\x1b[F'); await tick();
+    expect(screen.lastFrame()).toContain('Row 30:');
+    expect(screen.lastFrame()).not.toContain('↓');
+    screen.stdin.write('\x1b[H'); await tick();
+    expect(screen.lastFrame()).toContain('Row 1:');
+    screen.stdin.write('\x1b[6~'); await tick();
+    expect(screen.lastFrame()).toContain('Row 17:');
+    screen.unmount();
+  });
+});
+
 describe('/context grid', () => {
   const data: ContextData = {
     modelLabel: 'Gemini 3.6 Flash (1M context)', modelId: 'gemini-3.6-flash', window: 1_000_000, bufferShare: 0.15,

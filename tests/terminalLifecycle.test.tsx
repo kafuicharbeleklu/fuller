@@ -25,7 +25,15 @@ vi.mock('../src/utils/git.js', () => ({ getGitInfo: async () => ({ isGit: false 
 vi.mock('../src/agent/contextLoader.js', () => ({ loadProjectContext: () => [] }));
 vi.mock('../src/session/history.js', () => ({ loadPromptHistory: () => [], loadPromptTimes: () => new Map() }));
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
+/** Wait until Ink stops writing: a fixed 80 ms was sometimes too short when the whole suite runs in parallel. */
+async function settle(chunks?: string[]) {
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  if (!chunks) return;
+  for (let i = 0, last = -1; i < 40 && chunks.length !== last; i++) {
+    last = chunks.length;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
 const cleanups: Array<() => void> = [];
 afterEach(() => { cleanups.splice(0).reverse().forEach((cleanup) => cleanup()); });
 
@@ -49,10 +57,10 @@ async function terminalApp(columns: number, rows: number, fullscreen = false) {
   config.settings = { theme: 'dark', spinnerVerbs: ['Working'] };
   const app = render(<App config={config} frameWriter={writer} fullscreen={fullscreen} />, { stdout: inkStdout as any, stdin: stdin as any, stderr: stdout as any, exitOnCtrlC: false, patchConsole: false });
   cleanups.push(() => { app.unmount(); app.cleanup(); writer.restore(); });
-  await settle();
+  await settle(chunks);
   const initialChunks = chunks.length;
   return async () => {
-    await settle();
+    await settle(chunks);
     expect(chunks.slice(initialChunks).join('')).not.toContain('\x1b[2J');
     const terminal = new xterm.Terminal({ cols: columns, rows, scrollback: 10000, convertEol: true, allowProposedApi: true });
     await new Promise<void>((resolve) => terminal.write(chunks.join(''), resolve));

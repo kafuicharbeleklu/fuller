@@ -79,3 +79,12 @@ Signalé par l'utilisateur : « la validation admin bug, puis ouvre une fenêtre
   - Après Ctrl+C sur un appel de l'agent, le tour entier est interrompu et la ligne `Bash(sudo …)` n'est pas gardée dans la conversation (comportement antérieur).
   - Claude Code 2.1.282 ajoute aussi, sur toutes ses cartes de permission, une ligne « Tip: auto mode… » et un choix « Yes, and switch to auto mode ». Ce n'est pas repris ici.
   - Une saisie réussie avec le vrai mot de passe n'a pas été testée (seulement avec un faux `sudo`).
+
+## 8. Mise à jour — navigation dans /status
+
+Comparée à une capture de Claude Code 2.1.282 (commande locale, sans appel au modèle) :
+- **Défaut corrigé** : un premier → depuis Status menait à Config en donnant la main au champ de recherche, où → ne faisait plus rien. On restait bloqué sur Config, sauf avec Tab. Maintenant ←/→/Tab restent sur la rangée d'onglets pour tous les onglets, comme Claude Code (aide « ←/→/tab to switch · ↓ to return · Esc to close »). ↓ mène à la recherche, puis à la liste ; ↑ remonte. `/config` ouvre toujours sur la recherche.
+- **Défilement** de Status et Usage quand ils dépassent l'écran : ↑/↓, PgUp/PgDn, Début/Fin, avec les marques ↑/↓ au bord droit comme Claude Code. Elles sont deux colonnes plus à gauche que chez lui, car Fuller se dessine une colonne plus étroit que le terminal.
+- Code : `src/ui/InfoDialogs.tsx` (`SettingsDialog`). Tests : `tests/infoDialogs.test.tsx`.
+- `tests/terminalLifecycle.test.tsx` attend maintenant que la sortie d'Ink se stabilise au lieu d'un délai fixe de 80 ms, qui échouait parfois quand toute la suite tournait en parallèle.
+- Non repris : le contenu de l'onglet Usage de Claude Code (sections Session, barres d'utilisation), qui dépend de son abonnement.

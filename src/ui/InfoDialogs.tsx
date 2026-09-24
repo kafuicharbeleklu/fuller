@@ -79,15 +79,17 @@ type SettingsFocus = 'tabs' | 'search' | 'list';
 
 const CONFIG_LABEL_WIDTH = 43;
 const CONFIG_HINTS: Record<SettingsFocus, string> = {
-  tabs: '←/→ to switch · ↓ to select · Esc to cancel',
+  tabs: '←/→/tab to switch · ↓ to return · Esc to close',
   search: 'Type to filter · Enter/↓ to select · ↑ to tabs · Esc to clear',
   list: 'Enter/Space to change · / to search · Esc to close',
 };
 
 /**
- * /status, /config and /usage: Claude Code 2.1.281's Settings dialog with its
- * Status, Config and Usage tabs. Config opens on its search field ("Search
- * settings…"); ↓ enters the list, where Enter or Space changes the setting.
+ * /status, /config and /usage: Claude Code's Settings dialog with its Status, Config, Usage and
+ * Stats tabs. ←/→ or Tab move between tabs and stay on the tab row, Config included (↓ then
+ * enters its search field, ↓ again its list). /config opens on the search field. Status and
+ * Usage scroll with ↑/↓, PgUp/PgDn and Home/End when taller than the screen, with ↑/↓ marks on
+ * the right edge as in Claude Code.
  */
 export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; config?: ConfigItem[]; stats?: () => { sessions: SessionMeta[]; prompts: number[] }; initialTab: SettingsTab; onClose: () => void; ruleLabel?: string }> = ({ status, usage, config = [], stats, initialTab, onClose, ruleLabel }) => {
   const theme = useTheme();
@@ -99,6 +101,11 @@ export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; con
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [scroll, setScroll] = useState(0);
+  const lines = current === 'usage' ? usage : status;
+  const linesPage = Math.max(3, (stdout.rows || 24) - 8);
+  const maxScroll = Math.max(0, lines.length - linesPage);
+  const top = Math.min(scroll, maxScroll);
   const items = config
     .map((item) => ({ ...item, value: values[item.label] ?? item.value }))
     .filter((item) => !query || `${item.label} ${item.value}`.toLowerCase().includes(query.toLowerCase()));
@@ -111,7 +118,9 @@ export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; con
     setTab(next);
     setIndex(0);
     setQuery('');
-    setFocus(tabs[next].key === 'config' ? 'search' : 'tabs');
+    setScroll(0);
+    // Stay on the tab row, so that →, → walks through every tab (Config's search field took the keys).
+    setFocus('tabs');
   };
   const change = () => {
     const item = items[safe];
@@ -148,6 +157,11 @@ export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; con
     else if (e.name === 'right' || (e.name === 'tab' && !e.shift)) switchTab(1);
     else if (e.name === 'left' || (e.name === 'tab' && e.shift)) switchTab(-1);
     else if (current === 'config' && (e.name === 'down' || e.name === 'return')) setFocus('search');
+    else if (current === 'status' || current === 'usage') {
+      const to = e.name === 'down' ? top + 1 : e.name === 'up' ? top - 1 : e.name === 'pagedown' ? top + linesPage : e.name === 'pageup' ? top - linesPage
+        : e.name === 'home' ? 0 : e.name === 'end' ? maxScroll : undefined;
+      if (to !== undefined) setScroll(Math.max(0, Math.min(maxScroll, to)));
+    }
   });
 
   const header = (
@@ -160,12 +174,28 @@ export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; con
           : <Text key={t.key}>{' '}<Text bold inverse>{` ${t.label} `}</Text></Text>))}
     </Text>
   );
-  const rows = (entries: InfoRow[]) => (
-    <Box flexDirection="column">
-      {entries.map((row) => <KeyValue key={row.label} label={row.label} value={row.value} placeholder={row.placeholder} />)}
-    </Box>
-  );
   const width = Math.max(20, (stdout.columns || 80) - 5);
+  const rows = (entries: InfoRow[]) => {
+    if (entries.length <= linesPage) {
+      return (
+        <Box flexDirection="column">
+          {entries.map((row) => <KeyValue key={row.label} label={row.label} value={row.value} placeholder={row.placeholder} />)}
+        </Box>
+      );
+    }
+    // Taller than the screen: one page, with Claude Code's ↑/↓ marks on the right edge.
+    const visible = entries.slice(top, top + linesPage);
+    return (
+      <Box flexDirection="column">
+        {visible.map((row, i) => (
+          <Box key={row.label} width={width}>
+            <Box flexGrow={1}><KeyValue label={row.label} value={row.value} placeholder={row.placeholder} /></Box>
+            <Text color={theme.subtle}>{i === 0 && top > 0 ? '↑' : i === visible.length - 1 && top + linesPage < entries.length ? '↓' : ' '}</Text>
+          </Box>
+        ))}
+      </Box>
+    );
+  };
   const configView = (
     <Box flexDirection="column">
       <Box borderStyle="round" borderColor={focus === 'search' ? theme.permission : undefined} borderDimColor={focus !== 'search'} width={width} paddingX={1}>
@@ -186,7 +216,7 @@ export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; con
   );
   return (
     <OverlayFrame title="Settings" header={header} hint={current === 'config' ? CONFIG_HINTS[focus] : current === 'stats' ? undefined : 'Esc to cancel'} ruleLabel={ruleLabel}>
-      <Box flexDirection="column">{current === 'config' ? configView : current === 'stats' && stats ? <StatsView load={stats} width={width} /> : rows(current === 'usage' ? usage : status)}</Box>
+      <Box flexDirection="column">{current === 'config' ? configView : current === 'stats' && stats ? <StatsView load={stats} width={width} /> : rows(lines)}</Box>
     </OverlayFrame>
   );
 };

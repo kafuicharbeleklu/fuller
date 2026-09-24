@@ -79,7 +79,7 @@ Un fichier = une commande `/nom` (les sous-dossiers donnent `/dossier:nom`). Fro
 | `/help` | Commandes et raccourcis |
 | `/clear` | Nouvelle conversation |
 | `/compact [focus]` | Résumer la conversation |
-| `/status`, `/cost`, `/context` | État de session, tokens, répartition du contexte |
+| `/status`, `/cost`, `/context` | État de session, tokens, répartition du contexte. `/status` ouvre la fenêtre Settings : ←/→ ou Tab passent d'un onglet à l'autre (Status, Config, Usage, Stats) ; sur Config, ↓ mène à la recherche puis à la liste ; Status et Usage défilent avec ↑/↓, PgUp/PgDn, Début/Fin quand ils dépassent l'écran |
 | `/model [nom\|list]` | Sélecteur de modèles (API ListModels), changement sans perdre l'historique |
 | `/permissions [add\|deny\|remove <règle>]` | Gérer les règles |
 | `/plan`, `/accept-edits`, `/mode <mode>` | Modes de permission ; en plan mode le modèle explore puis soumet son plan avec `exit_plan_mode` (« Would you like to proceed? » : auto-accept, approbation manuelle, ou retour en planification avec vos remarques ; plan sauvegardé dans `~/.fuller/plans/`) |
