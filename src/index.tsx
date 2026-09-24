@@ -33,7 +33,7 @@ program
   .option('--max-turns <n>', 'Maximum tool turns per prompt', (v) => parseInt(v, 10))
   .option('-c, --continue', 'Resume the latest session of this workspace', false)
   .option('-r, --resume [id]', 'Resume a session (interactive picker when no id is given)')
-  .option('--fallback-model <model>', 'Model used when the current one is overloaded or out of quota (default gemma-4-26b-a4b-it; "off" to disable)')
+  .option('--fallback-model <models>', 'Models tried in turn when the current one is out of quota on every key or overloaded (comma list; "off" to disable; default: the free Gemini models, then Gemma 4)')
   .option('--check-keys', 'Test every configured Gemini API key with a tiny request and exit (keys are never shown)', false)
   .option('--list-models', 'List recent, free-of-charge chat models available to your API key and exit', false)
   .option('--all', 'With --list-models: include every chat model (paid and older ones)', false)
@@ -58,7 +58,11 @@ program
       maxTurns: options.maxTurns,
     });
     if (options.theme) config.settings.theme = options.theme;
-    if (options.fallbackModel) config.settings.fallbackModel = String(options.fallbackModel);
+    if (options.fallbackModel) {
+      // --fallback-model off | model | model1,model2 (tried in this order).
+      const value = String(options.fallbackModel).trim();
+      config.settings.fallbackModels = value === 'off' ? 'off' : value.split(',').map((m) => m.trim()).filter(Boolean);
+    }
     if (options.allowedTools?.length) {
       config.settings.permissions = {
         ...config.settings.permissions,

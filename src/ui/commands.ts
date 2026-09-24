@@ -10,7 +10,6 @@ import { executeBash } from '../tools/bash.js';
 import { listAllSessions, listSessions, formatRelative, sessionsDir, type SessionMeta } from '../session/store.js';
 import { loadPromptTimestamps } from '../session/history.js';
 import { loadMemories, memoryFile } from '../agent/autoMemory.js';
-import { DEFAULT_FALLBACK_MODEL } from '../agent/gemini.js';
 import { getThemeNames, type Theme } from './theme.js';
 import { APP_NAME, APP_VERSION, MEMORY_FILE, CONFIG_DIR_NAME } from '../branding.js';
 import type { CommandEntry, ConfigItem, InfoRow, ListItem, SettingsTab } from './InfoDialogs.js';
@@ -167,9 +166,14 @@ function configItems(ctx: CommandContext): ConfigItem[] {
       onChange: (value) => { ctx.config.settings.replyAfterShell = value === 'true'; saveUserSetting(['replyAfterShell'], value === 'true'); },
     },
     {
-      label: 'Fallback model', value: ctx.config.settings.fallbackModel ?? DEFAULT_FALLBACK_MODEL, options: ['gemma-4-26b-a4b-it', 'gemma-4-31b-it', 'gemini-3.5-flash-lite', 'off'],
-      description: 'Used when the current model is overloaded or out of quota on every key',
-      onChange: (value) => { ctx.config.settings.fallbackModel = value; saveUserSetting(['fallbackModel'], value); },
+      // Claude Code's --fallback-model, as a chain: every free model in turn, or none.
+      label: 'Model fallback', value: ctx.config.settings.fallbackModels === 'off' || ctx.config.settings.fallbackModel === 'off' ? 'off' : 'chain', options: ['chain', 'off'],
+      description: 'When a model is out of quota on every key or overloaded, the next one is used',
+      onChange: (value) => {
+        ctx.config.settings.fallbackModels = value === 'off' ? 'off' : undefined;
+        if (value !== 'off' && ctx.config.settings.fallbackModel === 'off') ctx.config.settings.fallbackModel = undefined;
+        saveUserSetting(['fallbackModels'], value === 'off' ? 'off' : null);
+      },
     },
     {
       label: 'Learned memory', value: bool(ctx.config.settings.autoMemory !== false), options: ['true', 'false'],
@@ -214,7 +218,7 @@ function settingsRows(ctx: CommandContext): { status: InfoRow[]; usage: InfoRow[
       { label: 'Session name', value: ctx.agent.sessionName, placeholder: '/rename to add a name' },
       { label: 'Session ID', value: ctx.agent.sessionId },
       { label: 'cwd', value: `${ctx.config.workspaceDir}${ctx.config.additionalDirectories.length ? ` (+ ${ctx.config.additionalDirectories.join(', ')})` : ''}` },
-      { label: 'Model', value: `${modelLabel(ctx.config.model)} (${contextLabel(ctx.config.contextWindow)})` },
+      { label: 'Model', value: `${modelLabel(ctx.config.model)} (${contextLabel(ctx.config.contextWindow)})${ctx.agent.preferredModel && ctx.agent.preferredModel !== ctx.config.model ? ` · fallback for ${modelLabel(ctx.agent.preferredModel)}` : ''}` },
       ...(ctx.agent.apiKeyStatus.total > 1 ? [{ label: 'API keys', value: `${ctx.agent.apiKeyStatus.total} · using key ${ctx.agent.apiKeyStatus.position}` }] : []),
       { label: 'Git', value: ctx.gitInfo?.isGit ? `${ctx.gitInfo.branch}${ctx.gitInfo.isDirty ? ' (dirty)' : ' (clean)'}` : undefined, placeholder: 'not a git repository' },
       { label: 'Permission mode', value: `${ctx.config.permissionMode} · ${allow.length} allow · ${deny.length} deny rules` },

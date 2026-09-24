@@ -1,12 +1,12 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-8z1j5nky
+  █████╗   /tmp/fuller-permission-bbp3ilge
   ██╔══╝ 
   ██║    
   ╚═╝    
 
-  Esc interrupts; Esc Esc opens the rewind menu.
+  Ctrl+O toggles the detailed transcript with full tool output.
 
 
 ❯ please ask permission                                                                            

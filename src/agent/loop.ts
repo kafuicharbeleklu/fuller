@@ -24,6 +24,7 @@ import { loadMcpConfig } from '../mcp/config.js';
 import { loadSubagents, type SubagentDefinition } from './subagents.js';
 import { runSubagent } from './subagent.js';
 import { modelLabel } from '../ui/modelLabel.js';
+import { contextWindowOf } from './models.js';
 import { FileTracker } from '../tools/fileTracker.js';
 import { autoModePrompt, parseVerdict, type AutoVerdict } from '../permissions/autoMode.js';
 import { findImagePaths, attachmentFromFile, readAttachmentBase64, type ImageAttachment } from '../utils/imageClipboard.js';
@@ -175,13 +176,8 @@ export class AgentLoop {
     this.skills = safeLoadSkills(config.workspaceDir);
     this.subagents = safeLoadSubagents(config.workspaceDir);
     this.session = new GeminiAgentSession(config, restored?.history);
-    this.session.onKeySwitch = (position, total, reason) => this.announceKeySwitch(position, total, reason);
-    this.session.onModelFallback = (from, to, reason) => {
-      this.callbacks.onNotice({ level: 'warn', text: `${modelLabel(from)} ${reason === 'overloaded' ? 'is overloaded' : 'is out of quota on every key'} · switched to ${modelLabel(to)} (/model to change)` });
-      setTimeout(() => this.callbacks.onNotice(null), 8000);
-      this.callbacks.onModelChange?.(to);
-      this.scheduleSave();
-    };
+    // Key changes are silent; a model change is worth a short notice (answers may differ).
+    this.session.onModelChange = (from, to, reason) => this.announceModelChange(from, to, reason);
     this.session.setSkills(this.skills);
     this.session.setSubagents(this.subagents);
     this.session.refresh();
@@ -507,11 +503,20 @@ export class AgentLoop {
     this.callbacks.onModeChange?.(mode);
   }
 
-  /** Quota reached on one API key: calls continue on the next (keys are never shown). */
-  private announceKeySwitch(position: number, total: number, reason: 'quota' | 'unusable') {
-    const why = reason === 'quota' ? 'Quota reached on an API key' : 'An API key was refused (project denied or key invalid)';
-    this.callbacks.onNotice({ level: 'warn', text: `${why} · switched to key ${position}/${total}` });
+  /** The session moved down the model chain, or back to the preferred model. */
+  private announceModelChange(from: string, to: string, reason: 'quota' | 'overloaded' | 'unusable' | 'context' | 'back') {
+    const why = reason === 'back' ? `Back on ${modelLabel(to)}`
+      : `${modelLabel(from)} ${reason === 'overloaded' ? 'is overloaded' : reason === 'context' ? 'cannot hold this conversation' : 'is out of quota'} · using ${modelLabel(to)}`;
+    this.callbacks.onNotice({ level: reason === 'back' ? 'info' : 'warn', text: why });
     setTimeout(() => this.callbacks.onNotice(null), 6000);
+    this.setContextWindow(contextWindowOf(to));
+    this.callbacks.onModelChange?.(to);
+    this.scheduleSave();
+  }
+
+  /** The model the user chose (the one in use may be a fallback). */
+  public get preferredModel(): string {
+    return this.session.preferred;
   }
 
   /** The API key in use, as a position ("2/3"). */
@@ -1369,8 +1374,11 @@ export class AgentLoop {
 
   private async maybeAutoCompact(): Promise<void> {
     if (!this.config.autoCompact) return;
+    // Compact before the conversation outgrows the smallest model of the fallback chain, so a
+    // fallback never starts with a request it cannot hold, and each request spends less quota.
+    const limit = Math.min(this.config.autoCompactThreshold * this.usage.contextWindow, 0.8 * this.session.chainMinWindow());
     const ratio = this.usage.promptTokens / this.usage.contextWindow;
-    if (ratio < this.config.autoCompactThreshold) return;
+    if (this.usage.promptTokens < limit) return;
     this.addSystemMessage(`Context is ${Math.round(ratio * 100)}% full — compacting conversation…`, 'notice');
     await this.compact(undefined, true);
   }

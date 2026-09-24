@@ -35,7 +35,9 @@ export interface Settings {
   autoCompactThreshold?: number;
   /** Auto mode: the user's rules and disabled built-in groups. */
   autoMode?: AutoModeSettings;
-  /** Model used when the current one is overloaded or out of quota ('off' to disable; default Gemma 4 26B). */
+  /** Models tried in turn when the current one is out of quota on every key or overloaded ('off': never switch). */
+  fallbackModels?: string[] | 'off';
+  /** Older single fallback (still read): one model, or 'off'. */
   fallbackModel?: string;
   /** Learned memory: the agent saves notes across sessions (default true). */
   autoMemory?: boolean;

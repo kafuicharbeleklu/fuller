@@ -39,7 +39,7 @@ fuller --screen-reader                    # interface linéaire pour lecteur d'�
 fuller --list-models                     # modèles récents et gratuits accessibles à votre clé
 fuller --list-models --all               # tous les modèles texte (y compris payants / anciens)
 fuller --check-keys                      # teste chaque clé API (une mini-requête chacune, clés jamais affichées)
-fuller --fallback-model gemma-4-31b-it   # modèle de repli si le modèle courant est saturé ou sans quota (off pour désactiver)
+fuller --fallback-model gemma-4-31b-it   # modèle(s) de repli, liste séparée par des virgules (off pour désactiver)
 ```
 
 ### Modèles
@@ -142,6 +142,18 @@ Les raccourcis simples peuvent être redéfinis dans `~/.fuller/keybindings.json
 ```
 
 **Banc d'essai.** `evals/tasks/` contient des tâches types : un petit projet de départ, une consigne et une commande de vérification. `node scripts/eval.mjs` fait tourner Fuller sur chacune dans une copie isolée, puis note la réussite, les tokens, la durée et les appels d'outils dans `evals/results/`. Relance-le après chaque changement du prompt ou des outils, et compare avec `--compare evals/results/<fichier>.json`. `--baseline` vérifie que chaque tâche échoue sans l'agent ; `--only`, `--repeat` et `--model` restreignent ou répètent les essais.
+
+## Clés et quotas
+
+Google compte les quotas **par projet et par modèle**. Avec plusieurs clés (`GEMINI_API_KEYS=k1,k2`), Fuller :
+
+- change de clé sans rien afficher quand une clé n'a plus de quota **pour le modèle en cours** ; cette clé reste utilisée pour les autres modèles ;
+- écarte 24 h une clé refusée (projet bloqué, clé invalide ou expirée) ;
+- passe au modèle suivant de la chaîne (Gemini 3.8, 3.7, 3.6, 3.5 Flash, 3.5 Flash-Lite, puis Gemma 4 31B et 26B) quand plus aucune clé n'a de quota pour le modèle en cours, ou quand il reste saturé (503) ;
+- saute les modèles dont la fenêtre ne peut pas contenir la conversation, et compacte la conversation avant qu'elle ne dépasse le plus petit modèle de la chaîne : un repli ne commence jamais par une requête impossible, et chaque requête coûte moins de quota ;
+- revient à ton modèle au message suivant dès qu'il est de nouveau disponible.
+
+La conversation est conservée à chaque changement : l'historique complet est renvoyé à la nouvelle clé ou au nouveau modèle (l'API Gemini ne garde rien côté serveur). `/status` indique le modèle en cours et s'il s'agit d'un repli ; `/config` → « Model fallback » ou `--fallback-model off` désactive les changements de modèle ; `fuller --check-keys` teste chaque clé.
 
 ## Configuration
 

@@ -100,6 +100,29 @@ export async function listChatModels(apiKey: string, options: { force?: boolean;
 }
 
 /** Context window hint for a model id (cache only, no network). */
+/**
+ * Models tried in turn when the current one is out of quota on every key or overloaded:
+ * the user's model first, then the free Gemini models from the newest, then Gemma 4.
+ */
+export const DEFAULT_MODEL_CHAIN = [
+  'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite',
+  'gemma-4-31b-it', 'gemma-4-26b-a4b-it',
+];
+
+/** The chain for a preferred model: settings.fallbackModels, the older single fallbackModel, or the default; "off" keeps one model. */
+export function modelChain(preferred: string, settings: { fallbackModels?: string[] | 'off'; fallbackModel?: string }): string[] {
+  if (settings.fallbackModels === 'off' || settings.fallbackModel === 'off') return [preferred];
+  const rest = Array.isArray(settings.fallbackModels) ? settings.fallbackModels
+    : settings.fallbackModel ? [settings.fallbackModel]
+    : DEFAULT_MODEL_CHAIN;
+  return [...new Set([preferred, ...rest])];
+}
+
+/** Input window of a model: from the model list when cached, else the documented size. */
+export function contextWindowOf(modelId: string): number {
+  return knownContextWindow(modelId) ?? (/^gemma-4-/.test(modelId) ? 262_144 : 1_048_576);
+}
+
 export function knownContextWindow(modelId: string): number | undefined {
   const cached = readCache();
   return cached?.models.find((m) => m.id === modelId)?.inputTokenLimit || undefined;

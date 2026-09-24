@@ -1,10 +1,12 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-wtr50hgs
+  █████╗   /tmp/fuller-permission-i32jxnd8
   ██╔══╝ 
   ██║    
   ╚═╝    
+
+  Type / for commands, @ to mention a file, ! to run a shell command.
 
 
 ❯ please ask permission                                                                                                      

@@ -22,6 +22,7 @@ vi.mock('../src/agent/gemini.js', () => {
     repairHistory() {}
     resetWithSummary() {}
     switchModel() {}
+    chainMinWindow() { return 1_048_576; }
     async sendUserMessage(text: any, opts: any) {
       calls.push({ kind: 'user', text: typeof text === 'string' ? text : text.map((p: any) => p.text ?? `[inline ${p.inlineData?.mimeType} ${p.inlineData?.data?.length}]`).join(''), parts: typeof text === 'string' ? undefined : text });
       return this.next(opts);

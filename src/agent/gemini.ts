@@ -1,8 +1,8 @@
 import { GoogleGenAI, ThinkingLevel, type Content, type FunctionDeclaration, type GenerateContentConfig, type Part } from '@google/genai';
 import { getSystemPrompt } from './systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
-import { keyPoolFor, isKeyError, isDeadKeyError, isQuotaError, type KeyPool } from './keyPool.js';
-import { errorStatus } from './retry.js';
+import { schedulerFor, isDeadKeyError, isQuotaError, isOverloadError, type QuotaScheduler } from './keyPool.js';
+import { modelChain, contextWindowOf } from './models.js';
 import { withRetry, type RetryInfo } from './retry.js';
 import type { AppConfig } from '../config.js';
 import type { SkillDefinition } from '../skills/loader.js';
@@ -54,56 +54,105 @@ export class GeminiAgentSession {
   private extraInstructions = '';
   private subagents: SubagentDefinition[] = [];
 
-  /** Called when calls move to another API key after a quota or access error (position is 1-based). */
-  public onKeySwitch?: (position: number, total: number, reason: 'quota' | 'unusable') => void;
-  private readonly keys: KeyPool;
+  /**
+   * The model changed without the user: quota or overload moved the conversation down the chain
+   * ('quota', 'overloaded', 'unusable', 'context'), or a new message brought it back ('back').
+   * Key changes are silent.
+   */
+  public onModelChange?: (from: string, to: string, reason: 'quota' | 'overloaded' | 'unusable' | 'context' | 'back') => void;
+  private readonly scheduler: QuotaScheduler;
   private keyInUse: string;
+  private keyIndexInUse = 0;
+  /** The model the user chose; the chain starts from it and every new message tries it first. */
+  private preferredModel: string;
+  /** Prompt size of the last request, to know which models the conversation fits. */
+  private lastPromptTokens = 0;
 
   constructor(config: AppConfig, history?: Content[]) {
     this.config = config;
-    this.keys = keyPoolFor(config.apiKeys?.length ? config.apiKeys : [config.apiKey]);
-    this.keyInUse = this.keys.current();
+    this.preferredModel = config.model;
+    this.scheduler = schedulerFor(config.apiKeys?.length ? config.apiKeys : [config.apiKey]);
+    const route = this.scheduler.pick(this.chain(), (m) => m === config.model) ?? this.scheduler.pick(this.chain());
+    this.keyIndexInUse = route?.keyIndex ?? 0;
+    this.keyInUse = route?.key ?? config.apiKey;
+    if (route && route.model !== config.model) this.config.model = route.model;
     this.ai = new GoogleGenAI({ apiKey: this.keyInUse });
-    this.initChat(history);
+    this.initChat(history ? adaptHistoryForModel(history, this.config.model) : history);
   }
 
   /** Which key is in use, as "2/3" (keys themselves are never shown). */
   public get keyStatus(): { position: number; total: number } {
-    return { position: this.keys.position, total: this.keys.size };
+    return { position: this.keyIndexInUse + 1, total: this.scheduler.size };
   }
 
-  /** Follow the pool when another session (a subagent, a side call) already moved to another key. */
-  private syncKey(): void {
-    const key = this.keys.current();
-    if (key === this.keyInUse) return;
-    const history = this.getHistory();
-    this.keyInUse = key;
-    this.ai = new GoogleGenAI({ apiKey: key });
-    this.initChat(history);
+  /** The model the user chose (the current one may be a fallback). */
+  public get preferred(): string { return this.preferredModel; }
+
+  private chain(): string[] {
+    return modelChain(this.preferredModel, this.config.settings);
+  }
+
+  /** Tokens the next request will carry, roughly: the last prompt, or the history size. */
+  private estimatedTokens(): number {
+    if (this.lastPromptTokens) return this.lastPromptTokens;
+    try { return Math.ceil(JSON.stringify(this.getHistory()).length / 4); } catch { return 0; }
+  }
+
+  /** The conversation (plus room for the answer and new tool output) fits the model's window. */
+  private fits(model: string): boolean {
+    return this.estimatedTokens() * 1.1 + 16_000 <= contextWindowOf(model);
+  }
+
+  /** Smallest window of the chain: auto-compaction keeps the conversation under it, so every fallback works. */
+  public chainMinWindow(): number {
+    return Math.min(...this.chain().map((m) => contextWindowOf(m)));
   }
 
   /**
-   * withRetry's recover hook for one request: a quota error or an unusable key moves the
-   * conversation to the next key; when no key is left for this model, or the model stays
-   * overloaded (503) for OVERLOAD_RETRIES attempts, it moves to the fallback model.
+   * Choose the (key, model) for the next request. At the start of a user turn the chain is
+   * read from the preferred model (automatic return); inside a turn the current pair is kept
+   * while usable (no needless switch, cache kept). Returns false when nothing is available.
+   */
+  private route(fromPreferred: boolean, reason: 'quota' | 'overloaded' | 'unusable' | 'context' = 'quota'): boolean {
+    const model = this.config.model;
+    if (!fromPreferred && this.scheduler.usable(this.keyIndexInUse, model) && this.scheduler.modelAvailable(model) && this.fits(model)) return true;
+    const next = this.scheduler.pick(this.chain(), (m) => this.fits(m));
+    if (!next) return false;
+    if (next.key === this.keyInUse && next.model === model) return true;
+    const history = this.getHistory();
+    if (next.key !== this.keyInUse) {
+      this.keyInUse = next.key;
+      this.ai = new GoogleGenAI({ apiKey: next.key });
+    }
+    this.keyIndexInUse = next.keyIndex;
+    if (next.model !== model) {
+      this.config.model = next.model;
+      this.initChat(adaptHistoryForModel(history, next.model));
+      this.onModelChange?.(model, next.model, next.model === this.preferredModel ? 'back' : !this.fits(model) ? 'context' : reason);
+    } else {
+      this.initChat(history);
+    }
+    return true;
+  }
+
+  /**
+   * withRetry's recover hook for one request: a quota error rests the (key, model) pair, a
+   * refused key rests the key, a model that stays overloaded rests for a while; then the next
+   * route is taken at once. False (plain retry with backoff) when nothing else is available.
    */
   private makeRecover(): (err: any) => boolean {
     let overloaded = 0;
     return (err: any): boolean => {
-      if (isKeyError(err)) {
-        if (this.keys.current() !== this.keyInUse) { this.syncKey(); return true; }
-        if (this.keys.rotate(err)) {
-          this.syncKey();
-          this.onKeySwitch?.(this.keys.position, this.keys.size, isDeadKeyError(err) ? 'unusable' : 'quota');
-          return true;
-        }
-        return isQuotaError(err) && this.fallBack('quota');
+      if (isDeadKeyError(err)) { this.scheduler.markDead(this.keyIndexInUse, err); return this.route(false, 'unusable'); }
+      if (isQuotaError(err)) { this.scheduler.markQuota(this.keyIndexInUse, this.config.model, err); return this.route(false, 'quota'); }
+      if (isOverloadError(err) && ++overloaded >= OVERLOAD_RETRIES) {
+        this.scheduler.markOverloaded(this.config.model);
+        overloaded = 0;
+        return this.route(false, 'overloaded');
       }
-      if (isOverloadError(err) && ++overloaded >= OVERLOAD_RETRIES) return this.fallBack('overloaded');
       return false;
     };
   }
-
 
   public get model(): string {
     return this.config.model;
@@ -176,31 +225,12 @@ export class GeminiAgentSession {
     }
   }
 
+  /** The user picked a model (/model): it becomes the preferred one. */
   public switchModel(model: string, thinkingLevel: ThinkingLevelSetting | undefined = this.config.thinkingLevel) {
+    this.preferredModel = model;
     this.config.model = model;
     this.config.thinkingLevel = thinkingLevel;
     this.initChat(adaptHistoryForModel(this.getHistory(), model));
-  }
-
-  /** Called when calls move to the fallback model because the current one is overloaded or out of quota. */
-  public onModelFallback?: (from: string, to: string, reason: 'overloaded' | 'quota') => void;
-
-  /** The fallback model, unless off or already in use. */
-  private fallbackTarget(): string | undefined {
-    const target = this.config.settings.fallbackModel ?? DEFAULT_FALLBACK_MODEL;
-    if (!target || target === 'off' || target === this.config.model) return undefined;
-    return target;
-  }
-
-  /** Move the conversation to the fallback model (history adapted to it). */
-  private fallBack(reason: 'overloaded' | 'quota'): boolean {
-    const target = this.fallbackTarget();
-    if (!target) return false;
-    const from = this.config.model;
-    // The fallback has its own thinking levels: keep none rather than one it may refuse.
-    this.switchModel(target, undefined);
-    this.onModelFallback?.(from, target, reason);
-    return true;
   }
 
   public setThinkingLevel(level?: ThinkingLevelSetting) {
@@ -215,6 +245,7 @@ export class GeminiAgentSession {
       { role: 'model', parts: [{ text: 'Understood. I will continue from this summary.' }] },
       ...sanitizeHistory(tail),
     ];
+    this.lastPromptTokens = 0;
     this.initChat(history);
   }
 
@@ -254,7 +285,9 @@ export class GeminiAgentSession {
   private async streamTurn(message: string | Part[], options: StreamOptions): Promise<ModelTurnOutput> {
     const { onChunk, signal } = options;
     if (signal?.aborted) throw new Error('Interrupted');
-    this.syncKey();
+    // A new user message tries the preferred model first; tool results stay on the current route.
+    const userTurn = typeof message === 'string' || !message.some((p) => p.functionResponse);
+    this.route(userTurn);
     let delivered = false;
 
     return withRetry(
@@ -293,6 +326,7 @@ export class GeminiAgentSession {
             };
           }
         }
+        if (usage?.promptTokens) this.lastPromptTokens = usage.promptTokens;
         return { text, functionCalls, usage };
       },
       {
@@ -328,7 +362,7 @@ ${historyText}`;
 
   /** A question answered once, outside the conversation; `withHistory` gives it the session's context (/btw). */
   public async oneShot(question: string, onChunk?: (t: string) => void, signal?: AbortSignal, withHistory = false, lowThinking = false): Promise<string> {
-    this.syncKey();
+    this.route(false);
     const contents = withHistory ? [...sanitizeHistory(this.getHistory()), { role: 'user', parts: [{ text: question }] }] : question;
     // Quick decisions (the auto mode classifier) use the model's lightest thinking level.
     const lowest = lowThinking ? supportedThinkingLevels(this.config.model)[0] : undefined;
@@ -353,14 +387,8 @@ ${historyText}`;
 }
 
 /** Gemma 4 (26B A4B): fast, calls tools well, served by the same API — the default fallback. */
-export const DEFAULT_FALLBACK_MODEL = 'gemma-4-26b-a4b-it';
-/** Overloaded (503) attempts on one request before moving to the fallback model. */
+/** Overloaded (503) attempts on one request before the model rests and the next of the chain is used. */
 const OVERLOAD_RETRIES = 3;
-
-function isOverloadError(err: any): boolean {
-  const status = errorStatus(err);
-  return status === 503 || /UNAVAILABLE|high demand|overloaded/i.test(String(err?.message ?? err ?? ''));
-}
 
 /** Google's documented placeholder for function calls that carry no thought signature. */
 export const SKIP_SIGNATURE = 'skip_thought_signature_validator';
