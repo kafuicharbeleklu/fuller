@@ -1,6 +1,7 @@
 import { GoogleGenAI, ThinkingLevel, type Content, type FunctionDeclaration, type GenerateContentConfig, type Part } from '@google/genai';
 import { getSystemPrompt } from './systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
+import { keyPoolFor, isQuotaError, type KeyPool } from './keyPool.js';
 import { withRetry, type RetryInfo } from './retry.js';
 import type { AppConfig } from '../config.js';
 import type { SkillDefinition } from '../skills/loader.js';
@@ -52,11 +53,43 @@ export class GeminiAgentSession {
   private extraInstructions = '';
   private subagents: SubagentDefinition[] = [];
 
+  /** Called when calls move to another API key after a quota error (position is 1-based). */
+  public onKeySwitch?: (position: number, total: number) => void;
+  private readonly keys: KeyPool;
+  private keyInUse: string;
+
   constructor(config: AppConfig, history?: Content[]) {
     this.config = config;
-    this.ai = new GoogleGenAI({ apiKey: config.apiKey });
+    this.keys = keyPoolFor(config.apiKeys?.length ? config.apiKeys : [config.apiKey]);
+    this.keyInUse = this.keys.current();
+    this.ai = new GoogleGenAI({ apiKey: this.keyInUse });
     this.initChat(history);
   }
+
+  /** Which key is in use, as "2/3" (keys themselves are never shown). */
+  public get keyStatus(): { position: number; total: number } {
+    return { position: this.keys.position, total: this.keys.size };
+  }
+
+  /** Follow the pool when another session (a subagent, a side call) already moved to another key. */
+  private syncKey(): void {
+    const key = this.keys.current();
+    if (key === this.keyInUse) return;
+    const history = this.getHistory();
+    this.keyInUse = key;
+    this.ai = new GoogleGenAI({ apiKey: key });
+    this.initChat(history);
+  }
+
+  /** withRetry's recover hook: a quota error moves the conversation to the next key. */
+  private readonly recoverFromQuota = (err: any): boolean => {
+    if (!isQuotaError(err)) return false;
+    if (this.keys.current() !== this.keyInUse) { this.syncKey(); return true; }
+    if (!this.keys.rotate(err)) return false;
+    this.syncKey();
+    this.onKeySwitch?.(this.keys.position, this.keys.size);
+    return true;
+  };
 
   public get model(): string {
     return this.config.model;
@@ -186,6 +219,7 @@ export class GeminiAgentSession {
   private async streamTurn(message: string | Part[], options: StreamOptions): Promise<ModelTurnOutput> {
     const { onChunk, signal } = options;
     if (signal?.aborted) throw new Error('Interrupted');
+    this.syncKey();
     let delivered = false;
 
     return withRetry(
@@ -228,6 +262,8 @@ export class GeminiAgentSession {
       },
       {
         signal,
+        // A partly streamed answer is not resent on another key (the text would repeat).
+        recover: (err) => !delivered && this.recoverFromQuota(err),
         onAttempt: options.onAttempt,
         onRetry: (info) => {
           if (delivered) throw info.error;
@@ -250,20 +286,21 @@ Conversation:
 ${historyText}`;
     const res = await withRetry(
       () => this.ai.models.generateContent({ model: this.config.model, contents: prompt, config: { abortSignal: signal, temperature: 0.1 } }),
-      { signal }
+      { signal, recover: this.recoverFromQuota }
     );
     return res.text || 'Context compacted.';
   }
 
   /** A question answered once, outside the conversation; `withHistory` gives it the session's context (/btw). */
   public async oneShot(question: string, onChunk?: (t: string) => void, signal?: AbortSignal, withHistory = false, lowThinking = false): Promise<string> {
+    this.syncKey();
     const contents = withHistory ? [...sanitizeHistory(this.getHistory()), { role: 'user', parts: [{ text: question }] }] : question;
     // Quick decisions (the auto mode classifier) use the model's lightest thinking level.
     const lowest = lowThinking ? supportedThinkingLevels(this.config.model)[0] : undefined;
     const thinking = lowest ? { thinkingConfig: { thinkingLevel: ThinkingLevel[lowest.toUpperCase() as keyof typeof ThinkingLevel] } } : {};
     const stream = await withRetry(
       () => this.ai.models.generateContentStream({ model: this.config.model, contents, config: { abortSignal: signal, ...thinking } }),
-      { signal }
+      { signal, recover: this.recoverFromQuota }
     );
     let full = '';
     for await (const chunk of stream) {

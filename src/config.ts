@@ -1,4 +1,5 @@
 import type { AutoModeSettings } from './permissions/autoMode.js';
+import { collectApiKeys } from './agent/keyPool.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -49,6 +50,8 @@ export interface Settings {
 
 export interface AppConfig {
   apiKey: string;
+  /** Every configured key (GEMINI_API_KEYS…), the main one first: calls move on when one runs out of quota. */
+  apiKeys?: string[];
   model: string;
   thinkingLevel?: ThinkingLevelSetting;
   workspaceDir: string;
@@ -227,6 +230,7 @@ export function getConfig(overrides: ConfigOverrides = {}): AppConfig {
 
   return {
     apiKey,
+    apiKeys: collectApiKeys(process.env, apiKey),
     model,
     thinkingLevel: settings.thinkingLevel,
     workspaceDir,

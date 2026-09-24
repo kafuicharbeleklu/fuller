@@ -172,6 +172,7 @@ export class AgentLoop {
     this.skills = safeLoadSkills(config.workspaceDir);
     this.subagents = safeLoadSubagents(config.workspaceDir);
     this.session = new GeminiAgentSession(config, restored?.history);
+    this.session.onKeySwitch = (position, total) => this.announceKeySwitch(position, total);
     this.session.setSkills(this.skills);
     this.session.setSubagents(this.subagents);
     this.session.refresh();
@@ -495,6 +496,17 @@ export class AgentLoop {
     this.config.permissionMode = mode;
     this.session.refresh();
     this.callbacks.onModeChange?.(mode);
+  }
+
+  /** Quota reached on one API key: calls continue on the next (keys are never shown). */
+  private announceKeySwitch(position: number, total: number) {
+    this.callbacks.onNotice({ level: 'warn', text: `Quota reached on an API key · switched to key ${position}/${total}` });
+    setTimeout(() => this.callbacks.onNotice(null), 6000);
+  }
+
+  /** The API key in use, as a position ("2/3"). */
+  public get apiKeyStatus(): { position: number; total: number } {
+    return this.session.keyStatus;
   }
 
   /** Rebuild the system prompt and tools (e.g. learned memory turned on or off). */

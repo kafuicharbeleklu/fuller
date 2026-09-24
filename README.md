@@ -19,6 +19,7 @@ git clone https://github.com/kafuicharbeleklu/fuller.git
 cd fuller
 npm install
 cp .env.example .env        # puis renseignez GEMINI_API_KEY (https://aistudio.google.com/apikey)
+                            # plusieurs clés : GEMINI_API_KEYS=cle1,cle2 (bascule automatique sur quota)
 npm run dev                 # mode développement (tsx)
 npm run build && npm link   # installe la commande globale `fuller`
 ```

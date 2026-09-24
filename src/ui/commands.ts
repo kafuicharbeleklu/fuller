@@ -209,6 +209,7 @@ function settingsRows(ctx: CommandContext): { status: InfoRow[]; usage: InfoRow[
       { label: 'Session ID', value: ctx.agent.sessionId },
       { label: 'cwd', value: `${ctx.config.workspaceDir}${ctx.config.additionalDirectories.length ? ` (+ ${ctx.config.additionalDirectories.join(', ')})` : ''}` },
       { label: 'Model', value: `${modelLabel(ctx.config.model)} (${contextLabel(ctx.config.contextWindow)})` },
+      ...(ctx.agent.apiKeyStatus.total > 1 ? [{ label: 'API keys', value: `${ctx.agent.apiKeyStatus.total} · using key ${ctx.agent.apiKeyStatus.position}` }] : []),
       { label: 'Git', value: ctx.gitInfo?.isGit ? `${ctx.gitInfo.branch}${ctx.gitInfo.isDirty ? ' (dirty)' : ' (clean)'}` : undefined, placeholder: 'not a git repository' },
       { label: 'Permission mode', value: `${ctx.config.permissionMode} · ${allow.length} allow · ${deny.length} deny rules` },
       { label: 'Theme', value: ctx.theme.name },
