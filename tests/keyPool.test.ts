@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
-import { QuotaScheduler, collectApiKeys, isQuotaError, isKeyError, restDelayMs } from '../src/agent/keyPool.js';
+import { QuotaScheduler, collectApiKeys, isQuotaError, isKeyError, restDelayMs, msUntilPacificMidnight } from '../src/agent/keyPool.js';
 import { modelChain, contextWindowOf, DEFAULT_MODEL_CHAIN } from '../src/agent/models.js';
 import { withRetry } from '../src/agent/retry.js';
 const require = createRequire(import.meta.url);
@@ -76,7 +76,10 @@ describe('errors and keys', () => {
     expect(isKeyError(denied)).toBe(true);
     expect(isKeyError(Object.assign(new Error('overloaded'), { status: 503 }))).toBe(false);
     expect(restDelayMs(new Error('Please retry in 37.2s'))).toBe(37_200);
-    expect(restDelayMs(quota)).toBe(3_600_000);
+    // A daily quota rests until Google's reset, midnight Pacific time.
+    const noon = Date.UTC(2026, 8, 24, 19, 0, 0); // 12:00 in Los Angeles (PDT)
+    expect(restDelayMs(quota, noon)).toBe(12 * 3_600_000);
+    expect(msUntilPacificMidnight(noon)).toBe(12 * 3_600_000);
     expect(restDelayMs(denied)).toBe(24 * 3_600_000);
   });
 

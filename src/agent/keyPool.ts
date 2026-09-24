@@ -16,6 +16,19 @@ import { CONFIG_DIR_NAME } from '../branding.js';
  * resting state survives restarts, stored by key fingerprint (never the key itself).
  */
 
+export interface ModelUsage {
+  model: string;
+  /** Keys that can serve requests (refused keys excluded). */
+  keys: number;
+  /** Of those, keys whose quota for this model is spent. */
+  exhausted: number;
+  refused: number;
+  usedFraction: number;
+  /** When the first spent key comes back (daily quotas: midnight Pacific time). */
+  resetsAt?: number;
+  overloaded: boolean;
+}
+
 export interface Route {
   key: string;
   keyIndex: number;
@@ -83,7 +96,7 @@ export class QuotaScheduler {
 
   /** The (key, model) pair ran out of quota. */
   markQuota(keyIndex: number, model: string, err: unknown): void {
-    this.resting.set(this.restKey(keyIndex, model), this.now() + restDelayMs(err));
+    this.resting.set(this.restKey(keyIndex, model), this.now() + restDelayMs(err, this.now()));
     this.save();
   }
 
@@ -91,6 +104,27 @@ export class QuotaScheduler {
   markDead(keyIndex: number, err: unknown): void {
     this.resting.set(this.restKey(keyIndex, ANY_MODEL), this.now() + restDelayMs(err));
     this.save();
+  }
+
+  /**
+   * One model across every key, for a single usage bar: the share of working keys whose quota
+   * for this model is spent, and when the first of them comes back. Refused keys are counted apart.
+   */
+  usage(model: string): ModelUsage {
+    const t = this.now();
+    let refused = 0, exhausted = 0, resetsAt: number | undefined;
+    this.keys.forEach((_, i) => {
+      if ((this.resting.get(this.restKey(i, ANY_MODEL)) ?? 0) > t) { refused++; return; }
+      const until = this.resting.get(this.restKey(i, model)) ?? 0;
+      if (until > t) { exhausted++; resetsAt = resetsAt === undefined ? until : Math.min(resetsAt, until); }
+    });
+    const working = this.keys.length - refused;
+    return { model, keys: working, exhausted, refused, usedFraction: working ? exhausted / working : 1, resetsAt, overloaded: (this.overloaded.get(model) ?? 0) > t };
+  }
+
+  /** The user chose to keep trying an overloaded model. */
+  clearOverloaded(model: string): void {
+    this.overloaded.delete(model);
   }
 
   /** The model keeps answering 503: try the others for a while. */
@@ -131,11 +165,21 @@ export function isOverloadError(err: any): boolean {
   return errorStatus(err) === 503 || /UNAVAILABLE|high demand|overloaded/i.test(String(err?.message ?? err ?? ''));
 }
 
-/** How long a key rests: a day when unusable, Google's retry delay, an hour for a daily quota, else a minute. */
-export function restDelayMs(err: any): number {
+/** Milliseconds until the next midnight in Pacific time, when Google resets daily quotas. */
+export function msUntilPacificMidnight(now = Date.now()): number {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .formatToParts(new Date(now)).filter((p) => p.type !== 'literal').map((p) => [p.type, Number(p.value)]));
+  const elapsed = ((parts.hour % 24) * 3600 + parts.minute * 60 + parts.second) * 1000;
+  return Math.max(60_000, 24 * 3600_000 - elapsed);
+}
+
+/** How long a key rests: a day when unusable, until the daily reset (midnight Pacific) for a daily quota, Google's retry delay, else a minute. */
+export function restDelayMs(err: any, now = Date.now()): number {
   if (isDeadKeyError(err)) return 24 * 60 * 60_000;
   const text = String(err?.message ?? err ?? '');
-  if (/per ?day|PerDay|daily/i.test(text)) return 60 * 60_000;
+  // Daily quota, or no quota at all for this model ("limit: 0"): until Google's daily reset.
+  // (retryDelay is only a few seconds even for daily quotas: the quotaId is what tells.)
+  if (/per ?day|PerDay|daily|limit: 0\b/i.test(text)) return msUntilPacificMidnight(now);
   const retry = text.match(/retry(?:Delay)?[^0-9]{0,12}(\d+(?:\.\d+)?)\s*s/i);
   if (retry) return Math.max(5_000, Math.ceil(Number(retry[1]) * 1000));
   return 60_000;

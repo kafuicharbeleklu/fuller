@@ -1,3 +1,4 @@
+import { QuotaExhaustedError, type FallbackRequest, type FallbackChoice, type ModelChangeReason } from './gemini.js';
 import { GeminiAgentSession, historyToText, type ToolResponsePayload, type TurnUsage } from './gemini.js';
 import { dispatchTool, previewTool, toolLabel } from '../tools/registry.js';
 import { evaluatePermission, type Evaluation } from '../permissions/rules.js';
@@ -25,6 +26,9 @@ import { loadSubagents, type SubagentDefinition } from './subagents.js';
 import { runSubagent } from './subagent.js';
 import { modelLabel } from '../ui/modelLabel.js';
 import { contextWindowOf } from './models.js';
+import type { ModelUsage } from './keyPool.js';
+import { quotaMessage, formatDuration } from './quotaText.js';
+import { saveUserSetting } from '../config.js';
 import { FileTracker } from '../tools/fileTracker.js';
 import { autoModePrompt, parseVerdict, type AutoVerdict } from '../permissions/autoMode.js';
 import { findImagePaths, attachmentFromFile, readAttachmentBase64, type ImageAttachment } from '../utils/imageClipboard.js';
@@ -85,6 +89,11 @@ function safeLoadSkills(cwd: string): SkillDefinition[] {
   }
 }
 
+/** The quota dialog's request, with the callback that answers it. */
+export interface ModelSwitchRequest extends FallbackRequest {
+  resolve: (choice: FallbackChoice) => void;
+}
+
 export interface AgentCallbacks {
   runInTerminal?: RunInTerminal;
   onStatusChange: (status: AgentStatus) => void;
@@ -97,6 +106,10 @@ export interface AgentCallbacks {
   onModeChange?: (mode: PermissionMode) => void;
   /** The model changed without the user (fallback when the current one is overloaded or out of quota). */
   onModelChange?: (model: string) => void;
+  /** Policy ask: show the quota dialog and resolve with the user's choice. Absent (headless) = stop. */
+  onRequestModelSwitch?: (request: ModelSwitchRequest | null) => void;
+  /** Aggregated quota of the model in use changed (a key was spent or came back). */
+  onQuotaChange?: (usage: ModelUsage) => void;
   onNotify?: (event: 'permission' | 'done' | 'error') => void;
   onTodosChange?: (todos: TodoItem[]) => void;
   onBackgroundChange?: (running: number, tasks: BackgroundTask[]) => void;
@@ -178,6 +191,17 @@ export class AgentLoop {
     this.session = new GeminiAgentSession(config, restored?.history);
     // Key changes are silent; a model change is worth a short notice (answers may differ).
     this.session.onModelChange = (from, to, reason) => this.announceModelChange(from, to, reason);
+    this.session.onFallbackRequest = (request) => this.askModelSwitch(request);
+    // Per-minute limits on every key: a short countdown instead of a question.
+    this.session.onQuotaWait = (ms) => {
+      if (ms === null) { this.callbacks.onNotice(null); return; }
+      this.callbacks.onStatusChange('retrying');
+      this.callbacks.onNotice({ level: 'info', text: `Rate limit reached · continuing in ${formatDuration(ms)}` });
+    };
+    this.session.onFallbackPolicyChange = (policy) => {
+      this.config.settings.modelFallback = policy;
+      try { saveUserSetting(['modelFallback'], policy); } catch {}
+    };
     this.session.setSkills(this.skills);
     this.session.setSubagents(this.subagents);
     this.session.refresh();
@@ -504,7 +528,29 @@ export class AgentLoop {
   }
 
   /** The session moved down the model chain, or back to the preferred model. */
-  private announceModelChange(from: string, to: string, reason: 'quota' | 'overloaded' | 'unusable' | 'context' | 'back') {
+  /** Policy ask: the quota dialog (Gemini CLI's), answered by the user; headless runs stop. */
+  private askModelSwitch(request: FallbackRequest): Promise<FallbackChoice> {
+    if (!this.callbacks.onRequestModelSwitch) return Promise.resolve('stop');
+    this.callbacks.onStatusChange('awaiting_permission');
+    this.callbacks.onNotify?.('permission');
+    return new Promise<FallbackChoice>((resolve) => {
+      this.callbacks.onRequestModelSwitch!({
+        ...request,
+        resolve: (choice) => {
+          this.callbacks.onRequestModelSwitch!(null);
+          this.callbacks.onStatusChange('thinking');
+          resolve(choice);
+        },
+      });
+    });
+  }
+
+  /** Usage of the model in use across every key (one bar in /status and the footer). */
+  public quotaUsage(): ModelUsage {
+    return this.session.quotaUsage();
+  }
+
+  private announceModelChange(from: string, to: string, reason: ModelChangeReason) {
     const why = reason === 'back' ? `Back on ${modelLabel(to)}`
       : `${modelLabel(from)} ${reason === 'overloaded' ? 'is overloaded' : reason === 'context' ? 'cannot hold this conversation' : 'is out of quota'} · using ${modelLabel(to)}`;
     this.callbacks.onNotice({ level: reason === 'back' ? 'info' : 'warn', text: why });
@@ -814,9 +860,14 @@ export class AgentLoop {
         this.addSystemMessage(this.stoppedByPermission ? 'Permission denied · What should Fuller do instead?' : 'Interrupted · What should Fuller do instead?', 'notice');
         this.session.repairHistory();
       } else {
-        const described = describeError(err);
-        const hint = /: 404 |not found|no longer available/i.test(described) ? '\nUse /model to pick a model available to your API key.' : /: 429 |quota/i.test(described) ? '\nRate limit or quota reached. Wait and retry, or choose another model with /model.' : '';
-        this.addSystemMessage(`✗ ${described}${hint}`, 'notice');
+        if (err instanceof QuotaExhaustedError) {
+          this.addSystemMessage(`✗ ${quotaMessage(err)}`, 'notice');
+          this.callbacks.onQuotaChange?.(this.session.quotaUsage());
+        } else {
+          const described = describeError(err);
+          const hint = /: 404 |not found|no longer available/i.test(described) ? '\nUse /model to pick a model available to your API key.' : /: 429 |quota/i.test(described) ? '\nRate limit or quota reached. Wait and retry, or choose another model with /model.' : '';
+          this.addSystemMessage(`✗ ${described}${hint}`, 'notice');
+        }
         this.callbacks.onNotify?.('error');
         this.session.repairHistory();
       }

@@ -23,6 +23,7 @@ vi.mock('../src/agent/gemini.js', () => {
     resetWithSummary() {}
     switchModel() {}
     chainMinWindow() { return 1_048_576; }
+    quotaUsage() { return { model: 'm', keys: 1, exhausted: 0, refused: 0, usedFraction: 0, overloaded: false }; }
     async sendUserMessage(text: any, opts: any) {
       calls.push({ kind: 'user', text: typeof text === 'string' ? text : text.map((p: any) => p.text ?? `[inline ${p.inlineData?.mimeType} ${p.inlineData?.data?.length}]`).join(''), parts: typeof text === 'string' ? undefined : text });
       return this.next(opts);
@@ -42,7 +43,8 @@ vi.mock('../src/agent/gemini.js', () => {
     async compactHistory() { return 'summary'; }
     async oneShot(question: string) { calls.push({ kind: 'oneShot', text: question }); return oneShotReply; }
   }
-  return { GeminiAgentSession, historyToText: () => '', sanitizeHistory: (h: any) => h };
+  class QuotaExhaustedError extends Error {}
+  return { GeminiAgentSession, QuotaExhaustedError, historyToText: () => '', sanitizeHistory: (h: any) => h };
 });
 
 import { AgentLoop, type AgentCallbacks } from '../src/agent/loop.js';

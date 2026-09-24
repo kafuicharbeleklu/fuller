@@ -145,15 +145,14 @@ Les raccourcis simples peuvent être redéfinis dans `~/.fuller/keybindings.json
 
 ## Clés et quotas
 
-Google compte les quotas **par projet et par modèle**. Avec plusieurs clés (`GEMINI_API_KEYS=k1,k2`), Fuller :
+Google compte les quotas **par projet et par modèle** (requêtes et tokens par minute, requêtes par jour remises à zéro à minuit, heure du Pacifique). Avec plusieurs clés (`GEMINI_API_KEYS=k1,k2`), Fuller se comporte comme Gemini CLI et Codex :
 
-- change de clé sans rien afficher quand une clé n'a plus de quota **pour le modèle en cours** ; cette clé reste utilisée pour les autres modèles ;
-- écarte 24 h une clé refusée (projet bloqué, clé invalide ou expirée) ;
-- passe au modèle suivant de la chaîne (Gemini 3.8, 3.7, 3.6, 3.5 Flash, 3.5 Flash-Lite, puis Gemma 4 31B et 26B) quand plus aucune clé n'a de quota pour le modèle en cours, ou quand il reste saturé (503) ;
-- saute les modèles dont la fenêtre ne peut pas contenir la conversation, et compacte la conversation avant qu'elle ne dépasse le plus petit modèle de la chaîne : un repli ne commence jamais par une requête impossible, et chaque requête coûte moins de quota ;
-- revient à ton modèle au message suivant dès qu'il est de nouveau disponible.
-
-La conversation est conservée à chaque changement : l'historique complet est renvoyé à la nouvelle clé ou au nouveau modèle (l'API Gemini ne garde rien côté serveur). `/status` indique le modèle en cours et s'il s'agit d'un repli ; `/config` → « Model fallback » ou `--fallback-model off` désactive les changements de modèle ; `fuller --check-keys` teste chaque clé.
+- **Tant que ça passe, rien ne s'affiche.** Quand une clé n'a plus de quota pour le modèle en cours, Fuller continue sur une autre clé, sans message. Cette clé sert toujours aux autres modèles. Une clé refusée (projet bloqué, clé invalide) est écartée 24 h.
+- **Limite par minute sur toutes les clés** : Fuller attend que la première clé revienne (« Rate limit reached · continuing in 34s ») et continue sur le même modèle.
+- **Quota journalier épuisé sur toutes les clés** : une fenêtre l'annonce, avec la barre d'usage et l'heure de réinitialisation, et propose de passer au modèle suivant (« Switch to Gemini 3.8 Flash », « …and don't ask again », « Stop »). La conversation est gardée entière ; au message suivant, Fuller revient à ton modèle dès qu'il est de nouveau disponible.
+- **Réglage** `/config` → *Model fallback* : `ask` (par défaut, la fenêtre), `auto` (bascule sans demander, avec un avis), `off` (message « Usage limit reached… », jamais de changement de modèle). En mode `-p`, Fuller ne bascule que si `--fallback-model` est donné.
+- **Une seule barre par modèle** : le pied de page affiche `quota █████░░░░░ 50% · resets in 3h 12m` dès qu'une clé est épuisée pour ce modèle (en couleur d'alerte à partir de 80 %), et `/status` → *Quota* la même chose. Le pourcentage est la part des clés dont le quota pour ce modèle est épuisé ; Google ne publie pas le quota restant, c'est donc une estimation, exacte quand chaque clé vient d'un projet différent.
+- Les modèles trop petits pour la conversation sont sautés, et la compaction automatique garde la conversation sous le plus petit modèle de la chaîne. `fuller --check-keys` teste chaque clé.
 
 ## Configuration
 

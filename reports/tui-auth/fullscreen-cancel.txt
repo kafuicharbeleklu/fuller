@@ -2,17 +2,17 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-30eavmcp
+  █████╗   /tmp/fuller-auth-_fluhtoy
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Esc interrupts; Esc Esc opens the rewind menu.
 
 
 ! sudo fuller-auth-test cancel                                                                     
 
   ⎿  exit 124
+
+
 
 
 

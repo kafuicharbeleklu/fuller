@@ -31,7 +31,8 @@ vi.mock('@google/genai', async (importOriginal) => {
   return { ...real, GoogleGenAI };
 });
 
-import { GeminiAgentSession, adaptHistoryForModel, SKIP_SIGNATURE } from '../src/agent/gemini.js';
+import { GeminiAgentSession, adaptHistoryForModel, SKIP_SIGNATURE, QuotaExhaustedError } from '../src/agent/gemini.js';
+import { quotaBar, usageSummary, quotaMessage, formatDuration } from '../src/agent/quotaText.js';
 import { getConfig } from '../src/config.js';
 import { supportedThinkingLevels, defaultThinkingLevel } from '../src/agent/thinking.js';
 import { modelLabel } from '../src/ui/modelLabel.js';
@@ -49,33 +50,87 @@ const session = (settings: Record<string, unknown> = {}) => {
 beforeEach(() => { failing = {}; calls.length = 0; });
 
 describe('quota scheduler in a session', () => {
-  it('changes key silently for the same model, then keeps the model', async () => {
+  it('changes key silently for the same model: no question, no model change', async () => {
     const { s, keys } = session();
     const changed = vi.fn();
+    const ask = vi.fn();
     s.onModelChange = changed;
+    s.onFallbackRequest = ask;
     failing[`${keys[0]}/gemini-3.6-flash`] = 'quota';
     expect((await s.sendUserMessage('hi', {} as any)).text).toBe(`${keys[1]}/gemini-3.6-flash`);
     expect(changed).not.toHaveBeenCalled();
+    expect(ask).not.toHaveBeenCalled();
   });
 
-  it('moves to the next model only when every key is out of quota for this one, and comes back', async () => {
+  it('asks before leaving a model spent on every key (default policy), with one aggregated usage', async () => {
     const { s, keys } = session();
-    const changed = vi.fn();
-    s.onModelChange = changed;
+    const ask = vi.fn(async () => 'switch' as const);
+    s.onFallbackRequest = ask;
     failing['*/gemini-3.6-flash'] = 'quota';
     expect((await s.sendUserMessage('hi', {} as any)).text).toBe(`${keys[1]}/gemini-3.5-flash`);
-    expect(changed).toHaveBeenCalledWith('gemini-3.6-flash', 'gemini-3.5-flash', 'quota');
+    expect(ask).toHaveBeenCalledOnce();
+    const request = ask.mock.calls[0][0] as any;
+    expect(request).toMatchObject({ from: 'gemini-3.6-flash', to: 'gemini-3.5-flash', reason: 'quota' });
+    expect(request.usage).toMatchObject({ keys: 2, exhausted: 2, usedFraction: 1 });
     expect(s.preferred).toBe('gemini-3.6-flash');
   });
 
-  it('comes back to the preferred model at the next message once its quota is back', async () => {
+  it('stops with a clear error when the user says stop, or when nobody can be asked', async () => {
     const { s } = session();
+    s.onFallbackRequest = async () => 'stop';
+    failing['*/gemini-3.6-flash'] = 'quota';
+    await expect(s.sendUserMessage('hi', {} as any)).rejects.toThrow(QuotaExhaustedError);
+    const headless = session().s;
+    await expect(headless.sendUserMessage('hi', {} as any)).rejects.toMatchObject({ name: 'QuotaExhaustedError', model: 'gemini-3.6-flash', reason: 'quota' });
+  });
+
+  it('"don\'t ask again" turns the automatic fallback on; auto never asks', async () => {
+    const { s } = session();
+    const policy = vi.fn();
+    s.onFallbackRequest = async () => 'always';
+    s.onFallbackPolicyChange = policy;
+    failing['*/gemini-3.6-flash'] = 'quota';
+    expect((await s.sendUserMessage('hi', {} as any)).text).toMatch(/gemini-3\.5-flash$/);
+    expect(policy).toHaveBeenCalledWith('auto');
+
+    const auto = session({ modelFallback: 'auto' }).s;
+    const ask = vi.fn();
+    auto.onFallbackRequest = ask;
+    expect((await auto.sendUserMessage('hi', {} as any)).text).toMatch(/gemini-3\.5-flash$/);
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it('off never switches models, even with a dialog available', async () => {
+    const { s } = session({ modelFallback: 'off' });
+    const ask = vi.fn();
+    s.onFallbackRequest = ask;
+    failing['*/gemini-3.6-flash'] = 'quota';
+    await expect(s.sendUserMessage('hi', {} as any)).rejects.toThrow(QuotaExhaustedError);
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it('waits out per-minute limits on every key instead of asking, then continues on the same model', async () => {
+    const { s } = session();
+    const ask = vi.fn();
+    const waits: Array<number | null> = [];
+    s.onFallbackRequest = ask;
+    s.onQuotaWait = (ms) => waits.push(ms);
+    failing['*/gemini-3.6-flash'] = 'rpm';
+    setTimeout(() => { failing = {}; }, 1500);
+    expect((await s.sendUserMessage('hi', {} as any)).text).toMatch(/gemini-3\.6-flash$/);
+    expect(ask).not.toHaveBeenCalled();
+    expect(waits[0]).toBeGreaterThan(0);
+    expect(waits.at(-1)).toBeNull();
+  }, 20_000);
+
+  it('comes back to the preferred model at the next message once its quota is back', async () => {
+    const { s } = session({ modelFallback: 'auto' });
     const changed = vi.fn();
     s.onModelChange = changed;
-    failing['*/gemini-3.6-flash'] = 'rpm';
+    failing['*/gemini-3.6-flash'] = 'quota';
     expect((await s.sendUserMessage('hi', {} as any)).text).toMatch(/gemini-3\.5-flash$/);
     failing = {};
-    vi.setSystemTime(Date.now() + 10_000);
+    vi.setSystemTime(Date.now() + 25 * 3600_000); // past the daily reset
     try {
       expect((await s.sendUserMessage('again', {} as any)).text).toMatch(/gemini-3\.6-flash$/);
       expect(changed).toHaveBeenLastCalledWith('gemini-3.5-flash', 'gemini-3.6-flash', 'back');
@@ -84,22 +139,24 @@ describe('quota scheduler in a session', () => {
     }
   });
 
-  it('moves on after 3 overloaded answers', async () => {
+  it('asks after 3 overloaded answers, and "keep trying" stays on the model', async () => {
     const { s } = session();
-    const changed = vi.fn();
-    s.onModelChange = changed;
+    const ask = vi.fn(async () => 'switch' as const);
+    s.onFallbackRequest = ask;
     failing['*/gemini-3.6-flash'] = 'overloaded';
     expect((await s.sendUserMessage('hi', {} as any)).text).toMatch(/gemini-3\.5-flash$/);
-    expect(changed).toHaveBeenCalledWith('gemini-3.6-flash', 'gemini-3.5-flash', 'overloaded');
+    expect(ask.mock.calls[0][0]).toMatchObject({ reason: 'overloaded', to: 'gemini-3.5-flash' });
   }, 30_000);
+});
 
-  it('stays on one model when the fallback is off', () => {
-    const { s } = session({ fallbackModels: 'off' });
-    const quota = Object.assign(new Error('Quota exceeded'), { status: 429 });
-    const recover = (s as any).makeRecover();
-    expect(recover(quota)).toBe(true); // second key
-    expect(recover(quota)).toBe(false); // no other key, no other model
-    expect(s.model).toBe('gemini-3.6-flash');
+describe('quota texts', () => {
+  it('writes one bar and a reset time, never the keys', () => {
+    const usage = { model: 'gemini-3.6-flash', keys: 10, exhausted: 9, refused: 2, usedFraction: 0.9, resetsAt: Date.now() + 3 * 3600_000 + 4 * 60_000, overloaded: false };
+    expect(quotaBar(0.9, 10)).toBe('█████████░');
+    expect(usageSummary(usage)).toMatch(/^90% used · resets in 3h 0[34]m · 2 keys refused$/);
+    const err = new QuotaExhaustedError('gemini-3.6-flash', 'quota', usage);
+    expect(quotaMessage(err)).toMatch(/^Usage limit reached for Gemini 3\.6 Flash\. Access resets in 3h 0[34]m\.\n\/model to switch models · \/status for usage\.$/);
+    expect(formatDuration(45_000)).toBe('45s');
   });
 });
 

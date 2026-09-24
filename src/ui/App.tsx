@@ -16,6 +16,8 @@ import { ThemePicker, themeLabel } from './ThemePicker.js';
 import { knownContextWindow } from '../agent/models.js';
 import { SessionPicker } from './SessionPicker.js';
 import { AgentsView } from './AgentsView.js';
+import { QuotaDialog } from './QuotaDialog.js';
+import type { ModelUsage } from '../agent/keyPool.js';
 import { loadCommandUsage, recordCommandUsage, type CommandUsage } from '../session/commandUsage.js';
 import { HelpDialog, SettingsDialog, ListDialog, InputDialog } from './InfoDialogs.js';
 import { PermissionsDialog } from './PermissionsDialog.js';
@@ -44,7 +46,7 @@ import { getPromptSuggestion } from './suggestions.js';
 import { modelLabel } from './modelLabel.js';
 import type { SkillDefinition } from '../skills/loader.js';
 import type { ImageAttachment } from '../utils/imageClipboard.js';
-import { AgentLoop, type AgentCallbacks } from '../agent/loop.js';
+import { AgentLoop, type AgentCallbacks, type ModelSwitchRequest } from '../agent/loop.js';
 import { loadProjectContext } from '../agent/contextLoader.js';
 import { messagesToTranscript } from '../agent/transcript.js';
 import { getGitInfo, type GitInfo } from '../utils/git.js';
@@ -102,6 +104,10 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [status, setStatus] = useState<AgentStatus>('idle');
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null);
+  // The model has no key left and the policy is ask: the quota dialog.
+  const [modelSwitch, setModelSwitch] = useState<ModelSwitchRequest | null>(null);
+  // One bar for the model in use, summed over every key.
+  const [quota, setQuota] = useState<ModelUsage | null>(null);
   const [mode, setMode] = useState<PermissionMode>(config.permissionMode);
   const [usage, setUsage] = useState<UsageInfo>({ promptTokens: 0, responseTokens: 0, cumulativeTokens: 0, contextWindow: config.contextWindow, apiCalls: 0, turns: 0 });
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -233,7 +239,9 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       onTranscriptReset: (next) => { setItems([{ key: 'banner', kind: 'banner' }, ...next]); redraw(!fullscreen); },
       onLive: setLive,
       onRequestConfirmation: setConfirmation,
-      onUsage: setUsage,
+      onRequestModelSwitch: setModelSwitch,
+      onQuotaChange: setQuota,
+      onUsage: (u) => { setUsage(u); setQuota(agentRef.current?.quotaUsage() ?? null); },
       onNotice: setNotice,
       onQueueChange: setQueue,
       onModeChange: setMode,
@@ -517,7 +525,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   // The effort shown in dialog rules, as Claude Code does ("◐ medium · /effort").
   const effortLevel = effectiveThinkingLevel(model, thinking);
   const effortLabel = effortLevel ? `${EFFORT_GLYPHS[effortLevel] ?? '◐'} ${effortLevel} · /effort` : undefined;
-  const modalOpen = confirmation !== null || rewindOpen || modelPickerOpen || themePickerOpen || resumeOpen || infoDialog !== null || viewer !== null || agentsOpen || agentReport !== null;
+  const modalOpen = confirmation !== null || modelSwitch !== null || rewindOpen || modelPickerOpen || themePickerOpen || resumeOpen || infoDialog !== null || viewer !== null || agentsOpen || agentReport !== null;
   const pickerOpen = modelPickerOpen || themePickerOpen || rewindOpen || resumeOpen || infoDialog !== null;
   const pickerTranscriptHeight = rows < 14 ? 0 : Math.max(2, rows - 18);
   const transcriptHeight = pickerOpen ? pickerTranscriptHeight : confirmation ? Math.max(2, rows - (rows < 20 ? 14 : 17)) : Math.max(4, rows - 9 - (showHelp ? SHORTCUTS_HELP_EXTRA_ROWS : 0) - (inputState.menuOpen ? SUGGESTION_LINES - 1 : 0));
@@ -617,6 +625,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
         {showTodos && todos.length > 0 && todos.some((t) => t.status !== 'completed') && !confirmation && !pickerOpen ? (
           <TodoPanel todos={todos} frame={frame} maxItems={Math.max(3, Math.min(6, rows - 18))} />
         ) : null}
+        {modelSwitch && !confirmation ? <QuotaDialog request={modelSwitch} /> : null}
         {confirmation ? <PermissionPrompt key={confirmation.toolCall.id} confirmation={confirmation} verbose={verbose} maxDiffLines={Math.max(8, rows - 14)} /> : null}
         {modelPickerOpen && !confirmation ? (
           <ModelPicker
@@ -773,6 +782,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             statusLine={statusLine}
             statusLinePadding={config.settings.statusLine?.padding}
             backgroundTasks={backgroundRunning}
+            quota={quota}
           />}
         </Box>
         </Box>

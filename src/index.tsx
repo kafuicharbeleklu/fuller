@@ -62,6 +62,8 @@ program
       // --fallback-model off | model | model1,model2 (tried in this order).
       const value = String(options.fallbackModel).trim();
       config.settings.fallbackModels = value === 'off' ? 'off' : value.split(',').map((m) => m.trim()).filter(Boolean);
+      // As Claude Code's --fallback-model: an explicit fallback switches without asking.
+      if (value !== 'off') config.settings.modelFallback = 'auto';
     }
     if (options.allowedTools?.length) {
       config.settings.permissions = {

@@ -35,6 +35,8 @@ export interface Settings {
   autoCompactThreshold?: number;
   /** Auto mode: the user's rules and disabled built-in groups. */
   autoMode?: AutoModeSettings;
+  /** When the model has no key left: ask (default) before moving to the next model, switch automatically, or stop. */
+  modelFallback?: 'ask' | 'auto' | 'off';
   /** Models tried in turn when the current one is out of quota on every key or overloaded ('off': never switch). */
   fallbackModels?: string[] | 'off';
   /** Older single fallback (still read): one model, or 'off'. */

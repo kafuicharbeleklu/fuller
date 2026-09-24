@@ -10,6 +10,7 @@ import { executeBash } from '../tools/bash.js';
 import { listAllSessions, listSessions, formatRelative, sessionsDir, type SessionMeta } from '../session/store.js';
 import { loadPromptTimestamps } from '../session/history.js';
 import { loadMemories, memoryFile } from '../agent/autoMemory.js';
+import { quotaBar, usageSummary } from '../agent/quotaText.js';
 import { getThemeNames, type Theme } from './theme.js';
 import { APP_NAME, APP_VERSION, MEMORY_FILE, CONFIG_DIR_NAME } from '../branding.js';
 import type { CommandEntry, ConfigItem, InfoRow, ListItem, SettingsTab } from './InfoDialogs.js';
@@ -166,13 +167,14 @@ function configItems(ctx: CommandContext): ConfigItem[] {
       onChange: (value) => { ctx.config.settings.replyAfterShell = value === 'true'; saveUserSetting(['replyAfterShell'], value === 'true'); },
     },
     {
-      // Claude Code's --fallback-model, as a chain: every free model in turn, or none.
-      label: 'Model fallback', value: ctx.config.settings.fallbackModels === 'off' || ctx.config.settings.fallbackModel === 'off' ? 'off' : 'chain', options: ['chain', 'off'],
-      description: 'When a model is out of quota on every key or overloaded, the next one is used',
+      // When the model has no key left: ask (Gemini CLI's quota dialog), switch automatically, or stop.
+      label: 'Model fallback', value: ctx.config.settings.fallbackModels === 'off' || ctx.config.settings.fallbackModel === 'off' ? 'off' : ctx.config.settings.modelFallback ?? 'ask', options: ['ask', 'auto', 'off'],
+      description: 'When the model is out of quota on every key: ask before switching, switch automatically, or stop',
       onChange: (value) => {
-        ctx.config.settings.fallbackModels = value === 'off' ? 'off' : undefined;
-        if (value !== 'off' && ctx.config.settings.fallbackModel === 'off') ctx.config.settings.fallbackModel = undefined;
-        saveUserSetting(['fallbackModels'], value === 'off' ? 'off' : null);
+        ctx.config.settings.modelFallback = value as 'ask' | 'auto' | 'off';
+        if (ctx.config.settings.fallbackModels === 'off') ctx.config.settings.fallbackModels = undefined;
+        if (ctx.config.settings.fallbackModel === 'off') ctx.config.settings.fallbackModel = undefined;
+        saveUserSetting(['modelFallback'], value);
       },
     },
     {
@@ -219,7 +221,8 @@ function settingsRows(ctx: CommandContext): { status: InfoRow[]; usage: InfoRow[
       { label: 'Session ID', value: ctx.agent.sessionId },
       { label: 'cwd', value: `${ctx.config.workspaceDir}${ctx.config.additionalDirectories.length ? ` (+ ${ctx.config.additionalDirectories.join(', ')})` : ''}` },
       { label: 'Model', value: `${modelLabel(ctx.config.model)} (${contextLabel(ctx.config.contextWindow)})${ctx.agent.preferredModel && ctx.agent.preferredModel !== ctx.config.model ? ` · fallback for ${modelLabel(ctx.agent.preferredModel)}` : ''}` },
-      ...(ctx.agent.apiKeyStatus.total > 1 ? [{ label: 'API keys', value: `${ctx.agent.apiKeyStatus.total} · using key ${ctx.agent.apiKeyStatus.position}` }] : []),
+      // One bar for the model in use, summed over every key (keys themselves are never listed).
+      { label: 'Quota', value: `${quotaBar(ctx.agent.quotaUsage().usedFraction)} ${usageSummary(ctx.agent.quotaUsage())}` },
       { label: 'Git', value: ctx.gitInfo?.isGit ? `${ctx.gitInfo.branch}${ctx.gitInfo.isDirty ? ' (dirty)' : ' (clean)'}` : undefined, placeholder: 'not a git repository' },
       { label: 'Permission mode', value: `${ctx.config.permissionMode} · ${allow.length} allow · ${deny.length} deny rules` },
       { label: 'Theme', value: ctx.theme.name },

@@ -4,6 +4,8 @@ import { useTheme } from './theme.js';
 import { effectiveThinkingLevel, type ThinkingLevelSetting } from '../agent/thinking.js';
 import type { AgentStatus, PermissionMode, UsageInfo } from '../agent/types.js';
 import { PLAY, PLAY_GAP, PAUSE, PAUSE_GAP } from './glyphs.js';
+import { quotaBar, formatDuration } from '../agent/quotaText.js';
+import type { ModelUsage } from '../agent/keyPool.js';
 
 interface Props {
   mode: PermissionMode;
@@ -19,6 +21,8 @@ interface Props {
   statusLine?: string | null;
   statusLinePadding?: number;
   backgroundTasks?: number;
+  /** Quota of the model in use over every key; shown once a key is spent. */
+  quota?: ModelUsage | null;
 }
 
 /** Effort glyphs as Claude Code 2.1.281 shows them; minimal (Gemini only) gets a dotted circle. */
@@ -46,8 +50,10 @@ export const PromptHints: React.FC<{ model: string; thinkingLevel?: ThinkingLeve
 
 /** Percent of context left before auto-compact from which the footer shows it. */
 export const CONTEXT_WARNING_LEFT = 20;
+/** From this share of the model's quota spent (over every key), the footer turns to the warning colour. */
+const QUOTA_WARNING = 0.8;
 
-export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThreshold, inputEmpty, bashMode, menuOpen = false, hint, statusLine, statusLinePadding, backgroundTasks = 0 }) => {
+export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThreshold, inputEmpty, bashMode, menuOpen = false, hint, statusLine, statusLinePadding, backgroundTasks = 0, quota }) => {
   const theme = useTheme();
   const busy = status !== 'idle';
 
@@ -70,6 +76,8 @@ export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThresh
   // Claude Code warns from 80 % of the context used, i.e. 20 % left before auto-compact.
   const showContext = usage.promptTokens > 0 && left <= CONTEXT_WARNING_LEFT;
 
+  const showQuota = !!quota && quota.exhausted > 0 && !hint;
+
   if (statusLine !== undefined && statusLine !== null) {
     const lines = statusLine.split('\n').slice(0, 3);
     return (
@@ -87,6 +95,10 @@ export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThresh
         {backgroundTasks > 0 ? <Text color={theme.accent}>⏵ {backgroundTasks} background task{backgroundTasks > 1 ? 's' : ''} (/tasks){showContext ? ' · ' : ''}</Text> : null}
         {showContext ? (
           <Text color={left < 20 ? theme.warning : theme.subtle}>Context left until auto-compact: {left}%</Text>
+        ) : null}
+        {showQuota && quota ? (
+          // One bar for the model over every key (Gemini CLI shows usage from its warning threshold).
+          <Text color={quota.usedFraction >= QUOTA_WARNING ? theme.warning : theme.subtle}>{showContext || backgroundTasks > 0 ? ' · ' : ''}quota {quotaBar(quota.usedFraction, 10)} {Math.round(quota.usedFraction * 100)}%{quota.resetsAt ? ` · resets in ${formatDuration(quota.resetsAt - Date.now())}` : ''}</Text>
         ) : null}
       </Box>
     </Box>

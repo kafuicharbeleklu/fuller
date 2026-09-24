@@ -1,10 +1,12 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-8kp0s3h3
+  █████╗   /tmp/fuller-permission-ata8dsl2
   ██╔══╝ 
   ██║    
   ╚═╝    
+
+  Type / for commands, @ to mention a file, ! to run a shell command.
 
 
 ❯ please ask permission                                                                            
@@ -18,9 +20,7 @@
 
 
 
-
-
-                                                                                   ○ low · /effort
+                                                                               ◌ minimal · /effort
 ───────────────────────────────────────────────────────────────────────────────────────────────────
 ❯  
 ───────────────────────────────────────────────────────────────────────────────────────────────────

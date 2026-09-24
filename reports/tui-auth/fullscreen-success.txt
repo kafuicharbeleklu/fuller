@@ -2,12 +2,12 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-aw084e1p
+  █████╗   /tmp/fuller-auth-okm90ctw
   ██╔══╝ 
   ██║    
   ╚═╝    
 
-  Ctrl+O toggles the detailed transcript with full tool output.
+  Add a FULLER.md at the project root to give Fuller lasting context.
 
 
 ! sudo fuller-auth-test success                                                                    

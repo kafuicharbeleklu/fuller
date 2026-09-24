@@ -1,9 +1,9 @@
 import { GoogleGenAI, ThinkingLevel, type Content, type FunctionDeclaration, type GenerateContentConfig, type Part } from '@google/genai';
 import { getSystemPrompt } from './systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
-import { schedulerFor, isDeadKeyError, isQuotaError, isOverloadError, type QuotaScheduler } from './keyPool.js';
+import { schedulerFor, isDeadKeyError, isQuotaError, isOverloadError, type QuotaScheduler, type Route, type ModelUsage } from './keyPool.js';
 import { modelChain, contextWindowOf } from './models.js';
-import { withRetry, type RetryInfo } from './retry.js';
+import { withRetry, sleep, type RetryInfo } from './retry.js';
 import type { AppConfig } from '../config.js';
 import type { SkillDefinition } from '../skills/loader.js';
 import type { SubagentDefinition } from './subagents.js';
@@ -59,7 +59,13 @@ export class GeminiAgentSession {
    * ('quota', 'overloaded', 'unusable', 'context'), or a new message brought it back ('back').
    * Key changes are silent.
    */
-  public onModelChange?: (from: string, to: string, reason: 'quota' | 'overloaded' | 'unusable' | 'context' | 'back') => void;
+  public onModelChange?: (from: string, to: string, reason: ModelChangeReason) => void;
+  /** Policy 'ask': the user decides whether to move to the next model (Gemini CLI's quota dialog). */
+  public onFallbackRequest?: (request: FallbackRequest) => Promise<FallbackChoice>;
+  /** Every key of the model is at its per-minute limit: waiting ms before the first comes back (null: done). */
+  public onQuotaWait?: (ms: number | null) => void;
+  /** "Always switch" chosen in the dialog: the policy becomes auto. */
+  public onFallbackPolicyChange?: (policy: FallbackPolicy) => void;
   private readonly scheduler: QuotaScheduler;
   private keyInUse: string;
   private keyIndexInUse = 0;
@@ -85,6 +91,11 @@ export class GeminiAgentSession {
     return { position: this.keyIndexInUse + 1, total: this.scheduler.size };
   }
 
+  /** Usage of the model in use across every key. */
+  public quotaUsage(): ModelUsage {
+    return this.scheduler.usage(this.config.model);
+  }
+
   /** The model the user chose (the current one may be a fallback). */
   public get preferred(): string { return this.preferredModel; }
 
@@ -108,17 +119,10 @@ export class GeminiAgentSession {
     return Math.min(...this.chain().map((m) => contextWindowOf(m)));
   }
 
-  /**
-   * Choose the (key, model) for the next request. At the start of a user turn the chain is
-   * read from the preferred model (automatic return); inside a turn the current pair is kept
-   * while usable (no needless switch, cache kept). Returns false when nothing is available.
-   */
-  private route(fromPreferred: boolean, reason: 'quota' | 'overloaded' | 'unusable' | 'context' = 'quota'): boolean {
+  /** Change key and/or model; the history follows (adapted to the model family). */
+  private applyRoute(next: Route, reason: ModelChangeReason): void {
     const model = this.config.model;
-    if (!fromPreferred && this.scheduler.usable(this.keyIndexInUse, model) && this.scheduler.modelAvailable(model) && this.fits(model)) return true;
-    const next = this.scheduler.pick(this.chain(), (m) => this.fits(m));
-    if (!next) return false;
-    if (next.key === this.keyInUse && next.model === model) return true;
+    if (next.key === this.keyInUse && next.model === model) return;
     const history = this.getHistory();
     if (next.key !== this.keyInUse) {
       this.keyInUse = next.key;
@@ -128,29 +132,83 @@ export class GeminiAgentSession {
     if (next.model !== model) {
       this.config.model = next.model;
       this.initChat(adaptHistoryForModel(history, next.model));
-      this.onModelChange?.(model, next.model, next.model === this.preferredModel ? 'back' : !this.fits(model) ? 'context' : reason);
+      this.onModelChange?.(model, next.model, next.model === this.preferredModel ? 'back' : reason);
     } else {
       this.initChat(history);
     }
-    return true;
+  }
+
+  /** ask (default), auto or off: what to do when the model has no key left. */
+  private fallbackPolicy(): FallbackPolicy {
+    const s = this.config.settings;
+    if (s.fallbackModels === 'off' || s.fallbackModel === 'off') return 'off';
+    return s.modelFallback ?? 'ask';
+  }
+
+  /**
+   * Before a request: stay on a usable key of the current model (key changes are silent).
+   * A new user message first tries the preferred model again (automatic return). When the
+   * model has no usable key left, the fallback policy decides.
+   */
+  private async ensureRoute(userTurn: boolean): Promise<void> {
+    const candidates = userTurn ? [...new Set([this.preferredModel, this.config.model])] : [this.config.model];
+    const keep = this.scheduler.pick(candidates, (m) => this.fits(m));
+    if (keep) { this.applyRoute(keep, 'quota'); return; }
+    await this.leaveModel(this.fits(this.config.model) ? 'quota' : 'context');
+  }
+
+  /**
+   * The current model cannot serve the request (every key spent, overloaded, or too small).
+   * Offer the next model of the chain according to the policy, or stop with a clear message.
+   */
+  private async leaveModel(reason: 'quota' | 'overloaded' | 'context'): Promise<boolean> {
+    const from = this.config.model;
+    const usage = this.scheduler.usage(from);
+    const next = this.scheduler.pick(this.chain().filter((m) => m !== from), (m) => this.fits(m));
+    const policy = this.fallbackPolicy();
+    let choice: FallbackChoice = 'stop';
+    if (next && policy === 'auto') choice = 'switch';
+    else if (next && policy === 'ask' && this.onFallbackRequest) {
+      choice = await this.onFallbackRequest({ from, to: next.model, reason, usage });
+    } else if (reason === 'overloaded' && policy !== 'off' && this.onFallbackRequest) {
+      choice = await this.onFallbackRequest({ from, to: undefined, reason, usage });
+    }
+    if (choice === 'retry') { this.scheduler.clearOverloaded(from); return false; }
+    if ((choice === 'switch' || choice === 'always') && next) {
+      if (choice === 'always') this.onFallbackPolicyChange?.('auto');
+      this.applyRoute(next, reason);
+      return true;
+    }
+    throw new QuotaExhaustedError(from, reason, usage);
   }
 
   /**
    * withRetry's recover hook for one request: a quota error rests the (key, model) pair, a
-   * refused key rests the key, a model that stays overloaded rests for a while; then the next
-   * route is taken at once. False (plain retry with backoff) when nothing else is available.
+   * refused key rests the key, a model that stays overloaded rests for a while; another key of
+   * the same model is taken silently, else the fallback policy decides.
    */
-  private makeRecover(): (err: any) => boolean {
+  private makeRecover(signal?: AbortSignal): (err: any) => Promise<boolean> {
     let overloaded = 0;
-    return (err: any): boolean => {
-      if (isDeadKeyError(err)) { this.scheduler.markDead(this.keyIndexInUse, err); return this.route(false, 'unusable'); }
-      if (isQuotaError(err)) { this.scheduler.markQuota(this.keyIndexInUse, this.config.model, err); return this.route(false, 'quota'); }
-      if (isOverloadError(err) && ++overloaded >= OVERLOAD_RETRIES) {
-        this.scheduler.markOverloaded(this.config.model);
-        overloaded = 0;
-        return this.route(false, 'overloaded');
+    return async (err: any): Promise<boolean> => {
+      let reason: 'quota' | 'overloaded';
+      if (isDeadKeyError(err)) { this.scheduler.markDead(this.keyIndexInUse, err); reason = 'quota'; }
+      else if (isQuotaError(err)) { this.scheduler.markQuota(this.keyIndexInUse, this.config.model, err); reason = 'quota'; }
+      else if (isOverloadError(err) && ++overloaded >= OVERLOAD_RETRIES) { this.scheduler.markOverloaded(this.config.model); overloaded = 0; reason = 'overloaded'; }
+      else return false;
+      const same = reason === 'quota' ? this.scheduler.pick([this.config.model], (m) => this.fits(m)) : null;
+      if (same) { this.applyRoute(same, 'quota'); return true; }
+      // Every key is only at its per-minute limit: wait for the first one to come back rather
+      // than asking (Gemini CLI and Codex wait too; the dialog is for a spent daily quota).
+      const usage = this.scheduler.usage(this.config.model);
+      const wait = usage.resetsAt ? usage.resetsAt - Date.now() : Infinity;
+      if (reason === 'quota' && wait <= SHORT_WAIT_MS) {
+        this.onQuotaWait?.(Math.max(0, wait));
+        await sleep(Math.max(1000, wait), signal);
+        this.onQuotaWait?.(null);
+        const back = this.scheduler.pick([this.config.model], (m) => this.fits(m));
+        if (back) { this.applyRoute(back, 'quota'); return true; }
       }
-      return false;
+      return this.leaveModel(reason);
     };
   }
 
@@ -287,7 +345,7 @@ export class GeminiAgentSession {
     if (signal?.aborted) throw new Error('Interrupted');
     // A new user message tries the preferred model first; tool results stay on the current route.
     const userTurn = typeof message === 'string' || !message.some((p) => p.functionResponse);
-    this.route(userTurn);
+    await this.ensureRoute(userTurn);
     let delivered = false;
 
     return withRetry(
@@ -332,7 +390,7 @@ export class GeminiAgentSession {
       {
         signal,
         // A partly streamed answer is not resent on another key (the text would repeat).
-        recover: ((recover) => (err: any) => !delivered && recover(err))(this.makeRecover()),
+        recover: ((recover) => async (err: any) => !delivered && recover(err))(this.makeRecover(signal)),
         onAttempt: options.onAttempt,
         onRetry: (info) => {
           if (delivered) throw info.error;
@@ -355,21 +413,21 @@ Conversation:
 ${historyText}`;
     const res = await withRetry(
       () => this.ai.models.generateContent({ model: this.config.model, contents: prompt, config: { abortSignal: signal, temperature: 0.1 } }),
-      { signal, recover: this.makeRecover() }
+      { signal, recover: this.makeRecover(signal) }
     );
     return res.text || 'Context compacted.';
   }
 
   /** A question answered once, outside the conversation; `withHistory` gives it the session's context (/btw). */
   public async oneShot(question: string, onChunk?: (t: string) => void, signal?: AbortSignal, withHistory = false, lowThinking = false): Promise<string> {
-    this.route(false);
+    await this.ensureRoute(false);
     const contents = withHistory ? [...sanitizeHistory(this.getHistory()), { role: 'user', parts: [{ text: question }] }] : question;
     // Quick decisions (the auto mode classifier) use the model's lightest thinking level.
     const lowest = lowThinking ? supportedThinkingLevels(this.config.model)[0] : undefined;
     const thinking = lowest ? { thinkingConfig: { thinkingLevel: ThinkingLevel[lowest.toUpperCase() as keyof typeof ThinkingLevel] } } : {};
     const stream = await withRetry(
       () => this.ai.models.generateContentStream({ model: this.config.model, contents, config: { abortSignal: signal, ...thinking } }),
-      { signal, recover: this.makeRecover() }
+      { signal, recover: this.makeRecover(signal) }
     );
     let full = '';
     for await (const chunk of stream) {
@@ -387,6 +445,30 @@ ${historyText}`;
 }
 
 /** Gemma 4 (26B A4B): fast, calls tools well, served by the same API — the default fallback. */
+export type FallbackPolicy = 'ask' | 'auto' | 'off';
+/** switch: this time · always: and from now on (policy auto) · retry: keep trying (overload) · stop. */
+export type FallbackChoice = 'switch' | 'always' | 'retry' | 'stop';
+export type ModelChangeReason = 'quota' | 'overloaded' | 'context' | 'back';
+
+export interface FallbackRequest {
+  from: string;
+  /** The next model of the chain with a usable key, if any. */
+  to?: string;
+  reason: 'quota' | 'overloaded' | 'context';
+  usage: ModelUsage;
+}
+
+/** The model cannot be used now and no fallback was accepted: a clear message, not a retry. */
+export class QuotaExhaustedError extends Error {
+  constructor(readonly model: string, readonly reason: 'quota' | 'overloaded' | 'context', readonly usage: ModelUsage) {
+    super(reason === 'overloaded' ? 'overloaded' : reason === 'context' ? 'conversation too long' : 'quota exhausted');
+    this.name = 'QuotaExhaustedError';
+  }
+}
+
+/** A model whose keys all come back within this delay (per-minute limits) is waited for, not left. */
+const SHORT_WAIT_MS = 5 * 60_000;
+
 /** Overloaded (503) attempts on one request before the model rests and the next of the chain is used. */
 const OVERLOAD_RETRIES = 3;
 

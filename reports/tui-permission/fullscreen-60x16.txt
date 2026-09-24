@@ -1,5 +1,5 @@
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-0sbwfw72
+  █████╗   /tmp/fuller-permission-3abnrxpr
   ██╔══╝ 
   ██║    
   ╚═╝    
@@ -8,7 +8,7 @@
 ❯ please ask permission                                    
 
   Ran 1 shell command
-                                           ○ low · /effort
+                                       ◌ minimal · /effort
 ───────────────────────────────────────────────────────────
 ❯  
 ───────────────────────────────────────────────────────────

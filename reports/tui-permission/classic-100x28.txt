@@ -1,19 +1,17 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-bbp3ilge
+  █████╗   /tmp/fuller-permission-llfezohc
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Ctrl+O toggles the detailed transcript with full tool output.
 
 
 ❯ please ask permission                                                                            
 
 ● Bash(sudo ip link set tun0 down && sudo ip link set tun1 down)
   ⎿  SIMULATED_RESULT_UNIQUE
-                                                                                   ○ low · /effort
+                                                                               ◌ minimal · /effort
 ───────────────────────────────────────────────────────────────────────────────────────────────────
 ❯  
 ───────────────────────────────────────────────────────────────────────────────────────────────────
