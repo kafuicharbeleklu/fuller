@@ -50,7 +50,31 @@ describe('evaluatePermission', () => {
     expect(ev.decision).toBe('ask');
     expect(ev.danger).toBeTruthy();
     expect(ev.options.map((option) => option.value)).toEqual(['yes', 'no']);
-    expect(evaluatePermission('execute_bash', { command: 'sudo ip link set tun0 down && sudo ip link set tun1 down' }, cwd, 'default', {}).options.map((option) => option.value)).toEqual(['yes', 'no']);
+    expect(evaluatePermission('execute_bash', { command: 'sudo rm -rf /var/lib/app' }, cwd, 'default', {}).options.map((option) => option.value)).toEqual(['yes', 'no']);
+  });
+  it('asks for sudo like Claude Code: an approval note and the exact command to remember', () => {
+    const command = 'sudo ip link set tun0 down && sudo ip link set tun1 down';
+    const ev = evaluatePermission('execute_bash', { command }, cwd, 'default', {});
+    expect(ev.decision).toBe('ask');
+    expect(ev.danger).toBeUndefined();
+    expect(ev.note).toBe('This command requires approval');
+    expect(ev.options).toEqual([
+      { value: 'yes', label: 'Yes' },
+      { value: 'always', label: `Yes, and don’t ask again for: ${command}`, rule: `Bash(${command})` },
+      { value: 'no', label: 'No' },
+    ]);
+    // The remembered rule covers that command word for word, not other sudo commands.
+    const settings = { permissions: { allow: [`Bash(${command})`, 'Bash(sudo:*)'] } };
+    expect(evaluatePermission('execute_bash', { command }, cwd, 'default', settings).decision).toBe('allow');
+    expect(evaluatePermission('execute_bash', { command: 'sudo ip link set tun2 down' }, cwd, 'default', settings).decision).toBe('ask');
+  });
+  it('keeps the danger warning when what sudo runs is itself destructive', () => {
+    for (const command of ['sudo rm -rf /var/lib/app', 'sudo -u root dd if=/dev/zero of=/dev/sda', 'sudo true && shutdown now']) {
+      const ev = evaluatePermission('execute_bash', { command }, cwd, 'default', { permissions: { allow: [`Bash(${command})`] } });
+      expect(ev.decision).toBe('ask');
+      expect(ev.danger).toBeTruthy();
+      expect(ev.note).toBeUndefined();
+    }
   });
   it('acceptEdits auto-accepts fs edits inside the project but not test runs', () => {
     expect(evaluatePermission('execute_bash', { command: 'mkdir src/x' }, cwd, 'acceptEdits', {}).decision).toBe('allow');

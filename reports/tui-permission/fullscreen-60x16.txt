@@ -1,5 +1,5 @@
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-c6mao2t5
+  █████╗   /tmp/fuller-permission-e8hkox85
   ██╔══╝ 
   ██║    
   ╚═╝    

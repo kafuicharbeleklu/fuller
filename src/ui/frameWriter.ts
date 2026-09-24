@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import stringWidth from 'string-width';
 import stripAnsi from 'strip-ansi';
+import type { TerminalAuth } from '../tools/nativeTerminal.js';
 
 const DEBUG_FILE = process.env.FULLER_DEBUG_FRAMES;
 function debug(line: string) {
@@ -140,7 +141,7 @@ export function composeRepaint(tail: string[], frame: string[], rows: number, co
 export interface FrameWriter {
   /** Clear the live frame and defer renderer writes while a child owns the TTY. */
   /** Hand the terminal over; `banner` replaces the default authentication line. */
-  suspend: (fullscreen: boolean, banner?: string) => () => void;
+  suspend: (fullscreen: boolean, banner?: string | TerminalAuth) => () => void;
   restore: () => void;
   reset: () => void;
   /** Repaint the visible screen with the transcript tail + the current frame. */
@@ -153,6 +154,36 @@ export interface FrameWriter {
   needsRepaint: () => boolean;
   /** Write transcript text that must not be tracked as a frame. */
   writeStatic: (text: string) => void;
+}
+
+/** Cut `text` to `width` columns. */
+function fit(text: string, width: number): string {
+  if (stringWidth(text) <= width) return text;
+  let out = '';
+  for (const char of text) {
+    if (stringWidth(out + char) > width - 1) break;
+    out += char;
+  }
+  return `${out}…`;
+}
+
+/**
+ * The sudo password box, in the permission dialog's layout. Its last line is left for sudo's own
+ * prompt ("[sudo: authenticate] Password:"): sudo reads the password, Fuller never sees it.
+ */
+export function authPanel(command: string, columns: number): string[] {
+  const width = Math.max(20, columns - 1);
+  const plain = !!process.env.NO_COLOR;
+  const bold = (text: string) => (plain ? text : `\x1b[1m${text}\x1b[22m`);
+  const dim = (text: string) => (plain ? text : `\x1b[2m${text}\x1b[22m`);
+  const first = command.trim().split('\n')[0] + (command.trim().includes('\n') ? ' …' : '');
+  return [
+    dim('─'.repeat(width)),
+    ` ${bold('Password required')}`,
+    `   ${fit(first, width - 4)}`,
+    ` ${dim(fit('sudo reads it directly: Fuller never sees it · Ctrl+C to cancel', width - 2))}`,
+    ' ',
+  ];
 }
 
 export function installFrameWriter(stdout: NodeJS.WriteStream, options: { reflow?: boolean; syncOutput?: boolean } = {}): FrameWriter {
@@ -188,16 +219,30 @@ export function installFrameWriter(stdout: NodeJS.WriteStream, options: { reflow
       if (deferred) throw new Error('The terminal is already in use.');
       const frame = [...state.lastFrame];
       const expectStatic = state.expectStatic;
-      emit(eraseLines(physicalRows(frame, stdout.columns || 80, reflow)));
-      deferred = [];
-      emit('\x1b[?2004l\x1b[?1000l\x1b[?1006l\x1b[?25h' + (fullscreen ? '\x1b[?1049l' : '') + banner);
+      const columns = stdout.columns || 80;
+      const auth = typeof banner === 'object' ? banner.auth : undefined;
+      // A sudo password in fullscreen stays on Fuller's screen: leaving the alternate screen
+      // made Fuller look gone. The box covers the prompt and footer; sudo writes on its last line.
+      const inPlace = auth !== undefined && fullscreen;
+      const modesOff = '\x1b[?2004l\x1b[?1000l\x1b[?1006l';
+      if (inPlace) {
+        const panel = authPanel(auth, columns);
+        deferred = [];
+        emit(`${modesOff}\x1b[${Math.max(1, (stdout.rows || 24) - panel.length + 1)};1H\x1b[J${panel.join('\r\n')}\x1b[?25h`);
+      } else {
+        emit(eraseLines(physicalRows(frame, columns, reflow)));
+        deferred = [];
+        emit(modesOff + '\x1b[?25h' + (fullscreen ? '\x1b[?1049l' : '') + (auth !== undefined ? authPanel(auth, columns).join('\r\n') : banner));
+      }
       let resumed = false;
       return () => {
         if (resumed) return;
         resumed = true;
         const pending = deferred!;
         deferred = null;
-        emit('\r\n' + (fullscreen ? '\x1b[?1049h' : '') + '\x1b[?2004h\x1b[?25l' + (fullscreen && process.env.FULLER_DISABLE_MOUSE !== '1' ? '\x1b[?1000h\x1b[?1006h' : ''));
+        const modesOn = '\x1b[?2004h\x1b[?25l' + (fullscreen && process.env.FULLER_DISABLE_MOUSE !== '1' ? '\x1b[?1000h\x1b[?1006h' : '');
+        // In place: sudo may have scrolled the screen (a failed attempt): redraw it whole.
+        emit(inPlace ? `\x1b[2J\x1b[H${modesOn}` : '\r\n' + (fullscreen ? '\x1b[?1049h' : '') + modesOn);
         state.lastFrame = frame;
         state.expectStatic = expectStatic;
         emit(frame.join('\n'));

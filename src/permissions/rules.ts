@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { PermissionMode, PermissionOption } from '../agent/types.js';
 import type { Settings } from '../config.js';
-import { classifyCommand, splitCommand, suggestPrefix, type RiskLevel } from './bashParser.js';
+import { classifyCommand, parseSegment, splitCommand, suggestPrefix, type RiskLevel } from './bashParser.js';
 
 export interface PermissionRule {
   tool: string;
@@ -104,6 +104,8 @@ export interface Evaluation {
   options: PermissionOption[];
   title: string;
   danger?: string;
+  /** Shown above the question, e.g. "This command requires approval" for a sudo command. */
+  note?: string;
 }
 
 export function toolTarget(name: string, args: Record<string, any>): string {
@@ -153,9 +155,13 @@ export function evaluatePermission(
   const base: Omit<Evaluation, 'decision' | 'options' | 'title'> = { risk, reason, displayName, target };
   const denyRules = (settings.permissions?.deny ?? []).map(parseRule).filter((r): r is PermissionRule => !!r);
   const allowRules = (settings.permissions?.allow ?? []).map(parseRule).filter((r): r is PermissionRule => !!r);
-  const options = buildOptions(name, args, cwd, risk, allowRules);
+  // sudo on a harmless command asks like Claude Code: no danger warning, and the exact command can be remembered.
+  const privileged = name === 'execute_bash' && risk === 'danger' && privilegedCommand(target, cwd);
+  const options = buildOptions(name, args, cwd, risk, allowRules, privileged);
   const title = buildTitle(name, args);
-  const danger = risk === 'danger' ? `Commande dangereuse : ${reason}` : undefined;
+  const danger = risk === 'danger' && !privileged ? `Commande dangereuse : ${reason}` : undefined;
+  const note = privileged ? 'This command requires approval' : undefined;
+  base.note = note;
 
   // Deny rules apply when the whole command or any subcommand matches, as in Claude Code.
   const denied = denyRules.find((r) => ruleMatches(r, ruleTarget) || (name === 'execute_bash' && bashSubcommands(target).some((sub) => ruleMatches(r, { ...ruleTarget, target: sub }))));
@@ -172,7 +178,8 @@ export function evaluatePermission(
   if (askRule) return { ...base, decision: 'ask', matchedRule: askRule.raw, options, title, danger };
 
   const allowed = name === 'execute_bash' ? bashAllowRule(target, cwd, allowRules, ruleTarget) : allowRules.find((r) => ruleMatches(r, ruleTarget));
-  if (allowed && risk !== 'danger') return { ...base, decision: 'allow', matchedRule: allowed.raw, options, title, danger };
+  // A dangerous command is never covered by a rule, except a sudo command remembered word for word.
+  if (allowed && (risk !== 'danger' || (privileged && allowed.spec === target.trim()))) return { ...base, decision: 'allow', matchedRule: allowed.raw, options, title, danger };
 
   if (mode === 'bypassPermissions') return { ...base, decision: 'allow', options, title, danger };
   if (risk === 'read') return { ...base, decision: 'allow', options, title, danger };
@@ -231,7 +238,34 @@ function bashRulePrefixes(command: string, cwd: string, allowRules: PermissionRu
 
 const listNames = (names: string[]) => names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
 
-function buildOptions(name: string, args: Record<string, any>, cwd: string, risk: RiskLevel, allowRules: PermissionRule[]): PermissionOption[] {
+/** Options of sudo (-k, -u user, -E…) before the command it runs. */
+const SUDO_OPTIONS_WITH_VALUE = new Set(['-u', '-g', '-h', '-p', '-C', '-D', '-R', '-T', '-U', '--user', '--group', '--host', '--prompt', '--chdir', '--chroot', '--close-from', '--other-user', '--command-timeout']);
+
+/**
+ * A command that uses sudo to run something that is not itself destructive (`sudo apt update`,
+ * `sudo -k true`). `sudo rm -rf /` or `sudo dd …` stay dangerous.
+ */
+export function privilegedCommand(command: string, cwd: string): boolean {
+  let sudo = false;
+  for (const sub of bashSubcommands(command)) {
+    const segment = parseSegment(sub);
+    if (path.basename(segment.program) !== 'sudo') {
+      if (classifyCommand(sub, cwd).risk === 'danger') return false;
+      continue;
+    }
+    sudo = true;
+    let i = 0;
+    while (i < segment.args.length && segment.args[i].startsWith('-')) {
+      if (segment.args[i] === '--') { i++; break; }
+      i += SUDO_OPTIONS_WITH_VALUE.has(segment.args[i]) ? 2 : 1;
+    }
+    const inner = segment.args.slice(i).join(' ');
+    if (inner && classifyCommand(inner, cwd).risk === 'danger') return false;
+  }
+  return sudo;
+}
+
+function buildOptions(name: string, args: Record<string, any>, cwd: string, risk: RiskLevel, allowRules: PermissionRule[], privileged = false): PermissionOption[] {
   const no: PermissionOption = { value: 'no', label: 'No' };
   switch (name) {
     case 'edit_file':
@@ -243,6 +277,12 @@ function buildOptions(name: string, args: Record<string, any>, cwd: string, risk
       ];
     case 'execute_bash': {
       const command = String(args.command ?? '');
+      if (privileged) {
+        // Claude Code: "Yes, and don’t ask again for: sudo apt update", for that exact command.
+        const exact = command.trim();
+        if (exact.includes('\n')) return [{ value: 'yes', label: 'Yes' }, no];
+        return [{ value: 'yes', label: 'Yes' }, { value: 'always', label: `Yes, and don’t ask again for: ${exact}`, rule: `Bash(${exact})` }, no];
+      }
       // Dangerous commands are never covered by an allow rule, so offering to
       // save one would be misleading. Like Claude Code, a compound command
       // saves one rule per subcommand that needs approval, up to 5; beyond

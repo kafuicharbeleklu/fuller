@@ -1,15 +1,18 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-ltmvowl1
+  █████╗   /tmp/fuller-auth-sert5zq5
   ██╔══╝ 
   ██║    
   ╚═╝    
 
 
 ! sudo fuller-auth-test cancel                                                                     
-Authentication in the terminal · Ctrl+C to cancel
-SIMULATED_PASSWORD: 
+───────────────────────────────────────────────────────────────────────────────────────────────────
+ Password required
+   sudo fuller-auth-test cancel
+ sudo reads it directly: Fuller never sees it · Ctrl+C to cancel
+ SIMULATED_PASSWORD: 
 SIMULATED_WAITING
 ^C
 

@@ -62,3 +62,20 @@ Toujours non vérifié : aucun de ces changements n'a tourné contre l'API réel
 
 Risque vu en passant, non corrigé : `setPermissionMode()` (Maj+Tab) reconstruit la conversation immédiatement, même pendant une réponse en cours. D'après le fonctionnement du SDK (l'échange n'entre dans l'historique qu'à la fin du flux), cela pourrait perdre l'échange en cours. Non reproduit ; à vérifier avant de corriger.
 
+
+## 7. Mise à jour — mot de passe administrateur (sudo)
+
+Signalé par l'utilisateur : « la validation admin bug, puis ouvre une fenêtre, et n'est pas comme Claude Code ». Reproduit avec le vrai `sudo-rs` 0.2.13 d'Ubuntu 26.04 dans un PTY, avec un faux serveur Gemini local (`GOOGLE_GEMINI_BASE_URL`), sans jamais envoyer de mot de passe.
+
+- **Cause** : en plein écran (le mode par défaut), la passation du terminal quittait l'écran alternatif (`ESC[?1049l`). Fuller disparaissait et laissait voir l'ancien contenu du terminal avec « [sudo: authenticate] Password: ». C'est la « fenêtre » décrite par l'utilisateur (confirmé par lui).
+- **Claude Code 2.1.282** (capturé) : même carte de permission avec « This command requires approval » et « Yes, and don’t ask again for: <commande> » ; ensuite il ne demande **pas** de mot de passe, `sudo` échoue (« A terminal is required to authenticate ») et le modèle explique. L'utilisateur a choisi de garder la saisie dans Fuller.
+- **Maintenant** :
+  - Carte de permission comme Claude Code pour `sudo` sur une commande non destructrice. La règle mémorisée ne vaut que pour la commande exacte. `sudo rm -rf`, `sudo dd`… gardent l'avertissement et Oui/Non. Code : `src/permissions/rules.ts` (`privilegedCommand`).
+  - Encadré « Password required » à la place de la zone de saisie. En plein écran, Fuller reste affiché et l'écran est redessiné à la reprise. `sudo` lit toujours le mot de passe lui-même. Code : `src/ui/frameWriter.ts` (`authPanel`, `suspend`).
+  - `pkexec`, `sudo -A` et `--askpass` sont refusés pour l'agent, car ils ouvrent une fenêtre du bureau. Le prompt système demande `sudo` aussi pour `systemctl`, `nmcli`… (fenêtre polkit de GNOME sinon). Code : `src/tools/nativeTerminal.ts` (`desktopAuthentication`).
+- **Vérifications** : 435 tests ; PTY permission 6/6, authentification 10/10 et rejeux 10/10, fumée 11/11 ; vrai `sudo-rs` jusqu'à l'invite, en classique et en plein écran.
+- **Limites** :
+  - En mode classique, l'encadré reste dans l'historique au-dessus du résultat, comme l'ancienne bannière : `sudo` peut ajouter des lignes (« try again ») qu'on ne peut pas compter.
+  - Après Ctrl+C sur un appel de l'agent, le tour entier est interrompu et la ligne `Bash(sudo …)` n'est pas gardée dans la conversation (comportement antérieur).
+  - Claude Code 2.1.282 ajoute aussi, sur toutes ses cartes de permission, une ligne « Tip: auto mode… » et un choix « Yes, and switch to auto mode ». Ce n'est pas repris ici.
+  - Une saisie réussie avec le vrai mot de passe n'a pas été testée (seulement avec un faux `sudo`).

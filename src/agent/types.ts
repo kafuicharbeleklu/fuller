@@ -101,6 +101,8 @@ export interface PendingConfirmation {
   title: string;
   options: PermissionOption[];
   danger?: string;
+  /** A plain line above the question ("This command requires approval"). */
+  note?: string;
   onDecide: (decision: PermissionDecision) => void;
 }
 

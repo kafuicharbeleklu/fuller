@@ -38,7 +38,7 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
   const columns = stdout?.columns ?? 80;
   const compact = height < 20;
   const tiny = height < 16;
-  const { toolCall, title, options, danger, onDecide } = confirmation;
+  const { toolCall, title, options, danger, note, onDecide } = confirmation;
   const [index, setIndex] = useState(0);
   const [amending, setAmending] = useState(false);
   const [comments, setComments] = useState<Record<number, string>>({});
@@ -129,6 +129,7 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
         </>
       )}
       {danger ? <Text color={theme.warning}>⚠ {danger}</Text> : null}
+      {note ? <Text color={theme.text}>{note}</Text> : null}
       <Text color={theme.text}>{toolCall.name === 'execute_bash' ? 'Do you want to proceed?' : fileDiff ? boldFile(title, String(toolCall.args.file_path ?? '')) : title}</Text>
       <Box flexDirection="column">
         {options.map((o, i) => {

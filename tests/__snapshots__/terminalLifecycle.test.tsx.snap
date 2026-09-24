@@ -5,10 +5,12 @@ exports[`terminal lifecycle (screen and scrollback replay) > fits a permission c
  Bash command
    sudo ip link set tun0 down && sudo ip link set tun1
    down
- ⚠ Commande dangereuse : sudo (privilèges / système)
+ This command requires approval
  Do you want to proceed?
  ❯ 1. Yes
-   2. No"
+  2.  Yes, and don’t ask again for: sudo ip link set tun0
+      down && sudo ip link set tun1 down
+   3. No"
 `;
 
 exports[`terminal lifecycle (screen and scrollback replay) > fits a permission card in fullscreen at 60x16 1`] = `
@@ -17,10 +19,12 @@ exports[`terminal lifecycle (screen and scrollback replay) > fits a permission c
    sudo ip link set tun0 down && sudo ip link set tun1
    down
    Bring down VPN tunnel interfaces
- ⚠ Commande dangereuse : sudo (privilèges / système)
+ This command requires approval
  Do you want to proceed?
  ❯ 1. Yes
-   2. No
+  2.  Yes, and don’t ask again for: sudo ip link set tun0
+      down && sudo ip link set tun1 down
+   3. No
  Esc to cancel · Tab to amend"
 `;
 
@@ -31,10 +35,12 @@ exports[`terminal lifecycle (screen and scrollback replay) > fits a permission c
    sudo ip link set tun0 down && sudo ip link set tun1 down
    Bring down VPN tunnel interfaces
 
- ⚠ Commande dangereuse : sudo (privilèges / système)
+ This command requires approval
  Do you want to proceed?
  ❯ 1. Yes
-   2. No
+  2.  Yes, and don’t ask again for: sudo ip link set tun0 down && sudo ip link
+      set tun1 down
+   3. No
 
  Esc to cancel · Tab to amend"
 `;
@@ -43,10 +49,12 @@ exports[`terminal lifecycle (screen and scrollback replay) > removes permission 
 "───────────────────────────────────────────────────────────
  Bash command
    sudo printf RESULT_UNIQUE
- ⚠ Commande dangereuse : sudo (privilèges / système)
+ This command requires approval
  Do you want to proceed?
  ❯ 1. Yes
-   2. No"
+  2.  Yes, and don’t ask again for: sudo printf
+      RESULT_UNIQUE
+   3. No"
 `;
 
 exports[`terminal lifecycle (screen and scrollback replay) > removes permission and retry frames at 60x12 2`] = `
@@ -67,10 +75,12 @@ exports[`terminal lifecycle (screen and scrollback replay) > removes permission 
  Bash command
    sudo printf RESULT_UNIQUE
    Run a simulated privileged command
- ⚠ Commande dangereuse : sudo (privilèges / système)
+ This command requires approval
  Do you want to proceed?
  ❯ 1. Yes
-   2. No
+  2.  Yes, and don’t ask again for: sudo printf
+      RESULT_UNIQUE
+   3. No
  Esc to cancel · Tab to amend"
 `;
 
@@ -94,10 +104,11 @@ exports[`terminal lifecycle (screen and scrollback replay) > removes permission 
    sudo printf RESULT_UNIQUE
    Run a simulated privileged command
 
- ⚠ Commande dangereuse : sudo (privilèges / système)
+ This command requires approval
  Do you want to proceed?
  ❯ 1. Yes
-   2. No
+   2. Yes, and don’t ask again for: sudo printf RESULT_UNIQUE
+   3. No
 
  Esc to cancel · Tab to amend"
 `;
@@ -122,10 +133,11 @@ exports[`terminal lifecycle (screen and scrollback replay) > removes permission 
    sudo printf RESULT_UNIQUE
    Run a simulated privileged command
 
- ⚠ Commande dangereuse : sudo (privilèges / système)
+ This command requires approval
  Do you want to proceed?
  ❯ 1. Yes
-   2. No
+   2. Yes, and don’t ask again for: sudo printf RESULT_UNIQUE
+   3. No
 
  Esc to cancel · Tab to amend"
 `;

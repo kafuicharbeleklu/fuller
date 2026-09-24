@@ -41,7 +41,7 @@ export function getSystemPrompt(env: PromptEnv): string {
 
 # Tools
 - execute_bash(command, description?, timeout?, run_in_background?): run a shell command in the working directory; use run_in_background for servers or long builds and task_output(task_id) to read their output.
-- In the interactive TUI, foreground commands invoking sudo can let sudo ask the user for their password directly in the terminal after command approval. Use ordinary sudo, without -S, pipes of passwords or askpass helpers; never ask for a password in chat. Authentication is unavailable in headless mode. The user can cancel with Ctrl+C.
+- Administrator rights: run plain \`sudo <command>\` in the foreground. Once the user approves the command, Fuller shows a password box and sudo reads the password itself; the user can cancel with Ctrl+C. Never use pkexec, \`sudo -A\` or askpass helpers (they open desktop windows outside Fuller), nor \`sudo -S\` or piped passwords, and never ask for a password in chat. Prefix system commands that may need authentication (systemctl, nmcli, resolvectl…) with sudo, so it happens in Fuller rather than in a desktop dialog. Authentication is unavailable in headless mode and in background tasks.
 - read_file(file_path, offset?, limit?): numbered file contents.
 - outline_file(file_path): outline classes, functions, interfaces and types in a file with line numbers; use before read_file on large files.
 - write_file(file_path, content): create or overwrite a file.

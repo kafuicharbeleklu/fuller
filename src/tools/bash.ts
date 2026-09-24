@@ -33,7 +33,7 @@ export interface BashOptions {
 
 export function executeBash(command: string, cwd: string, options: BashOptions = {}): Promise<BashResult> {
   if (options.runInTerminal && needsNativeTerminal(command)) {
-    return options.runInTerminal(() => runBash(command, cwd, options, true));
+    return options.runInTerminal(() => runBash(command, cwd, options, true), { auth: command });
   }
   return runBash(command, cwd, options, false);
 }

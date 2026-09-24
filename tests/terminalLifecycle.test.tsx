@@ -74,7 +74,7 @@ describe('terminal lifecycle (screen and scrollback replay)', () => {
     callbacks.onLive({ text: '', tools: [tool] });
     callbacks.onStatusChange('awaiting_permission');
     const approval = evaluatePermission(tool.name, tool.args, '/tmp/fuller-terminal-fixture', 'default', {});
-    callbacks.onRequestConfirmation({ toolCall: tool, title: approval.title, danger: approval.danger, options: approval.options, onDecide() {} });
+    callbacks.onRequestConfirmation({ toolCall: tool, title: approval.title, danger: approval.danger, note: approval.note, options: approval.options, onDecide() {} });
     const permission = await replay();
     expect(permission).toContain('Bash command');
     if (rows >= 24) {
@@ -104,7 +104,7 @@ describe('terminal lifecycle (screen and scrollback replay)', () => {
     expect(pending).toContain('Waiting for permission');
     expect(pending).not.toMatch(/^❯\s*$/m);
     const approval = evaluatePermission(tool.name, tool.args, '/tmp/fuller-terminal-fixture', 'default', {});
-    callbacks.onRequestConfirmation({ toolCall: tool, title: approval.title, danger: approval.danger, options: approval.options, onDecide() {} });
+    callbacks.onRequestConfirmation({ toolCall: tool, title: approval.title, danger: approval.danger, note: approval.note, options: approval.options, onDecide() {} });
     const permission = await replay();
     expect(permission).toContain('Bash command');
     expect(permission).toContain('sudo printf RESULT_UNIQUE');

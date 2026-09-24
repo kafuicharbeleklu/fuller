@@ -1317,6 +1317,7 @@ export class AgentLoop {
         title: evaluation.title,
         options: evaluation.options,
         danger: evaluation.danger,
+        note: evaluation.note,
         onDecide: (decision) => {
           this.rejectConfirmation = null;
           this.callbacks.onRequestConfirmation(null);

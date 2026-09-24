@@ -1,12 +1,12 @@
 import { createContext, useCallback, useEffect, useRef, useState } from 'react';
-import type { RunInTerminal } from '../tools/nativeTerminal.js';
+import type { RunInTerminal, TerminalAuth } from '../tools/nativeTerminal.js';
 import type { FrameWriter } from './frameWriter.js';
 
 export const TerminalInputEnabled = createContext(true);
 
 interface Request {
   run: () => Promise<unknown>;
-  banner?: string;
+  banner?: string | TerminalAuth;
   resolve: (value: any) => void;
   reject: (error: unknown) => void;
 }

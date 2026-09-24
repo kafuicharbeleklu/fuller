@@ -1,18 +1,17 @@
 
-
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-kjl3_f57
+  █████╗   /tmp/fuller-auth-b0rx2min
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Esc interrupts; Esc Esc opens the rewind menu.
 
 
 ! sudo fuller-auth-test timeout_prompt                                                             
 
   ⎿  exit 124
+
+
 
 
 

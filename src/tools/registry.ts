@@ -1,6 +1,6 @@
 import { Type, type FunctionDeclaration } from '@google/genai';
 import { executeBash, type BackgroundReady } from './bash.js';
-import { needsNativeTerminal, type RunInTerminal } from './nativeTerminal.js';
+import { desktopAuthentication, needsNativeTerminal, type RunInTerminal } from './nativeTerminal.js';
 import { readFile, writeFile, editFile, previewEdit, previewWrite } from './fileOps.js';
 import { listDirectory, searchFiles, globFiles, formatSearchOutput } from './search.js';
 import { outlineFile } from './outline.js';
@@ -311,6 +311,8 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
     case 'execute_bash': {
       const command = String(args.command ?? '');
       if (!command.trim()) throw new Error('command est requis.');
+      const desktop = desktopAuthentication(command);
+      if (desktop) throw new Error(`${desktop}. Run the command with plain sudo instead: Fuller asks for the password in the terminal.`);
       const timeoutMs = Math.min(Number(args.timeout) || ctx.bashTimeoutMs, 600_000);
       if (args.run_in_background) {
         if (ctx.runInTerminal && needsNativeTerminal(command)) throw new Error('Run sudo in the foreground so the user can authenticate in the terminal.');

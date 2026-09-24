@@ -1,10 +1,11 @@
-
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-2fkrp6nl
+  █████╗   /tmp/fuller-permission-4uh4qnru
   ██╔══╝ 
   ██║    
   ╚═╝    
+
+  Shift+Tab cycles modes: manual → accept edits → plan → bypass.
 
 
 ❯ please ask permission                                                                            
@@ -12,16 +13,15 @@
 ● Bash(sudo ip link set tun0 down && sudo ip link set tun1 down)
   ⎿  Running…
 
-
 ───────────────────────────────────────────────────────────────────────────────────────────────────
  Bash command
 
    sudo ip link set tun0 down && sudo ip link set tun1 down
    Bring down VPN tunnel interfaces
 
- ⚠ Commande dangereuse : sudo (privilèges / système)
  Do you want to proceed?
  ❯ 1. Yes
-   2. No
+   2. Yes, and don’t ask again for: sudo ip link set tun0 down && sudo ip link set tun1 down
+   3. No
 
  Esc to cancel · Tab to amend
