@@ -148,10 +148,16 @@ export function getLatestSession(workspaceDir: string): SessionData | null {
   return sessions.length ? loadSession(workspaceDir, sessions[0].id) : null;
 }
 
-export function deleteSession(workspaceDir: string, id: string): void {
-  try {
-    fs.unlinkSync(sessionFile(workspaceDir, id));
-  } catch {}
+/** Delete a stored session and what belongs to it (rewind history, saved command outputs). */
+export function deleteSession(workspaceDir: string, id: string): boolean {
+  if (!/^[\w.-]+$/.test(id)) return false;
+  const dir = sessionsDir(workspaceDir);
+  let deleted = false;
+  try { fs.unlinkSync(sessionFile(workspaceDir, id)); deleted = true; } catch {}
+  for (const extra of [path.join(dir, 'rewind', id), path.join(dir, 'outputs', id)]) {
+    try { fs.rmSync(extra, { recursive: true, force: true }); } catch {}
+  }
+  return deleted;
 }
 
 export function sessionTitleFrom(messages: ChatMessage[]): string | undefined {

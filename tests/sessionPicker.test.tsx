@@ -71,9 +71,52 @@ describe('/resume session picker (Claude Code 2.1.281 layout)', () => {
     screen.unmount();
   });
 
+  it('deletes a session after confirmation with Ctrl+Delete, as Antigravity does', async () => {
+    const onDelete = vi.fn(() => true);
+    const screen = render(<ThemeProvider theme={loadTheme('dark')}><SessionPicker sessions={[session('a', 'Alpha task', 'main'), session('b', 'Beta task', 'main')]} onDelete={onDelete} onSelect={() => {}} onCancel={() => {}} /></ThemeProvider>);
+    const keys = async (...sequences: string[]) => { for (const s of sequences) { screen.stdin.write(s); await new Promise((r) => setTimeout(r, 30)); } };
+    await new Promise((r) => setImmediate(r));
+    expect(screen.lastFrame()).toContain('Ctrl+Del to delete');
+    await keys('\x1b[3;5~'); // Ctrl+Delete
+    expect(screen.lastFrame()).toContain('Delete this conversation?');
+    expect(screen.lastFrame()).toContain('Alpha task');
+    expect(screen.lastFrame()).toContain('This cannot be undone.');
+    expect(screen.lastFrame()).toContain('Enter or Y to delete · Esc or N to cancel');
+    await keys('n');
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.lastFrame()).toContain('❯ Alpha task');
+    await keys('\x1b[3;5~', 'y');
+    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }));
+    expect(screen.lastFrame()).not.toContain('Alpha task\n');
+    expect(screen.lastFrame()).toContain('Deleted "Alpha task"');
+    expect(screen.lastFrame()).toContain('❯ Beta task');
+    screen.unmount();
+  });
+
   it('writes ages like Claude Code', () => {
     expect(timeAgo(0, 5_000)).toBe('5 seconds ago');
     expect(timeAgo(0, 60_000)).toBe('1 minute ago');
     expect(timeAgo(0, 3 * 3_600_000)).toBe('3 hours ago');
+  });
+});
+
+describe('deleting a stored session', () => {
+  it('removes the session file with its rewind history and command outputs', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-del-home-'));
+    const { saveSessionSync, sessionsDir, deleteSession, listSessions } = await import('../src/session/store.js');
+    const ws = '/tmp/demo-delete-project';
+    saveSessionSync({ meta: { id: 's1', workspaceDir: ws, model: 'm', createdAt: 0, updatedAt: 1, messageCount: 1, tokenCount: 0 }, messages: [] } as any);
+    const dir = sessionsDir(ws);
+    fs.mkdirSync(path.join(dir, 'rewind', 's1'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'outputs', 's1'), { recursive: true });
+    expect(listSessions(ws).map((s) => s.id)).toEqual(['s1']);
+    expect(deleteSession(ws, 's1')).toBe(true);
+    expect(listSessions(ws)).toEqual([]);
+    expect(fs.existsSync(path.join(dir, 'rewind', 's1'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'outputs', 's1'))).toBe(false);
+    expect(deleteSession(ws, '../escape')).toBe(false);
   });
 });

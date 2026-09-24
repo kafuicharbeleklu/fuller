@@ -50,7 +50,7 @@ import { AgentLoop, type AgentCallbacks, type ModelSwitchRequest } from '../agen
 import { loadProjectContext } from '../agent/contextLoader.js';
 import { messagesToTranscript } from '../agent/transcript.js';
 import { getGitInfo, type GitInfo } from '../utils/git.js';
-import { listAllSessions, listSessions, loadSession, renameStoredSession, type SessionData } from '../session/store.js';
+import { deleteSession, listAllSessions, listSessions, loadSession, renameStoredSession, type SessionData } from '../session/store.js';
 import { loadPromptHistory, appendPromptHistory } from '../session/history.js';
 import { APP_NAME, APP_SLUG, STARTUP_TIPS, STARTUP_TIP_CHANCE } from '../branding.js';
 import { saveDefaultModel, type AppConfig, DEFAULT_MODEL } from '../config.js';
@@ -559,6 +559,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
           sessions={sessions}
           allSessions={() => listAllSessions()}
           onRename={(session, title) => { renameStoredSession(session.workspaceDir, session.id, title); }}
+          onDelete={(session) => deleteSession(session.workspaceDir, session.id)}
           onSelect={(id, workspaceDir) => {
             if (path.resolve(workspaceDir) !== path.resolve(config.workspaceDir)) startupNotice.current = otherDirectoryNotice(id, workspaceDir);
             else setRestored(loadSession(config.workspaceDir, id) ?? undefined);
@@ -685,6 +686,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             sessions={listSessions(config.workspaceDir).filter((session) => session.id !== sessionId)}
             allSessions={() => listAllSessions().filter((session) => session.id !== sessionId)}
             onRename={(session, title) => { renameStoredSession(session.workspaceDir, session.id, title); }}
+            onDelete={(session) => session.id !== sessionId && deleteSession(session.workspaceDir, session.id)}
             banner={bannerProps}
             branch={gitInfo?.isGit ? gitInfo.branch : undefined}
             ruleLabel={effortLabel}

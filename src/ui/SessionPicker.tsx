@@ -19,6 +19,8 @@ interface Props {
   onSelect: (id: string, workspaceDir: string) => void;
   /** Ctrl+R: stores a new title. */
   onRename?: (session: SessionMeta, title: string) => void;
+  /** Ctrl+Delete, after confirmation (Antigravity's /resume): deletes the session; false if it failed. */
+  onDelete?: (session: SessionMeta) => boolean;
   /** Banner drawn at the top of the Space preview, as Claude Code does. */
   banner?: BannerProps;
   onCancel: () => void;
@@ -46,7 +48,7 @@ const formatSize = (bytes?: number) => (bytes === undefined ? undefined
 
 const tildify = (dir: string) => (dir.startsWith(os.homedir()) ? `~${dir.slice(os.homedir().length)}` : dir);
 
-type Mode = 'list' | 'preview' | 'rename';
+type Mode = 'list' | 'preview' | 'rename' | 'delete';
 
 /**
  * Session picker laid out like Claude Code 2.1.281's /resume: a framed search
@@ -54,7 +56,7 @@ type Mode = 'list' | 'preview' | 'rename';
  * "age · branch · size"). Typing filters; Esc clears the filter, then cancels.
  * Ctrl+A lists every project, Space previews the conversation, Ctrl+R renames.
  */
-export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect, onRename, banner, onCancel, branch, ruleLabel }) => {
+export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect, onRename, onDelete, banner, onCancel, branch, ruleLabel }) => {
   const theme = useTheme();
   const { stdout } = useStdout();
   const [query, setQuery] = useState('');
@@ -64,9 +66,11 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
   const [mode, setMode] = useState<Mode>('list');
   const [draft, setDraft] = useState('');
   const [titles, setTitles] = useState<Record<string, string>>({});
+  const [deleted, setDeleted] = useState<Set<string>>(new Set());
+  const [status, setStatus] = useState<string | null>(null);
   const [previewTop, setPreviewTop] = useState<number | null>(null);
   const everyProject = useMemo(() => (everywhere && allSessions ? allSessions() : null), [everywhere, allSessions]);
-  const source = (everyProject ?? sessions).map((s) => (titles[s.id] ? { ...s, title: titles[s.id] } : s));
+  const source = (everyProject ?? sessions).filter((s) => !deleted.has(`${s.workspaceDir}/${s.id}`)).map((s) => (titles[s.id] ? { ...s, title: titles[s.id] } : s));
   const filtered = source
     .filter((s) => !branchOnly || !branch || s.gitBranch === branch)
     .filter((s) => !query || `${s.title ?? ''} ${s.id} ${s.gitBranch ?? ''} ${everywhere ? s.workspaceDir : ''}`.toLowerCase().includes(query.toLowerCase()));
@@ -100,6 +104,18 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
       else if (e.name === 'pagedown') setPreviewTop(Math.min(previewMaxTop, top + previewHeight));
       return;
     }
+    if (mode === 'delete') {
+      // Antigravity: Enter or Y deletes, Esc or N cancels.
+      if (e.name === 'return' || (e.name === 'char' && !e.ctrl && /^[yY]$/.test(e.text))) {
+        if (chosen && onDelete?.(chosen)) {
+          setDeleted((d) => new Set(d).add(`${chosen.workspaceDir}/${chosen.id}`));
+          setStatus(`Deleted "${chosen.title || chosen.id}"`);
+          setIndex((i) => Math.max(0, Math.min(i, filtered.length - 2)));
+        } else if (chosen) setStatus(`Could not delete "${chosen.title || chosen.id}"`);
+        setMode('list');
+      } else if (e.name === 'escape' || (e.name === 'char' && !e.ctrl && /^[nN]$/.test(e.text))) setMode('list');
+      return;
+    }
     if (mode === 'rename') {
       if (e.name === 'escape') setMode('list');
       else if (e.name === 'return') {
@@ -116,6 +132,7 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
     else if (e.name === 'char' && e.ctrl && e.text === 'b') { setBranchOnly((value) => !value); setIndex(0); }
     else if (e.name === 'char' && e.ctrl && e.text === 'a' && allSessions) { setEverywhere((value) => !value); setIndex(0); }
     else if (e.name === 'char' && e.ctrl && e.text === 'r' && onRename && chosen) { setDraft(''); setMode('rename'); }
+    else if (e.name === 'delete' && onDelete && chosen) { setStatus(null); setMode('delete'); }
     else if (e.name === 'char' && e.text === ' ' && !query && chosen) { setPreviewTop(null); setMode('preview'); }
     else if (e.name === 'up' || (e.name === 'char' && e.ctrl && e.text === 'p') || (e.name === 'mouse' && e.mouse?.button === 64)) setIndex((i) => Math.max(0, i - 1));
     else if (e.name === 'down' || (e.name === 'char' && e.ctrl && e.text === 'n') || (e.name === 'mouse' && e.mouse?.button === 65)) setIndex((i) => Math.min(Math.max(0, filtered.length - 1), i + 1));
@@ -154,7 +171,7 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
   const branchHint = branch ? `Ctrl+B to ${branchOnly ? 'show all branches' : 'only show current branch'} · ` : '';
   const hint = query
     ? 'Type to Search · Enter to select · Esc to clear'
-    : `${allSessions ? `Ctrl+A to ${everywhere ? 'only show current repo' : 'show all projects'} · ` : ''}${branchHint}${chosen ? 'Space to preview · ' : ''}${onRename && chosen ? 'Ctrl+R to rename · ' : ''}Type to search · Esc to cancel`;
+    : `${allSessions ? `Ctrl+A to ${everywhere ? 'only show current repo' : 'show all projects'} · ` : ''}${branchHint}${chosen ? 'Space to preview · ' : ''}${onRename && chosen ? 'Ctrl+R to rename · ' : ''}${onDelete && chosen ? 'Ctrl+Del to delete · ' : ''}Type to search · Esc to cancel`;
   const header = (
     <Text bold wrap="truncate-end">
       <Text color={theme.permission}>Resume session</Text>
@@ -169,7 +186,15 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
       </Box>
       <Box flexDirection="column" paddingLeft={2}>
         {project && !everywhere ? <Text color={theme.subtle}>{project}</Text> : null}
-        {mode === 'rename' ? (
+        {mode === 'delete' && chosen ? (
+          <>
+            <Text bold>Delete this conversation?</Text>
+            <Text wrap="truncate-end">{chosen.title || chosen.id}</Text>
+            <Text color={theme.subtle} wrap="truncate-end">{[timeAgo(chosen.updatedAt), chosen.gitBranch, formatSize(chosen.sizeBytes), everywhere ? tildify(chosen.workspaceDir) : undefined].filter(Boolean).join(' · ')}</Text>
+            <Text color={theme.warning}>This cannot be undone.</Text>
+            <Text color={theme.subtle}>Enter or Y to delete · Esc or N to cancel</Text>
+          </>
+        ) : mode === 'rename' ? (
           <>
             <Text bold>Rename session:</Text>
             <Text>{draft ? <>{draft}<Text inverse> </Text></> : <Text dimColor>Enter new session name</Text>}</Text>
@@ -189,6 +214,7 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
                 </Box>
               );
             })}
+            {status ? <Text color={theme.subtle}>{status}</Text> : null}
             <Text color={theme.subtle} wrap="wrap">{hint}</Text>
           </>
         )}

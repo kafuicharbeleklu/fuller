@@ -91,6 +91,7 @@ Un fichier = une commande `/nom` (les sous-dossiers donnent `/dossier:nom`). Fro
 | `/agents` | Sous-agents disponibles |
 | Ctrl+T | Afficher / masquer la liste de tâches (`todo_write`) |
 | `/rewind`, `/checkpoints` | Restaurer code ou conversation à un prompt, ou résumer une plage |
+| `/resume` | Reprendre une session : recherche, Ctrl+A tous les projets, Espace aperçu, Ctrl+R renommer, **Ctrl+Suppr supprimer** (confirmation : Entrée ou Y, Échap ou N pour annuler ; la session en cours ne peut pas être supprimée) |
 | `/sessions`, `/export [fichier]`, `/rename <titre>`, `/copy [N]` | Sessions, export Markdown, renommage, copie de la dernière réponse dans le presse-papiers |
 | `/diff`, `/doctor`, `/theme`, `/add-dir`, `/btw`, `/about`, `/exit` | Divers |
 
