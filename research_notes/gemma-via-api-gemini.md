@@ -65,7 +65,7 @@ Source : [Run Gemma with the Gemini API](https://ai.google.dev/gemma/docs/core/g
 
 ## Ce qu'il faut savoir avant de l'utiliser dans Fuller
 
-- Gemma est nettement moins capable que Gemini 3.6 Flash sur le code et les tâches agentiques longues : à réserver aux tâches simples, aux sous-agents d'exploration, ou comme modèle de secours quand les quotas Flash sont épuisés.
+- Capacité comparée à Gemini 3.6 Flash : **non établie**. Nos tests (réponses courtes, un appel d'outil) ne mesurent pas les longues tâches de programmation ; à comparer sur le banc d'essai avant d'en faire plus qu'un modèle de secours (révisé le 24/09 après la comparaison de Codex).
 - Le sélecteur `/model` propose Gemma 4 (26B A4B et 31B) à côté des modèles Gemini récents, et `fuller --model gemma-4-26b-a4b-it` fonctionne aussi.
 - **Changer de famille de modèle en cours de conversation** : Gemma refuse (400) un historique qui contient les signatures de réflexion de Gemini. Fuller les retire en passant à Gemma, et ajoute la signature de secours documentée par Google en revenant à Gemini 3. Testé en réel : Gemini lance un appel d'outil, Gemma le termine, Gemini reprend la conversation.
 - **Modèle de repli** : quand le modèle courant reste saturé (3 réponses 503 de suite) ou n'a plus de quota sur aucune clé, Fuller passe sur Gemma 4 26B A4B avec un avis. Réglable dans `/config` (Fallback model) ou avec `--fallback-model` (`off` pour désactiver).

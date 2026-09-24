@@ -41,8 +41,8 @@ Chaque étape suivante se valide par une comparaison `--compare` avec la référ
 | # | Changement | Gain mesuré ailleurs | Effort |
 |---|---|---|---|
 | 6 | Masquer les anciennes sorties d'outils (garder les ~50 000 derniers tokens intacts, remplacer le reste par un aperçu + chemin du fichier) | +29 % et −84 % de tokens (Anthropic) ; SWE-agent 18,0 % contre 15,0 % | Faible |
-| 7 | Compacter plus tôt (vers 50 %), en instantané structuré (objectif, contraintes, fichiers touchés, tâches faites et à faire) suivi d'un second passage qui vérifie les oublis | Sessions longues plus fiables | Faible |
-| 8 | Édition en cascade : exacte → sans espaces de bord → regex tolérante → floue (≤ 10 % d'écart) → correction par un modèle léger ; refus des `new_string` à trous (« … rest of code ») | Échecs d'édition ~20 % → 6 % (Gemini CLI) | Moyen |
+| 7 | Compacter en instantané structuré (objectif, contraintes, fichiers touchés, tâches faites et à faire) suivi d'un second passage qui vérifie les oublis, **sans couper les sorties d'outils à leurs 600 premiers caractères** (défaut relevé par Codex) ; seuil à mesurer | Sessions longues plus fiables | Faible |
+| 8 | Édition : d'abord des erreurs utiles (emplacements candidats, extrait à relire) ; normalisation limitée aux espaces de début et de fin de ligne, avec correspondance unique ; refus des `new_string` à trous (« … rest of code »). Pas de correspondance floue par défaut (révisé le 24/09 après la comparaison de Codex) | Gemini CLI rapporte ~20 % → 6 % d'échecs avec une cascade plus large, non transférable tel quel | Faible à moyen |
 | 9 | Outils « en chaîne » : une recherche qui trouve 3 résultats ou moins renvoie directement le code autour ; une écriture renvoie son diff | −10 % de tours ([PR #19574](https://github.com/google-gemini/gemini-cli/pull/19574)) | Faible |
 | 10 | Détection de boucles : même cycle d'appels répété 5 fois, ou même bloc de texte répété ; premier signal = message « prends du recul », second = arrêt | Évite les sessions qui tournent à vide | Faible |
 | 11 | Après chaque édition, vérifier la syntaxe du fichier modifié et ne renvoyer que les nouvelles erreurs (le hook `PostToolUse` couvre déjà le typecheck complet) | SWE-agent : 18,0 % contre 15,0 % avec le linter | Moyen |
@@ -59,9 +59,13 @@ Chaque étape suivante se valide par une comparaison `--compare` avec la référ
 ## Clés API et quotas — à décider
 
 - Les limites sont **par projet**, pas par clé ([rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)). Faire tourner des clés de plusieurs projets gratuits pour additionner les quotas revient à contourner les limites, ce que les conditions des API Google interdisent (§2d, [developers.google.com/terms](https://developers.google.com/terms)).
-- Le 403 « Your project has been denied access » vient d'un signalement **du compte Google**, pas de la clé (réponses du personnel Google sur le forum, par ex. [fil 182326](https://discuss.ai.google.dev/t/gemini-api-returns-403-your-project-has-been-denied-access/182326)). Pistes de déblocage citées par Google : vérification d'âge et date de naissance, numéro de téléphone, validation en deux étapes, nouvelle clé, puis activation de la facturation. Aucun déblocage manuel du quota gratuit n'est documenté.
+- Le 403 « Your project has been denied access » : selon les réponses du personnel Google sur le forum, il vient d'un signalement du compte (par ex. [fil 182326](https://discuss.ai.google.dev/t/gemini-api-returns-403-your-project-has-been-denied-access/182326)) ; ce n'est pas une règle documentée. Pistes de déblocage citées par Google : vérification d'âge et date de naissance, numéro de téléphone, validation en deux étapes, nouvelle clé, puis activation de la facturation. Aucun déblocage manuel du quota gratuit n'est documenté.
 - Google annonce que les clés « standard » (`AIza…`) seront refusées ([api-key](https://ai.google.dev/gemini-api/docs/api-key)) : notre clé principale est de ce type et doit être remplacée par une clé `AQ.…`.
 - **Recommandation** : un seul projet avec facturation (Tier 1 dès 5 $ prépayés, passage en général immédiat), et garder la bascule de clés comme secours, pas comme moyen d'additionner des quotas gratuits.
+
+## Révision du 24/09 (après comparaison)
+
+Voir [Comparaison_trois_recherches_Claude.md](Comparaison_trois_recherches_Claude.md) : les seuils cités sont des hypothèses à mesurer ; ajouter au lot de mesure la protection des évaluateurs (l'agent ne doit pas pouvoir modifier les tests qui le jugent).
 
 ## Ordre conseillé
 
