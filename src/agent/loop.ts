@@ -172,7 +172,7 @@ export class AgentLoop {
     this.skills = safeLoadSkills(config.workspaceDir);
     this.subagents = safeLoadSubagents(config.workspaceDir);
     this.session = new GeminiAgentSession(config, restored?.history);
-    this.session.onKeySwitch = (position, total) => this.announceKeySwitch(position, total);
+    this.session.onKeySwitch = (position, total, reason) => this.announceKeySwitch(position, total, reason);
     this.session.setSkills(this.skills);
     this.session.setSubagents(this.subagents);
     this.session.refresh();
@@ -499,8 +499,9 @@ export class AgentLoop {
   }
 
   /** Quota reached on one API key: calls continue on the next (keys are never shown). */
-  private announceKeySwitch(position: number, total: number) {
-    this.callbacks.onNotice({ level: 'warn', text: `Quota reached on an API key · switched to key ${position}/${total}` });
+  private announceKeySwitch(position: number, total: number, reason: 'quota' | 'unusable') {
+    const why = reason === 'quota' ? 'Quota reached on an API key' : 'An API key was refused (project denied or key invalid)';
+    this.callbacks.onNotice({ level: 'warn', text: `${why} · switched to key ${position}/${total}` });
     setTimeout(() => this.callbacks.onNotice(null), 6000);
   }
 

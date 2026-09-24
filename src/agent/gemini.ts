@@ -1,7 +1,7 @@
 import { GoogleGenAI, ThinkingLevel, type Content, type FunctionDeclaration, type GenerateContentConfig, type Part } from '@google/genai';
 import { getSystemPrompt } from './systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
-import { keyPoolFor, isQuotaError, type KeyPool } from './keyPool.js';
+import { keyPoolFor, isKeyError, isDeadKeyError, type KeyPool } from './keyPool.js';
 import { withRetry, type RetryInfo } from './retry.js';
 import type { AppConfig } from '../config.js';
 import type { SkillDefinition } from '../skills/loader.js';
@@ -53,8 +53,8 @@ export class GeminiAgentSession {
   private extraInstructions = '';
   private subagents: SubagentDefinition[] = [];
 
-  /** Called when calls move to another API key after a quota error (position is 1-based). */
-  public onKeySwitch?: (position: number, total: number) => void;
+  /** Called when calls move to another API key after a quota or access error (position is 1-based). */
+  public onKeySwitch?: (position: number, total: number, reason: 'quota' | 'unusable') => void;
   private readonly keys: KeyPool;
   private keyInUse: string;
 
@@ -81,13 +81,13 @@ export class GeminiAgentSession {
     this.initChat(history);
   }
 
-  /** withRetry's recover hook: a quota error moves the conversation to the next key. */
+  /** withRetry's recover hook: a quota error or an unusable key moves the conversation to the next key. */
   private readonly recoverFromQuota = (err: any): boolean => {
-    if (!isQuotaError(err)) return false;
+    if (!isKeyError(err)) return false;
     if (this.keys.current() !== this.keyInUse) { this.syncKey(); return true; }
     if (!this.keys.rotate(err)) return false;
     this.syncKey();
-    this.onKeySwitch?.(this.keys.position, this.keys.size);
+    this.onKeySwitch?.(this.keys.position, this.keys.size, isDeadKeyError(err) ? 'unusable' : 'quota');
     return true;
   };
 

@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 import { describe, expect, it, vi } from 'vitest';
 
 const used: string[] = [];
@@ -20,10 +22,13 @@ vi.mock('@google/genai', async (importOriginal) => {
   return { ...real, GoogleGenAI };
 });
 
-import { KeyPool, collectApiKeys, isQuotaError, restDelayMs } from '../src/agent/keyPool.js';
+import { KeyPool, collectApiKeys, isQuotaError, isKeyError, restDelayMs } from '../src/agent/keyPool.js';
 import { withRetry } from '../src/agent/retry.js';
 import { GeminiAgentSession } from '../src/agent/gemini.js';
 import { getConfig } from '../src/config.js';
+
+// Keep the key state of the session test out of the real ~/.fuller.
+process.env.HOME = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'fuller-keys-home-'));
 
 describe('several API keys', () => {
   it('collects the keys from the environment, main key first, without duplicates', () => {
@@ -46,11 +51,29 @@ describe('several API keys', () => {
     expect(new KeyPool(['only']).rotate(quota)).toBe(false);
   });
 
+  it('remembers resting keys between launches, by fingerprint only', () => {
+    const file = require('node:path').join(require('node:os').tmpdir(), `fuller-keys-${process.pid}.json`);
+    let now = 1_000;
+    const first = new KeyPool(['a', 'b', 'c'], () => now, file);
+    first.rotate(Object.assign(new Error('Your project has been denied access'), { status: 403 }));
+    const saved = require('node:fs').readFileSync(file, 'utf8');
+    expect(saved).not.toMatch(/"a"|"b"|"c"/);
+    const next = new KeyPool(['a', 'b', 'c'], () => now, file);
+    expect(next.current()).toBe('b');
+    now += 25 * 3_600_000;
+    expect(new KeyPool(['a', 'b', 'c'], () => now, file).current()).toBe('a');
+    require('node:fs').rmSync(file, { force: true });
+  });
+
   it('tells quota errors apart and reads how long to rest', () => {
     expect(isQuotaError(Object.assign(new Error('x'), { status: 429 }))).toBe(true);
     expect(isQuotaError(new Error('RESOURCE_EXHAUSTED'))).toBe(true);
     expect(isQuotaError(Object.assign(new Error('overloaded'), { status: 503 }))).toBe(false);
     expect(restDelayMs(new Error('Please retry in 37.2s'))).toBe(37_200);
+    const denied = Object.assign(new Error('{"error":{"code":403,"message":"Your project has been denied access. Please contact support."}}'), { status: 403 });
+    expect(isKeyError(denied)).toBe(true);
+    expect(restDelayMs(denied)).toBe(24 * 3_600_000);
+    expect(isKeyError(Object.assign(new Error('overloaded'), { status: 503 }))).toBe(false);
     expect(restDelayMs(new Error('Quota exceeded for metric GenerateRequestsPerDayPerProject'))).toBe(3_600_000);
   });
 
@@ -70,7 +93,7 @@ describe('several API keys', () => {
     const turn = await session.sendUserMessage('hi', {} as any);
     expect(turn.text).toBe('hello from B');
     expect(used).toEqual(['key-A', 'key-B']);
-    expect(switched).toHaveBeenCalledWith(2, 2);
+    expect(switched).toHaveBeenCalledWith(2, 2, 'quota');
     expect(session.keyStatus).toEqual({ position: 2, total: 2 });
   });
 });

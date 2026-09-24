@@ -10,6 +10,8 @@ import type { HooksConfig } from './hooks/runner.js';
 import type { ThinkingLevelSetting } from './agent/thinking.js';
 
 dotenv.config();
+// Keys for every project: ~/.fuller/.env (the project's .env and the environment win).
+dotenv.config({ path: path.join(os.homedir(), CONFIG_DIR_NAME, '.env') });
 
 export const DEFAULT_MODEL = 'gemini-3.6-flash';
 export const DEFAULT_CONTEXT_WINDOW = 1_048_576;
