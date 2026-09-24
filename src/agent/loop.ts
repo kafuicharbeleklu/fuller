@@ -24,6 +24,8 @@ import { McpManager, type McpServerStatus } from '../mcp/manager.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { loadSubagents, type SubagentDefinition } from './subagents.js';
 import { runSubagent } from './subagent.js';
+import { WorkTracker } from './taskState.js';
+import { REVIEWER, isRisky, parseReview, reviewPrompt, turnDiff } from './review.js';
 import { modelLabel } from '../ui/modelLabel.js';
 import { contextWindowOf } from './models.js';
 import type { ModelUsage } from './keyPool.js';
@@ -764,6 +766,16 @@ export class AgentLoop {
     let toolCount = 0;
     let turns = 0;
     let stopHookContinue = false;
+    // What this turn changed and checked, to verify the work before concluding (lot 2).
+    const work = new WorkTracker();
+    const seenCheckpoints = new Set<string>();
+    let todosWritten = false;
+    let stopping = false;
+    const syncChanges = () => {
+      const fresh = this.checkpointManager.getCheckpoints().filter((c) => c.messageId === assistant.id && !seenCheckpoints.has(c.id));
+      for (const c of fresh) seenCheckpoints.add(c.id);
+      work.noteChanges([...new Set(fresh.flatMap((c) => c.files.map((f) => f.filePath)))]);
+    };
     try {
       this.callbacks.onStatusChange('thinking');
       let message: string | Part[] = enriched;
@@ -780,14 +792,28 @@ export class AgentLoop {
         this.callbacks.onNotice(null);
         this.recordUsage(turn.usage);
         commitText(turn.text);
-        if (turn.functionCalls.length === 0) {
+        if (turn.functionCalls.length === 0 || stopping) {
           // The model stopped for a reason worth telling (never retried: a refusal is not transient).
           if (turn.finishReason && BLOCKED_FINISH_REASONS.has(turn.finishReason)) {
             this.addSystemMessage(`⚠ The model stopped without answering (${turn.finishReason === 'RECITATION' ? 'recitation filter' : `safety filter: ${turn.finishReason}`}). Rephrase the request, or try another model with /model.`, 'notice');
-          } else if (turn.finishReason === 'MAX_TOKENS') {
-            this.addSystemMessage('⚠ The answer reached the output limit and was cut off. Ask to continue.', 'notice');
+            break;
           }
-          break;
+          if (turn.finishReason === 'MAX_TOKENS') {
+            this.addSystemMessage('⚠ The answer reached the output limit and was cut off. Ask to continue.', 'notice');
+            break;
+          }
+          if (stopping) {
+            // Tools were off for this reply; calls made anyway get no answer, so drop them.
+            if (turn.functionCalls.length) this.session.repairHistory();
+            break;
+          }
+          if (signal.aborted) break;
+          // Before concluding: checks left to run, a task list to finish, a review of large changes.
+          const followUp = await this.beforeConclude(work, options.prompt ?? input, turn.text, assistant.id, todosWritten ? this.todos : null, signal);
+          if (!followUp) break;
+          this.callbacks.onStatusChange('thinking');
+          turn = await this.session.sendUserMessage(followUp, streamOptions);
+          continue;
         }
         turns++;
         this.usage.turns++;
@@ -823,7 +849,21 @@ export class AgentLoop {
           })));
           for (let offset = 0; offset < batch.length; offset++) {
             const state = batch[offset];
-            responses.push({ id: turn.functionCalls[start + offset].id, name: state.name, output: outputs[offset] });
+            let output = outputs[offset];
+            // No progress: the same call again while nothing changed, or the same failure again.
+            const verdict = work.recordCall(state.name, state.args, state.status === 'failed' ? state.error ?? output : undefined);
+            if (verdict.level === 'warn') {
+              output += `\n\n[No progress] You have repeated ${verdict.reason}. Step back: re-read the relevant code or error, reconsider your approach and try something different, or ask the user.`;
+              this.addSystemMessage(`↺ Repeating ${verdict.reason} · asking to change approach`, 'notice');
+            } else if (verdict.level === 'stop' && !stopping) {
+              stopping = true;
+              output += `\n\n[No progress] You have repeated ${verdict.reason}, even after a warning. Stop now: tell the user in a few lines what you tried, what blocks you, and what you need from them.`;
+              this.addSystemMessage(`⚠ Stopped: repeating ${verdict.reason}. Say what to try next.`, 'notice');
+            }
+            if (state.name === 'execute_bash' && state.status === 'completed' && !state.args.run_in_background) work.noteCommand(String(state.args.command ?? ''), outputs[offset]);
+            if (state.name === 'todo_write' && state.status === 'completed') todosWritten = true;
+            syncChanges();
+            responses.push({ id: turn.functionCalls[start + offset].id, name: state.name, output });
             const snapshot = { ...state };
             assistant.parts!.push({ type: 'tool', id: state.id, toolCall: snapshot });
             this.callbacks.onCommit({ key: state.id, kind: 'tool', messageId: assistant.id, toolCall: snapshot });
@@ -838,7 +878,8 @@ export class AgentLoop {
         emitLive();
         if (signal.aborted) throw new Error('Interrupted');
         this.callbacks.onStatusChange('thinking');
-        turn = await this.session.sendToolResponses(responses, streamOptions);
+        // Stopping: the model answers in text, it may not call tools again.
+        turn = await this.session.sendToolResponses(responses, stopping ? { ...streamOptions, noTools: true } : streamOptions);
       }
       assistant.content = assistant.parts!.filter((p) => p.type === 'text').map((p: any) => p.content).join('\n\n');
       this.callbacks.onCommit({
@@ -1046,6 +1087,59 @@ export class AgentLoop {
       const message = err?.message || String(err);
       update({ status: 'failed', error: message, endTime: Date.now() });
       return `Error: ${message}`;
+    }
+  }
+
+  /**
+   * The model is about to conclude: return what it must do first (a check to run, a task list
+   * to finish, a review's findings), or null. Each reminder comes once per turn, so the model
+   * can always conclude honestly afterwards.
+   */
+  private async beforeConclude(work: WorkTracker, request: string, answer: string, messageId: string, todos: TodoItem[] | null, signal: AbortSignal): Promise<string | null> {
+    if (this.config.permissionMode === 'plan') return null;
+    if (this.config.settings.verifyWork !== false) {
+      const reminder = work.beforeConclude(todos);
+      if (reminder) {
+        this.addSystemMessage(`↺ ${reminder.notice}`, 'notice');
+        return reminder.text;
+      }
+    }
+    const mode = this.config.settings.reviewChanges ?? 'risky';
+    if (mode === 'off' || work.reviewed) return null;
+    const diff = turnDiff(this.checkpointManager.getCheckpoints().filter((c) => c.messageId === messageId), this.config.workspaceDir);
+    if (!diff.files.length || (mode === 'risky' && !isRisky(diff))) return null;
+    work.reviewed = true;
+    this.callbacks.onStatusChange('thinking');
+    this.callbacks.onNotice({ level: 'info', text: `Reviewing the changes (${diff.files.length} file${diff.files.length === 1 ? '' : 's'})…` });
+    try {
+      const result = await runSubagent({
+        config: this.config,
+        definition: REVIEWER,
+        prompt: reviewPrompt(request, diff, answer),
+        description: 'review the changes',
+        signal,
+        skills: [],
+        // Read-only tools: nothing to approve inside the workspace; anything else is refused.
+        askPermission: async () => ({ kind: 'no', feedback: 'the reviewer only reads the workspace' }),
+        onProgress: () => {},
+        onUsage: (u) => { this.usage.cumulativeTokens += u.totalTokens; this.usage.apiCalls++; this.callbacks.onUsage({ ...this.usage }); },
+        checkpointManager: this.checkpointManager,
+        runInTerminal: this.callbacks.runInTerminal,
+      });
+      this.callbacks.onNotice(null);
+      const issues = parseReview(result.text);
+      if (!issues) {
+        this.addSystemMessage('✓ Review: no problem found in the changes', 'notice');
+        return null;
+      }
+      this.addSystemMessage('↺ Review found possible problems · asking to check them', 'notice');
+      return `[Independent review] Another agent read your changes and reports:\n\n${issues}\n\nCheck each point against the code. Fix the real problems and run the relevant checks again; dismiss the wrong ones in one line each. Then give your final answer.`;
+    } catch (err: any) {
+      this.callbacks.onNotice(null);
+      if (err?.message === 'Interrupted' || signal.aborted) throw new Error('Interrupted');
+      // A review that cannot run (quota, network) must not cost the user the answer.
+      this.addSystemMessage(`Review skipped: ${describeError(err).split('\n')[0]}`, 'notice');
+      return null;
     }
   }
 

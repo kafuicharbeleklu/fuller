@@ -108,7 +108,7 @@ function saveTrace(runId, name, run, task, dirs, agent, verdict) {
   fs.mkdirSync(dir, { recursive: true });
   const diff = git(dirs.repo, 'diff', 'HEAD').stdout ?? '';
   const body = [
-    `# ${name} (run ${run}) — failed`, '', `## Prompt`, task.prompt, '', '## Check', '```', task.check, '```', '', '## Check output', '```', scrub(verdict.output), '```',
+    `# ${name} (run ${run}) — ${verdict.pass ? 'passed' : 'failed'}`, '', `## Prompt`, task.prompt, '', '## Check', '```', task.check, '```', '', '## Check output', '```', scrub(verdict.output), '```',
     '', '## Final answer', scrub(agent.result?.result ?? '(none)'), '', '## Changes', '```diff', scrub(diff.slice(0, 20_000)), '```', '', '## Agent stderr (end)', '```', scrub(agent.stderr.slice(-4000)), '```',
   ].join('\n');
   fs.writeFileSync(path.join(dir, `${name}-${run}.md`), body);
@@ -142,7 +142,7 @@ for (const name of names) {
     }
     const verdict = check(task, dirs);
     // An API failure (quota, overload) says nothing about the agent: count it apart.
-    const apiError = !baseline && !verdict.pass && (agent.result?.is_error || (!agent.result && agent.code !== 0)) && /quota|rate.?limit|429|503|overloaded|UNAVAILABLE|RESOURCE_EXHAUSTED/i.test(`${agent.result?.result ?? ''}${agent.stderr}`);
+    const apiError = !baseline && !verdict.pass && (agent.result?.is_error || (!agent.result && agent.code !== 0)) && /quota|usage limit|rate.?limit|429|503|overloaded|UNAVAILABLE|RESOURCE_EXHAUSTED/i.test(`${agent.result?.result ?? ''}${agent.stderr}`);
     const row = {
       task: name, run, pass: verdict.pass, status: verdict.pass ? 'pass' : apiError ? 'api-error' : 'fail',
       durationMs: agent.durationMs,
@@ -150,13 +150,15 @@ for (const name of names) {
       promptTokens: agent.result?.usage?.prompt_tokens ?? null,
       cachedTokens: agent.result?.usage?.cached_tokens ?? null,
       toolCalls: agent.result?.num_tool_calls ?? null,
-      agentError: scrub(agent.result?.is_error ? String(agent.result?.result ?? '').slice(0, 300) : agent.code && !agent.result ? agent.stderr.slice(-300) : '') || undefined,
+      agentError: scrub(agent.result?.is_error ? String(agent.result?.error || agent.result?.result || '').slice(0, 300) : agent.code && !agent.result ? agent.stderr.slice(-300) : '') || undefined,
+      // What Fuller asked of the model before it concluded (checks, task list, review, no progress).
+      checks: agent.stderr.split('\n').filter((l) => /^(↺|✓ Review|⚠ Stopped|Review skipped)/.test(l)),
       checkOutput: verdict.pass ? undefined : scrub(verdict.output),
       // The model that actually answered (a fallback could differ from the one requested).
       modelUsed: agent.result?.model,
     };
     rows.push(row);
-    if (!noAgent && row.status === 'fail') saveTrace(runId, name, run, task, dirs, agent, verdict);
+    if (!noAgent && row.status !== 'pass') saveTrace(runId, name, run, task, dirs, agent, verdict);
     if (baseline) console.log(`${name}: ${verdict.pass ? 'PASSES WITHOUT THE AGENT (task is too easy or broken)' : 'fails as expected'}`);
     else if (verifySolutions) console.log(`${name}: ${verdict.pass ? 'reference solution passes' : `REFERENCE SOLUTION FAILS — ${verdict.output.split('\n')[0]}`}`);
     else console.log(`${row.status === 'pass' ? 'PASS' : row.status === 'api-error' ? 'API ERROR' : 'FAIL'} · ${(row.durationMs / 1000).toFixed(0)}s · ${row.tokens ?? '?'} tokens · ${row.toolCalls ?? '?'} tools${row.agentError ? ` · ${row.agentError.split('\n')[0]}` : ''}`);
@@ -192,7 +194,14 @@ if (compareFile) {
   const before = JSON.parse(fs.readFileSync(path.resolve(compareFile), 'utf8'));
   const delta = (a, b) => (b - a >= 0 ? '+' : '') + (b - a);
   console.log(`\nCompared with ${path.basename(compareFile)} (${before.summary.model}):`);
-  console.log(`  passed ${before.summary.passed}/${before.summary.runs} → ${passed}/${scored.length} · tokens ${delta(before.summary.tokens, summary.tokens)} · tool calls ${delta(before.summary.toolCalls, summary.toolCalls)}`);
+  // Only the runs scored in both passages: an API error on one side would skew the totals.
+  const pairs = scored.map((r) => [before.rows.find((x) => x.task === r.task && x.run === r.run && x.status !== 'api-error'), r]).filter(([b]) => b);
+  const sum = (list, key) => list.reduce((t, r) => t + (r[key] ?? 0), 0);
+  const olds = pairs.map(([b]) => b);
+  const news = pairs.map(([, r]) => r);
+  console.log(`  on the ${pairs.length} run${pairs.length === 1 ? '' : 's'} scored in both: passed ${olds.filter((r) => r.pass).length} → ${news.filter((r) => r.pass).length} · tokens ${delta(sum(olds, 'tokens'), sum(news, 'tokens'))} · tool calls ${delta(sum(olds, 'toolCalls'), sum(news, 'toolCalls'))} · time ${delta(Math.round(sum(olds, 'durationMs') / 1000), Math.round(sum(news, 'durationMs') / 1000))}s`);
+  const left = rows.filter((r) => !pairs.some(([, n]) => n === r)).map((r) => r.task);
+  if (left.length) console.log(`  not compared (API error on one side): ${[...new Set(left)].join(', ')}`);
   for (const r of rows) {
     const b = before.rows.find((x) => x.task === r.task && x.run === r.run);
     if (b && b.pass !== r.pass) console.log(`  ${r.task}: ${b.pass ? 'PASS → FAIL' : 'FAIL → PASS'}`);

@@ -75,6 +75,15 @@ Voir [Comparaison_trois_recherches_Claude.md](Comparaison_trois_recherches_Claud
 - **Cache** : 0 % mesuré. Sur le banc, chaque appel envoie environ 3 400 tokens, sous le minimum de 4 096 tokens de Gemini 3 Flash ([caching](https://ai.google.dev/gemini-api/docs/caching)). Un essai direct avec un préfixe identique de 8 300 tokens sur Gemini 3.5 Flash-Lite a aussi donné 0 % ; la documentation ne garantit pas les succès de cache et ne dit pas si l'offre gratuite en profite. À revérifier sur une longue session réelle.
 - **Limites** : 8 tâches et 1 essai ne suffisent pas à comparer deux versions ; il faut `--repeat 3` et 20 à 30 tâches tirées de vrais échecs avant de juger les lots suivants.
 
+## État au 24/09 (nuit) — lot 2 fait
+
+- **Vérifier avant de conclure** (`src/agent/taskState.ts`) : Fuller suit les fichiers modifiés pendant le tour et les commandes de contrôle lancées après (avec leur code de sortie). Au moment de conclure, il rappelle au modèle, une fois par sujet, de lancer un contrôle, de le relancer si des fichiers ont changé depuis, de corriger ou d'expliquer un contrôle en échec, ou de finir sa liste de tâches. Rien pour une question, une analyse ou de la documentation. `/config` → « Check work before finishing ».
+- **Absence de progrès** : même appel répété 4 fois sans changement de fichier, ou même erreur 3 fois → demande de prendre du recul ; si cela recommence, arrêt du tour avec une dernière réponse sans outils.
+- **Relecteur** (`src/agent/review.ts`) : un agent en lecture seule relit le diff du tour face à la demande et à la réponse, sur les changements d'au moins 4 fichiers ou 150 lignes de code. `/config` → « Review changes » (`risky`, `always`, `off`).
+- **Prompt** : « fini » veut dire « vérifié » ; reproduire un bug avant de le corriger quand c'est possible ; changer d'approche après deux échecs.
+- **Mesure** (`evals/results/2026-09-24-20-04-gemini-3.6-flash.json`) : 7/7 tâches notées réussies (async-error coupée par une erreur d'API, non notée). Sur les 7 tâches notées dans les deux passages : 7 → 7 réussites, 256 050 → 252 352 tokens, 55 → 55 appels d'outils, 281 → 369 s. Les tokens et les appels d'outils n'ont pas bougé, donc les rappels ont peu ou pas servi sur ces tâches faciles : l'agent vérifiait déjà. Le temps en plus vient probablement des attentes de limite par minute (le quota du jour s'est épuisé juste après), ce qui n'est pas vérifié. Ce banc ne peut pas encore montrer le gain du lot 2 : il faut des tâches où l'agent conclut sans vérifier, et `--repeat 3`.
+- **Banc d'essai** : `--compare` ne compare plus que les tâches notées dans les deux passages ; chaque tâche enregistre les rappels du lot 2 déclenchés (`checks`) ; les erreurs de quota (« Usage limit reached ») comptent comme erreurs d'API ; les erreurs d'API gardent aussi une trace.
+
 ## Ordre conseillé
 
 Étape 0, puis 1 → 2 → 3, en mesurant après chaque lot. Les éléments 1, 2, 6, 8 et 10 sont ceux qui ont les gains mesurés les plus nets pour l'effort.

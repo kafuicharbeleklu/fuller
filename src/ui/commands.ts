@@ -181,6 +181,16 @@ function configItems(ctx: CommandContext): ConfigItem[] {
       label: 'Learned memory', value: bool(ctx.config.settings.autoMemory !== false), options: ['true', 'false'],
       onChange: (value) => { ctx.config.settings.autoMemory = value === 'true'; saveUserSetting(['autoMemory'], value === 'true'); ctx.agent.reloadInstructions(); },
     },
+    {
+      label: 'Check work before finishing', value: bool(ctx.config.settings.verifyWork !== false), options: ['true', 'false'],
+      description: 'Remind the model to test its changes, finish its task list or explain a failed check before it concludes',
+      onChange: (value) => { ctx.config.settings.verifyWork = value === 'true'; saveUserSetting(['verifyWork'], value === 'true'); },
+    },
+    {
+      label: 'Review changes', value: ctx.config.settings.reviewChanges ?? 'risky', options: ['risky', 'always', 'off'],
+      description: 'A second agent reads the changes before the model concludes: large changes only, every change, or never',
+      onChange: (value) => { ctx.config.settings.reviewChanges = value as 'risky' | 'always' | 'off'; saveUserSetting(['reviewChanges'], value); },
+    },
     { label: 'Verbose output', value: bool(ctx.verbose), options: ['true', 'false'], onChange: () => ctx.toggleVerbose() },
     {
       label: 'Notifications', value: ctx.config.notifications, options: ['off', 'permission', 'all'],

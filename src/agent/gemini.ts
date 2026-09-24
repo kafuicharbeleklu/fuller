@@ -1,4 +1,4 @@
-import { GoogleGenAI, ThinkingLevel, type Content, type FunctionDeclaration, type GenerateContentConfig, type Part } from '@google/genai';
+import { FunctionCallingConfigMode, GoogleGenAI, ThinkingLevel, type Content, type FunctionDeclaration, type GenerateContentConfig, type Part } from '@google/genai';
 import { getSystemPrompt } from './systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
 import { schedulerFor, isDeadKeyError, isQuotaError, isOverloadError, type QuotaScheduler, type Route, type ModelUsage } from './keyPool.js';
@@ -57,6 +57,8 @@ export interface StreamOptions {
   onRetry?: (info: RetryInfo) => void;
   onAttempt?: () => void;
   gitBranch?: string;
+  /** Text only: the model may not call tools in this reply (the turn is being stopped). */
+  noTools?: boolean;
 }
 
 export class GeminiAgentSession {
@@ -371,7 +373,11 @@ export class GeminiAgentSession {
       async () => {
         const stream = await this.chat.sendMessageStream({
           message,
-          config: { ...this.chatConfig, abortSignal: signal },
+          config: {
+            ...this.chatConfig,
+            ...(options.noTools ? { toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.NONE } } } : {}),
+            abortSignal: signal,
+          },
         });
         let text = '';
         let usage: TurnUsage | undefined;

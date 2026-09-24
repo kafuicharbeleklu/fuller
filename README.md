@@ -136,6 +136,12 @@ Les raccourcis simples peuvent être redéfinis dans `~/.fuller/keybindings.json
 
 **Lire avant de modifier.** Comme Claude Code, Fuller refuse de modifier ou d'écraser un fichier existant qu'il n'a pas lu dans la session, ou qui a changé depuis sa lecture (par toi, un formateur ou une commande). Il doit le relire, ce qui évite d'éditer de mémoire ou d'écraser tes changements.
 
+**Vérifier avant de conclure.** Fuller suit ce que fait chaque tour : fichiers modifiés, commandes de vérification lancées et leur code de sortie, liste de tâches. Au moment de conclure, il rappelle au modèle ce qui manque, une seule fois par sujet : lancer un contrôle après une modification de code, relancer celui-ci si des fichiers ont changé depuis, corriger ou expliquer un contrôle en échec, finir sa liste de tâches. Le modèle peut toujours conclure honnêtement (« impossible à tester ici »). Une question, une analyse ou une modification de documentation ne déclenche rien. `/config` → « Check work before finishing » le désactive.
+
+**Relecture des gros changements.** Quand un tour modifie au moins 4 fichiers de code ou 150 lignes, un second agent en lecture seule relit le diff face à la demande et à la réponse finale, et ne signale que des défauts concrets (exigence oubliée, bogue, appelant incohérent, affirmation contredite par le code). Ses remarques reviennent au modèle, qui corrige ou les écarte. `/config` → « Review changes » : `risky` (défaut), `always` ou `off`. Les seuils sont des hypothèses à mesurer sur le banc d'essai.
+
+**Absence de progrès.** Le même appel d'outil répété 4 fois sans qu'aucun fichier change, ou la même erreur 3 fois : Fuller demande au modèle de prendre du recul. Si cela recommence, il arrête le tour et le modèle explique, sans outils, ce qu'il a tenté et ce qui le bloque.
+
 **Vérifier après chaque modification.** Un hook `PostToolUse` renvoie sa sortie au modèle, qui corrige de lui-même. Exemple pour un projet TypeScript, dans `.fuller/settings.json` :
 
 ```json

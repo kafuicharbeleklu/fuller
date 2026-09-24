@@ -29,7 +29,7 @@ vi.mock('../src/agent/gemini.js', () => {
       return this.next(opts);
     }
     async sendToolResponses(responses: any[], opts: any) {
-      calls.push({ kind: 'tools', responses });
+      calls.push({ kind: 'tools', responses, noTools: !!opts?.noTools });
       return this.next(opts);
     }
     private async next(opts: any) {
@@ -438,6 +438,108 @@ describe('AgentLoop', () => {
     expect(loop.getTodos()[0].status).toBe('in_progress');
     expect(loop.getSessionData().todos).toHaveLength(2);
     expect(calls[1].responses[0].output).toMatch(/Todos updated \(0\/2 completed, 1 in progress\)/);
+  });
+
+  describe('checking the work before concluding (lot 2)', () => {
+    const approveAll = () => makeCallbacks({ onRequestConfirmation: (c) => { if (c) c.onDecide({ kind: 'yes' }); } });
+    const notices = (items: any[]) => items.filter((i) => i.kind === 'system').map((i) => i.message.content);
+
+    it('asks for a check when code changed and nothing was run, once', async () => {
+      script = [
+        { functionCalls: [{ id: '1', name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { text: 'Done.' },
+        { functionCalls: [{ id: '2', name: 'execute_bash', args: { command: 'node --check x.js' } }] },
+        { text: 'Checked: x.js parses.' },
+      ];
+      const { cb, items } = approveAll();
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+      await loop.handleUserInput('add x');
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'user', 'tools']);
+      expect(calls[2].text).toContain('[Before you finish] You changed `x.js` and ran no command to check the change');
+      expect(notices(items)).toContain('↺ No check run after the changes · asking to verify');
+      expect(items.some((i) => i.kind === 'text' && i.content === 'Checked: x.js parses.')).toBe(true);
+    });
+
+    it('asks to fix or explain a failed check', async () => {
+      script = [
+        { functionCalls: [{ id: '1', name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { functionCalls: [{ id: '2', name: 'execute_bash', args: { command: 'node -e "process.exit(3)"' } }] },
+        { text: 'Done.' },
+        { text: 'The check fails for a reason unrelated to x.js.' },
+      ];
+      const { cb } = approveAll();
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+      await loop.handleUserInput('add x');
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'tools', 'user']);
+      expect(calls[3].text).toContain('exited with code 3');
+    });
+
+    it('can be turned off', async () => {
+      script = [
+        { functionCalls: [{ id: '1', name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { text: 'Done.' },
+      ];
+      const { cb } = approveAll();
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      config.settings.verifyWork = false;
+      const loop = new AgentLoop(config, cb);
+      await loop.handleUserInput('add x');
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools']);
+    });
+
+    it('asks to change approach on a repeated call, then stops with tools off', async () => {
+      const read = { name: 'read_file', args: { file_path: 'a.txt' } };
+      script = [
+        ...Array.from({ length: 5 }, (_, i) => ({ functionCalls: [{ id: `r${i}`, ...read }] })),
+        { text: 'I am stuck: the file never shows what I expect.' },
+      ];
+      const { cb, items } = makeCallbacks();
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+      await loop.handleUserInput('look');
+      const tools = calls.filter((c) => c.kind === 'tools');
+      expect(tools).toHaveLength(5);
+      expect(tools[2].responses[0].output).not.toContain('[No progress]');
+      expect(tools[3].responses[0].output).toContain('[No progress] You have repeated the same read_file call 4 times');
+      expect(tools[3].noTools).toBe(false);
+      expect(tools[4].responses[0].output).toContain('Stop now');
+      expect(tools[4].noTools).toBe(true);
+      expect(notices(items).some((n) => n.startsWith('⚠ Stopped: repeating the same read_file call'))).toBe(true);
+      expect(items.some((i) => i.kind === 'text' && i.content.startsWith('I am stuck'))).toBe(true);
+    });
+
+    it('has a second agent review the changes and hands its findings back', async () => {
+      script = [
+        { functionCalls: [{ id: '1', name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { functionCalls: [{ id: '2', name: 'execute_bash', args: { command: 'node --check x.js' } }] },
+        { text: 'Done: x is 2.' },
+        { text: 'x.js:1 — x is 1, not 2 — the answer claims 2' },
+        { text: 'Fixed the claim: x is 1 as asked.' },
+      ];
+      const { cb, items } = approveAll();
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      config.settings.reviewChanges = 'always';
+      const loop = new AgentLoop(config, cb);
+      await loop.handleUserInput('add x = 1');
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'tools', 'user', 'user']);
+      expect(calls[3].text).toContain('<request>\nadd x = 1\n</request>');
+      expect(calls[3].text).toContain('+export const x = 1;');
+      expect(calls[3].text).toContain('<answer>\nDone: x is 2.\n</answer>');
+      expect(calls[4].text).toContain('[Independent review]');
+      expect(calls[4].text).toContain('x.js:1 — x is 1, not 2');
+      expect(notices(items)).toContain('↺ Review found possible problems · asking to check them');
+    });
+
+    it('does not review a small change by default', async () => {
+      script = [
+        { functionCalls: [{ id: '1', name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { functionCalls: [{ id: '2', name: 'execute_bash', args: { command: 'node --check x.js' } }] },
+        { text: 'Done.' },
+      ];
+      const { cb } = approveAll();
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+      await loop.handleUserInput('add x');
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'tools']);
+    });
   });
 
   describe('hooks', () => {

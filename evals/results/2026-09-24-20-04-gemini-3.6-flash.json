@@ -1,0 +1,114 @@
+{
+  "summary": {
+    "model": "gemini-3.6-flash",
+    "date": "2026-09-24T20:11:52.974Z",
+    "passed": 7,
+    "runs": 7,
+    "apiErrors": 1,
+    "rate": 1,
+    "tokens": 252352,
+    "promptTokens": 245156,
+    "cachedTokens": 0,
+    "durationMs": 368514,
+    "toolCalls": 55
+  },
+  "rows": [
+    {
+      "task": "add-cli-flag",
+      "run": 1,
+      "pass": true,
+      "status": "pass",
+      "durationMs": 77046,
+      "tokens": 37175,
+      "promptTokens": 35770,
+      "cachedTokens": 0,
+      "toolCalls": 9,
+      "modelUsed": "gemini-3.6-flash"
+    },
+    {
+      "task": "answer-question",
+      "run": 1,
+      "pass": true,
+      "status": "pass",
+      "durationMs": 28492,
+      "tokens": 21972,
+      "promptTokens": 21556,
+      "cachedTokens": 0,
+      "toolCalls": 5,
+      "modelUsed": "gemini-3.6-flash"
+    },
+    {
+      "task": "async-error",
+      "run": 1,
+      "pass": false,
+      "status": "api-error",
+      "durationMs": 82899,
+      "tokens": 30218,
+      "promptTokens": 28266,
+      "cachedTokens": 0,
+      "toolCalls": 7,
+      "checkOutput": "TAP version 13\n# Subtest: collects values and failures\nnot ok 1 - collects values and failures\n  ---\n  duration_ms: 3.690376\n  type: 'test'\n  location: '/tmp/fuller-eval-EFOJSU/repo/test/fetchAll.test.js:5:1'\n  failureType: 'testCodeFailure'\n  error: 'boom'\n  code: 'ERR_TEST_FAILURE'\n  stack: |-\n    res (file:///tmp/fuller-eval-EFOJSU/repo/test/fetchAll.test.js:6:66)\n    fetchAll (file:///tmp/fuller-eval-EFOJSU/repo/src/fetchAll.js:7:45)\n    async TestContext.<anonymous> (file:///tmp/fuller-eval-EFOJSU/repo/test/fetchAll.test.js:6:15)\n    async Test.run (node:internal/test_runner/test:1054:7)\n    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)\n  ...\n1..1\n# tests 1\n# suites 0\n# pass 0\n# fail 1\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 381.852156\n",
+      "modelUsed": "gemini-3.6-flash"
+    },
+    {
+      "task": "fix-off-by-one",
+      "run": 1,
+      "pass": true,
+      "status": "pass",
+      "durationMs": 35049,
+      "tokens": 34398,
+      "promptTokens": 33534,
+      "cachedTokens": 0,
+      "toolCalls": 7,
+      "modelUsed": "gemini-3.6-flash"
+    },
+    {
+      "task": "implement-slugify",
+      "run": 1,
+      "pass": true,
+      "status": "pass",
+      "durationMs": 53994,
+      "tokens": 39060,
+      "promptTokens": 37575,
+      "cachedTokens": 0,
+      "toolCalls": 9,
+      "modelUsed": "gemini-3.6-flash"
+    },
+    {
+      "task": "rename-function",
+      "run": 1,
+      "pass": true,
+      "status": "pass",
+      "durationMs": 56745,
+      "tokens": 53836,
+      "promptTokens": 52951,
+      "cachedTokens": 0,
+      "toolCalls": 11,
+      "modelUsed": "gemini-3.6-flash"
+    },
+    {
+      "task": "respect-memory-rule",
+      "run": 1,
+      "pass": true,
+      "status": "pass",
+      "durationMs": 56625,
+      "tokens": 36472,
+      "promptTokens": 35277,
+      "cachedTokens": 0,
+      "toolCalls": 9,
+      "modelUsed": "gemini-3.6-flash"
+    },
+    {
+      "task": "update-config",
+      "run": 1,
+      "pass": true,
+      "status": "pass",
+      "durationMs": 60563,
+      "tokens": 29439,
+      "promptTokens": 28493,
+      "cachedTokens": 0,
+      "toolCalls": 5,
+      "modelUsed": "gemini-3.6-flash"
+    }
+  ]
+}

@@ -45,6 +45,10 @@ export interface Settings {
   autoMemory?: boolean;
   /** Have the model answer after a `!` command (Claude Code does); default true. */
   replyAfterShell?: boolean;
+  /** Before the model concludes, ask it to check its changes, finish its task list or explain a failed check (default true). */
+  verifyWork?: boolean;
+  /** A second agent reviews the turn's changes before the model concludes: large changes only (default), every change, or never. */
+  reviewChanges?: 'risky' | 'always' | 'off';
   notifications?: NotificationSetting;
   spinnerVerbs?: string[];
   bashTimeoutMs?: number;
