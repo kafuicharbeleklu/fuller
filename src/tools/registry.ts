@@ -3,6 +3,7 @@ import { executeBash, type BackgroundReady } from './bash.js';
 import { needsNativeTerminal, type RunInTerminal } from './nativeTerminal.js';
 import { readFile, writeFile, editFile, previewEdit, previewWrite } from './fileOps.js';
 import { listDirectory, searchFiles, globFiles, formatSearchOutput } from './search.js';
+import { outlineFile } from './outline.js';
 import { webFetch } from './web.js';
 import { resolveInWorkspace } from './paths.js';
 import type { FileTracker } from './fileTracker.js';
@@ -59,6 +60,17 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
         file_path: { type: Type.STRING, description: 'Relative or absolute path to the file.' },
         offset: { type: Type.INTEGER, description: '1-indexed line number to start reading from.' },
         limit: { type: Type.INTEGER, description: 'Maximum number of lines to read.' },
+      },
+      required: ['file_path'],
+    },
+  },
+  {
+    name: 'outline_file',
+    description: 'Outline classes, functions, interfaces, types and methods in a source code file with their line numbers. Use this on large files before read_file to locate target code efficiently.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        file_path: { type: Type.STRING, description: 'Relative or absolute path to the file.' },
       },
       required: ['file_path'],
     },
@@ -219,7 +231,7 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
   },
 ];
 
-export const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'skill', 'todo_write', 'task_output', 'task_kill', 'exit_plan_mode', 'agent']);
+export const READ_ONLY_TOOLS = new Set(['read_file', 'outline_file', 'list_directory', 'search_files', 'glob', 'skill', 'todo_write', 'task_output', 'task_kill', 'exit_plan_mode', 'agent']);
 
 export interface ToolContext {
   cwd: string;
@@ -358,6 +370,11 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       return { output: r.content, summary: r.summary };
     }
 
+    case 'outline_file': {
+      const res = await outlineFile(String(args.file_path ?? ''), ctx.cwd, ctx.extraDirs);
+      return { output: res.outline, summary: `${res.count} symbol${res.count === 1 ? '' : 's'}` };
+    }
+
     case 'write_file': {
       const full = guardWrite(args.file_path, ctx);
       const r = await writeFile(args.file_path, String(args.content ?? ''), fileCtx);
@@ -462,6 +479,7 @@ export function toolLabel(name: string): string {
   switch (name) {
     case 'execute_bash': return 'Bash';
     case 'read_file': return 'Read';
+    case 'outline_file': return 'Outline';
     case 'write_file': return 'Write';
     case 'edit_file': return 'Edit';
     case 'list_directory': return 'List';
@@ -483,6 +501,7 @@ export function toolArgSummary(name: string, args: Record<string, any>): string 
   switch (name) {
     case 'execute_bash': return String(args.command ?? '').split('\n')[0].slice(0, 120);
     case 'read_file': return `${args.file_path}${args.offset ? `:${args.offset}` : ''}${args.limit ? `+${args.limit}` : ''}`;
+    case 'outline_file': return String(args.file_path ?? '');
     case 'write_file': return String(args.file_path ?? '');
     case 'edit_file': return String(args.file_path ?? '');
     case 'list_directory': return String(args.dir_path ?? '.');

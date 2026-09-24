@@ -9,7 +9,7 @@ import { geminiToolDeclarations } from '../tools/registry.js';
 import { executeBash } from '../tools/bash.js';
 import { listAllSessions, listSessions, formatRelative, sessionsDir, type SessionMeta } from '../session/store.js';
 import { loadPromptTimestamps } from '../session/history.js';
-import { loadMemories, memoryFile } from '../agent/autoMemory.js';
+import { addMemory, loadMemories, memoryFile } from '../agent/autoMemory.js';
 import { quotaBar, usageSummary } from '../agent/quotaText.js';
 import { getThemeNames, type Theme } from './theme.js';
 import { APP_NAME, APP_VERSION, MEMORY_FILE, CONFIG_DIR_NAME } from '../branding.js';
@@ -508,6 +508,29 @@ export const COMMANDS: SlashCommand[] = [
         footer: 'Changes apply on the next message.',
         hint: 'Enter to confirm · Esc to cancel',
       });
+    },
+  },
+  {
+    name: '/learn',
+    description: 'Save a note or instruction to learned memory',
+    usage: '<note>',
+    takesArg: true,
+    run: (ctx, arg) => {
+      const note = (arg ?? '').trim();
+      if (!note) {
+        ctx.addSystem('Usage: `/learn <instruction, convention or preference>`');
+        return;
+      }
+      const res = addMemory(ctx.config.workspaceDir, { text: note, type: 'feedback', scope: 'project' });
+      if (res.error) {
+        ctx.addSystem(`✗ Error saving to memory: ${res.error}`);
+        return;
+      }
+      if (res.duplicate) {
+        ctx.addSystem(`Note already in memory: "${res.duplicate.text}" [${res.duplicate.id}]`);
+        return;
+      }
+      ctx.addSystem(`✓ Saved to project memory [${res.entry?.id}]: "${res.entry?.text}"\nThis note will be loaded in future turns and sessions.`);
     },
   },
   {
