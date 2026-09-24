@@ -4,3 +4,6 @@ dist/
 .fuller/settings.local.json
 *.tsgz
 __pycache__/
+
+# Local experiments
+scratch/

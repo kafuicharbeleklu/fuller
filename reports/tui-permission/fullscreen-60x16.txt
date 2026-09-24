@@ -1,8 +1,8 @@
+  ██╔═══╝  Gemini 3.6 Flash · Gemini API
+  █████╗   /tmp/fuller-permission-wzjd80v5
+  ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Ctrl+O toggles the detailed transcript with full tool 
-  output.
 
 
 ❯ please ask permission                                    

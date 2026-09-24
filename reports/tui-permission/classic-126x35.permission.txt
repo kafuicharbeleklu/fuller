@@ -1,12 +1,10 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-a1w9jw8o
+  █████╗   /tmp/fuller-permission-84gcmrkx
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Add a FULLER.md at the project root to give Fuller lasting context.
 
 
 ❯ please ask permission                                                                                                      

@@ -2,17 +2,17 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-jz6x9ro5
+  █████╗   /tmp/fuller-auth-3sefvp3v
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Type / for commands, @ to mention a file, ! to run a shell command.
 
 
 ! sudo fuller-auth-test cancel                                                                     
 
   ⎿  exit 124
+
+
 
 
 

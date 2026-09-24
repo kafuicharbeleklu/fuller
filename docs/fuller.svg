@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="956" height="654" viewBox="0 0 956 654" font-family="'DejaVu Sans Mono', 'Menlo', 'Consolas', monospace" font-size="14" xml:space="preserve">
+<rect width="956" height="654" rx="8" fill="#1e1e1e"/>
+<circle cx="18" cy="15" r="6" fill="#ff5f56"/><circle cx="38" cy="15" r="6" fill="#ffbd2e"/><circle cx="58" cy="15" r="6" fill="#27c93f"/>
+<text x="16.0" y="75" fill="#d4a04c" textLength="75.6" lengthAdjust="spacingAndGlyphs">  ██████╗</text>
+<text x="108.4" y="75" fill="#e5e5e5" font-weight="bold" textLength="50.4" lengthAdjust="spacingAndGlyphs">Fuller</text>
+<text x="158.8" y="75" fill="#666666" textLength="58.8" lengthAdjust="spacingAndGlyphs"> v0.3.0</text>
+<text x="16.0" y="93" fill="#d4a04c" textLength="75.6" lengthAdjust="spacingAndGlyphs">  ██╔═══╝</text>
+<text x="108.4" y="93" fill="#666666" textLength="243.6" lengthAdjust="spacingAndGlyphs">Gemini 3.6 Flash · Gemini API</text>
+<text x="16.0" y="111" fill="#d4a04c" textLength="75.6" lengthAdjust="spacingAndGlyphs">  █████╗ </text>
+<text x="108.4" y="111" fill="#666666" textLength="218.4" lengthAdjust="spacingAndGlyphs">~/projects/demo</text>
+<text x="16.0" y="129" fill="#d4a04c" textLength="75.6" lengthAdjust="spacingAndGlyphs">  ██╔══╝ </text>
+<text x="16.0" y="147" fill="#d4a04c" textLength="75.6" lengthAdjust="spacingAndGlyphs">  ██║    </text>
+<text x="16.0" y="165" fill="#d4a04c" textLength="75.6" lengthAdjust="spacingAndGlyphs">  ╚═╝    </text>
+<text x="16.0" y="183" fill="#666666" textLength="184.8" lengthAdjust="spacingAndGlyphs">↺ Resumed session demo</text>
+<rect x="16.0" y="224" width="16.8" height="18" fill="#373737"/>
+<text x="16.0" y="237" fill="#505050" textLength="16.8" lengthAdjust="spacingAndGlyphs">❯ </text>
+<rect x="32.8" y="224" width="453.6" height="18" fill="#373737"/>
+<text x="32.8" y="237" fill="#ffffff" textLength="453.6" lengthAdjust="spacingAndGlyphs">Make add() reject NaN and Infinity, then run the tests</text>
+<rect x="486.4" y="224" width="445.2" height="18" fill="#373737"/>
+<text x="16.0" y="273" fill="#4fb46a" textLength="16.8" lengthAdjust="spacingAndGlyphs">● </text>
+<text x="32.8" y="273" fill="#e5e5e5" font-weight="bold" textLength="50.4" lengthAdjust="spacingAndGlyphs">Update</text>
+<text x="83.2" y="273" fill="#666666" textLength="8.4" lengthAdjust="spacingAndGlyphs">(</text>
+<text x="91.6" y="273" fill="#e5e5e5" text-decoration="underline" textLength="58.8" lengthAdjust="spacingAndGlyphs">math.ts</text>
+<text x="150.4" y="273" fill="#666666" textLength="8.4" lengthAdjust="spacingAndGlyphs">)</text>
+<text x="32.8" y="291" fill="#666666" textLength="25.2" lengthAdjust="spacingAndGlyphs">⎿  </text>
+<text x="58.0" y="291" fill="#e5e5e5" textLength="50.4" lengthAdjust="spacingAndGlyphs">Added </text>
+<text x="108.4" y="291" fill="#e5e5e5" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs">1</text>
+<text x="116.8" y="291" fill="#e5e5e5" textLength="823.2" lengthAdjust="spacingAndGlyphs"> line                                                                                             </text>
+<text x="32.8" y="309" fill="#666666" textLength="58.8" lengthAdjust="spacingAndGlyphs">    1  </text>
+<text x="91.6" y="309" fill="#e5e5e5" opacity="0.6" textLength="361.2" lengthAdjust="spacingAndGlyphs">export function add(a: number, b: number) {</text>
+<rect x="58.0" y="314" width="33.6" height="18" fill="#022800"/>
+<text x="58.0" y="327" fill="#50c850" textLength="33.6" lengthAdjust="spacingAndGlyphs"> 2 +</text>
+<rect x="91.6" y="314" width="840.0" height="18" fill="#022800"/>
+<text x="91.6" y="327" fill="#e5e5e5" textLength="840.0" lengthAdjust="spacingAndGlyphs">  if (!Number.isFinite(a) || !Number.isFinite(b)) throw new TypeError('add expects finite numbers');</text>
+<text x="58.0" y="345" fill="#666666" textLength="33.6" lengthAdjust="spacingAndGlyphs"> 3  </text>
+<text x="91.6" y="345" fill="#e5e5e5" opacity="0.6" textLength="126.0" lengthAdjust="spacingAndGlyphs">  return a + b;</text>
+<text x="58.0" y="363" fill="#666666" textLength="33.6" lengthAdjust="spacingAndGlyphs"> 4  </text>
+<text x="91.6" y="363" fill="#e5e5e5" opacity="0.6" textLength="8.4" lengthAdjust="spacingAndGlyphs">}</text>
+<text x="32.8" y="399" fill="#666666" textLength="33.6" lengthAdjust="spacingAndGlyphs">Ran </text>
+<text x="66.4" y="399" fill="#666666" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs">1</text>
+<text x="74.8" y="399" fill="#666666" textLength="117.6" lengthAdjust="spacingAndGlyphs"> shell command</text>
+<text x="16.0" y="435" fill="#e5e5e5" textLength="16.8" lengthAdjust="spacingAndGlyphs">● </text>
+<text x="32.8" y="435" fill="#b1b9f9" textLength="42.0" lengthAdjust="spacingAndGlyphs">add()</text>
+<text x="74.8" y="435" fill="#e5e5e5" textLength="117.6" lengthAdjust="spacingAndGlyphs"> now throws a </text>
+<text x="192.4" y="435" fill="#b1b9f9" textLength="75.6" lengthAdjust="spacingAndGlyphs">TypeError</text>
+<text x="268.0" y="435" fill="#e5e5e5" textLength="210.0" lengthAdjust="spacingAndGlyphs"> when either argument is </text>
+<text x="478.0" y="435" fill="#b1b9f9" textLength="25.2" lengthAdjust="spacingAndGlyphs">NaN</text>
+<text x="503.2" y="435" fill="#e5e5e5" textLength="184.8" lengthAdjust="spacingAndGlyphs"> or infinite, and the </text>
+<text x="688.0" y="435" fill="#e5e5e5" font-weight="bold" textLength="58.8" lengthAdjust="spacingAndGlyphs">3 tests</text>
+<text x="746.8" y="435" fill="#e5e5e5" textLength="193.2" lengthAdjust="spacingAndGlyphs"> pass.                 </text>
+<text x="772.0" y="561" fill="#666666" textLength="151.2" lengthAdjust="spacingAndGlyphs">◐ medium · /effort</text>
+<text x="16.0" y="579" fill="#888888" textLength="915.6" lengthAdjust="spacingAndGlyphs">─────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="16.0" y="597" fill="#e5e5e5" textLength="16.8" lengthAdjust="spacingAndGlyphs">❯ </text>
+<rect x="32.8" y="584" width="8.4" height="18" fill="#e5e5e5"/>
+<text x="16.0" y="615" fill="#888888" textLength="915.6" lengthAdjust="spacingAndGlyphs">─────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="32.8" y="633" fill="#666666" textLength="411.6" lengthAdjust="spacingAndGlyphs">⏸ manual mode on · ? for shortcuts · ← for agents</text>
+</svg>

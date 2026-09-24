@@ -46,3 +46,12 @@ Les fichiers « de la session » sont ceux que l'agent a modifiés (points de re
 - Nouveaux tests : `autoMode`, `commandUsage`, `diffPanel`, loop (mode auto, `!`), infoDialogs.
 - Le smoke test utilise maintenant un dossier personnel temporaire par scénario (il écrivait dans le vrai `~/.fuller`) ; les captures auth et smoke désactivent la réponse après `!` (clé factice).
 - `npm run typecheck`, `npm test` (46 fichiers, 264 tests), `npm run build` : OK. Suites PTY : permission 6/6, auth 10/10, smoke 11/11.
+
+## Finitions (24/09/2026, après la mise en ligne)
+
+- `fuller --resume` plantait en choisissant une session (« Rendered more hooks than during the previous render » : deux hooks venaient après le retour anticipé du sélecteur). Corrigé, avec un test qui empêche de recommencer.
+- Au lancement, le sélecteur de sessions offre aussi Ctrl+A (tous les projets) ; une session d'un autre dossier affiche la commande pour la reprendre. La recherche porte aussi sur le chemin du projet.
+- `/stats` et l'onglet Stats de Settings : carte d'activité sur un an, « All time · Last 7 days · Last 30 days » (touche r), modèle favori, tokens, sessions, session la plus longue, jours actifs, séries, jour le plus actif ; vue Models (touche v). Calculé à partir des sessions enregistrées et de l'historique des prompts ; pas de détail entrée/sortie, Fuller ne compte les tokens que par session.
+- Diffs : les lignes de contexte portent le numéro de ligne du nouveau fichier, comme chez Claude Code (un « 2 » répété apparaissait après une ligne ajoutée).
+- Mode `-p` : les nouvelles tentatives sur 429 et 503 s'affichaient déjà sur la sortie d'erreur (mon constat contraire venait d'un test qui coupait le flux).
+- Dépôt : intégration continue GitHub Actions (Node 20 et 22 : typecheck, tests, build), image d'écran du README produite par `scripts/capture-svg.mjs` à partir d'une capture PTY.

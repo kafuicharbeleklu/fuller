@@ -1,7 +1,12 @@
 # Fuller ✻
 
+[![CI](https://github.com/kafuicharbeleklu/fuller/actions/workflows/ci.yml/badge.svg)](https://github.com/kafuicharbeleklu/fuller/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > Agent de programmation en interface terminal (TUI) inspiré de **Claude Code**, construit avec **React / Ink** et l'API **Google Gemini**.
 > Nommé en hommage à **Thomas Fuller** (vers 1710–1790), dit *the Virginia Calculator* : né en Afrique, réduit en esclavage en Virginie, il résolvait de tête de longs calculs, comme le nombre de secondes vécues par un homme, années bissextiles comprises.
+
+
+![Fuller dans un terminal : une modification de fichier avec son diff, les tests lancés, puis la réponse](docs/fuller.svg)
 
 ---
 

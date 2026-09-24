@@ -66,6 +66,13 @@ function diffPanelLayout(inkColumns: number): { left: number; panel: number } {
   return { left, panel: inkColumns - left };
 }
 
+/** As Claude Code: a conversation from another directory is resumed from there (the command is copied). */
+function otherDirectoryNotice(id: string, workspaceDir: string): string {
+  const command = `cd ${/\s/.test(workspaceDir) ? JSON.stringify(workspaceDir) : workspaceDir} && ${APP_SLUG} --resume ${id}`;
+  void copyToClipboard(command).catch(() => {});
+  return `This conversation is from a different directory.\n\nTo resume, run:\n  ${command}\n\n(Command copied to clipboard)`;
+}
+
 export interface AppProps {
   config: AppConfig;
   initialPrompt?: string;
@@ -84,6 +91,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const themeBeforePicker = useRef<Theme | null>(null);
   const [screen, setScreen] = useState<'picker' | 'main'>(pickSession ? 'picker' : 'main');
+  const startupNotice = useRef<string | null>(null);
   // /resume inside a session: the picker overlay, and a counter that rebuilds the agent from `restored`.
   const [resumeOpen, setResumeOpen] = useState(false);
   const [infoDialog, setInfoDialog] = useState<InfoDialog | null>(null);
@@ -243,6 +251,8 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
     if (ctxWindow) agent.setContextWindow(ctxWindow);
     setItems([{ key: 'banner', kind: 'banner' }, ...(restored ? messagesToTranscript(restored.messages) : [])]);
     if (restored) setUsage((u) => ({ ...u, cumulativeTokens: restored.meta.tokenCount }));
+    // `fuller --resume` then a session of another directory (Ctrl+A): say how to resume it.
+    if (startupNotice.current) { agent.addSystemMessage(startupNotice.current, 'notice'); startupNotice.current = null; }
     getGitInfo(config.workspaceDir).then((info) => {
       setGitInfo(info);
       agent.setGitBranch(info.isGit ? info.branch : undefined);
@@ -503,20 +513,6 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
     );
   }
 
-  if (screen === 'picker') {
-    const sessions = listSessions(config.workspaceDir);
-    return (
-      <ThemeProvider theme={theme}>
-        <SessionPicker
-          sessions={sessions}
-          onRename={(session, title) => { renameStoredSession(session.workspaceDir, session.id, title); }}
-          onSelect={(id) => { setRestored(loadSession(config.workspaceDir, id) ?? undefined); setScreen('main'); }}
-          onCancel={() => setScreen('main')}
-        />
-      </ThemeProvider>
-    );
-  }
-
   // The effort shown in dialog rules, as Claude Code does ("◐ medium · /effort").
   const effortLevel = effectiveThinkingLevel(model, thinking);
   const effortLabel = effortLevel ? `${EFFORT_GLYPHS[effortLevel] ?? '◐'} ${effortLevel} · /effort` : undefined;
@@ -544,6 +540,26 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const suggestion = useMemo(() => {
     return getPromptSuggestion({ items, isGit: gitInfo?.isGit, gitDirty: gitInfo?.isDirty });
   }, [items, gitInfo]);
+
+  // After every hook: returning earlier changes the hook count between renders.
+  if (screen === 'picker') {
+    const sessions = listSessions(config.workspaceDir);
+    return (
+      <ThemeProvider theme={theme}>
+        <SessionPicker
+          sessions={sessions}
+          allSessions={() => listAllSessions()}
+          onRename={(session, title) => { renameStoredSession(session.workspaceDir, session.id, title); }}
+          onSelect={(id, workspaceDir) => {
+            if (path.resolve(workspaceDir) !== path.resolve(config.workspaceDir)) startupNotice.current = otherDirectoryNotice(id, workspaceDir);
+            else setRestored(loadSession(config.workspaceDir, id) ?? undefined);
+            setScreen('main');
+          }}
+          onCancel={() => setScreen('main')}
+        />
+      </ThemeProvider>
+    );
+  }
 
   return (
     <TerminalInputEnabled.Provider value={!terminalActive}>
@@ -649,7 +665,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
           infoDialog.kind === 'effort' ? <EffortDialog levels={supportedThinkingLevels(model)} current={effectiveThinkingLevel(model, thinking) ?? supportedThinkingLevels(model)[0]} onSelect={(level, scope) => { setInfoDialog(null); applyEffort(level, scope); }} onCancel={() => { setInfoDialog(null); addSystem('Cancelled', 'notice'); }} ruleLabel={effortLabel} />
           : infoDialog.kind === 'btw' ? <BtwPanel question={infoDialog.question} ask={(q, onChunk, signal) => agentRef.current ? agentRef.current.askAside(q, onChunk, signal) : Promise.reject(new Error('No session'))} onCopy={(text) => { void copyToClipboard(text).catch(() => {}); }} onFork={(question) => { setInfoDialog(null); agentRef.current?.forkAside(question); }} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
           : infoDialog.kind === 'help' ? <HelpDialog commands={infoDialog.commands} custom={infoDialog.custom} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
-          : infoDialog.kind === 'settings' ? <SettingsDialog status={infoDialog.status} usage={infoDialog.usage} config={infoDialog.config} initialTab={infoDialog.tab} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
+          : infoDialog.kind === 'settings' ? <SettingsDialog status={infoDialog.status} usage={infoDialog.usage} config={infoDialog.config} stats={infoDialog.stats} initialTab={infoDialog.tab} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
           : infoDialog.kind === 'permissions' ? <PermissionsDialog allow={infoDialog.allow} ask={infoDialog.ask} deny={infoDialog.deny} denials={infoDialog.denials} autoRules={infoDialog.autoRules} disabledBuiltin={infoDialog.disabledBuiltin} onAddAutoRule={infoDialog.onAddAutoRule} onRemoveAutoRule={infoDialog.onRemoveAutoRule} onToggleBuiltin={infoDialog.onToggleBuiltin} directories={infoDialog.directories} onAddRule={infoDialog.onAddRule} onRemoveRule={infoDialog.onRemoveRule} onAddDirectory={infoDialog.onAddDirectory} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
           : infoDialog.kind === 'input' ? <InputDialog title={infoDialog.title} description={infoDialog.description} label={infoDialog.label} placeholder={infoDialog.placeholder} hint={infoDialog.hint} complete={infoDialog.complete} onSubmit={infoDialog.onSubmit} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
           : <ListDialog title={infoDialog.title} header={infoDialog.header} items={infoDialog.items} empty={infoDialog.empty} footer={infoDialog.footer} numbered={infoDialog.numbered} hint={infoDialog.hint} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
@@ -666,10 +682,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onSelect={(id, workspaceDir) => {
               setResumeOpen(false);
               if (path.resolve(workspaceDir) !== path.resolve(config.workspaceDir)) {
-                // As Claude Code: a conversation from another directory is resumed from there.
-                const command = `cd ${/\s/.test(workspaceDir) ? JSON.stringify(workspaceDir) : workspaceDir} && ${APP_SLUG} --resume ${id}`;
-                void copyToClipboard(command).catch(() => {});
-                addSystem(`This conversation is from a different directory.\n\nTo resume, run:\n  ${command}\n\n(Command copied to clipboard)`, 'notice');
+                addSystem(otherDirectoryNotice(id, workspaceDir), 'notice');
                 return;
               }
               const session = loadSession(config.workspaceDir, id);

@@ -69,7 +69,7 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
   const source = (everyProject ?? sessions).map((s) => (titles[s.id] ? { ...s, title: titles[s.id] } : s));
   const filtered = source
     .filter((s) => !branchOnly || !branch || s.gitBranch === branch)
-    .filter((s) => !query || `${s.title ?? ''} ${s.id} ${s.gitBranch ?? ''}`.toLowerCase().includes(query.toLowerCase()));
+    .filter((s) => !query || `${s.title ?? ''} ${s.id} ${s.gitBranch ?? ''} ${everywhere ? s.workspaceDir : ''}`.toLowerCase().includes(query.toLowerCase()));
   const safe = Math.max(0, Math.min(index, filtered.length - 1));
   const chosen = filtered[safe];
   const rows = stdout.rows || 24;

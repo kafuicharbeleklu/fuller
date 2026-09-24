@@ -7,7 +7,8 @@ import { loadProjectContext, memoryFilePath } from '../agent/contextLoader.js';
 import { getSystemPrompt } from '../agent/systemPrompt.js';
 import { geminiToolDeclarations } from '../tools/registry.js';
 import { executeBash } from '../tools/bash.js';
-import { listSessions, formatRelative, sessionsDir } from '../session/store.js';
+import { listAllSessions, listSessions, formatRelative, sessionsDir, type SessionMeta } from '../session/store.js';
+import { loadPromptTimestamps } from '../session/history.js';
 import { getThemeNames, type Theme } from './theme.js';
 import { APP_NAME, APP_VERSION, MEMORY_FILE, CONFIG_DIR_NAME } from '../branding.js';
 import type { CommandEntry, ConfigItem, InfoRow, ListItem, SettingsTab } from './InfoDialogs.js';
@@ -62,7 +63,7 @@ export interface CommandContext {
 
 export type InfoDialog =
   | { kind: 'help'; commands: CommandEntry[]; custom: CommandEntry[] }
-  | { kind: 'settings'; tab: SettingsTab; status: InfoRow[]; usage: InfoRow[]; config: ConfigItem[] }
+  | { kind: 'settings'; tab: SettingsTab; status: InfoRow[]; usage: InfoRow[]; config: ConfigItem[]; stats: () => { sessions: SessionMeta[]; prompts: number[] } }
   | { kind: 'btw'; question: string }
   | { kind: 'effort' }
   | { kind: 'input'; title: string; description?: string; label?: string; placeholder?: string; hint?: string; complete?: (value: string) => string; onSubmit: (value: string) => void }
@@ -181,6 +182,14 @@ function configItems(ctx: CommandContext): ConfigItem[] {
   ];
 }
 
+/** The Settings dialog (/status, /config, /usage, /stats) opened on one tab. */
+function settingsDialog(ctx: CommandContext, tab: SettingsTab): InfoDialog {
+  return {
+    kind: 'settings', tab, ...settingsRows(ctx), config: configItems(ctx),
+    stats: () => ({ sessions: listAllSessions(Number.MAX_SAFE_INTEGER), prompts: loadPromptTimestamps() }),
+  };
+}
+
 /** Rows of the Settings dialog, shared by /status and /usage. */
 function settingsRows(ctx: CommandContext): { status: InfoRow[]; usage: InfoRow[] } {
   const sources = loadSettingsSources(ctx.config.workspaceDir);
@@ -253,18 +262,23 @@ export const COMMANDS: SlashCommand[] = [
   {
     name: '/status',
     description: 'Show information about the current session',
-    run: (ctx) => ctx.openDialog({ kind: 'settings', tab: 'status', ...settingsRows(ctx), config: configItems(ctx) }),
+    run: (ctx) => ctx.openDialog(settingsDialog(ctx, 'status')),
   },
   {
     name: '/usage',
     description: 'Show token usage and duration of this session',
     aliases: ['/cost'],
-    run: (ctx) => ctx.openDialog({ kind: 'settings', tab: 'usage', ...settingsRows(ctx), config: configItems(ctx) }),
+    run: (ctx) => ctx.openDialog(settingsDialog(ctx, 'usage')),
+  },
+  {
+    name: '/stats',
+    description: 'Show your usage statistics and activity',
+    run: (ctx) => ctx.openDialog(settingsDialog(ctx, 'stats')),
   },
   {
     name: '/config',
     description: 'Open settings',
-    run: (ctx) => ctx.openDialog({ kind: 'settings', tab: 'config', ...settingsRows(ctx), config: configItems(ctx) }),
+    run: (ctx) => ctx.openDialog(settingsDialog(ctx, 'config')),
   },
   {
     name: '/context',

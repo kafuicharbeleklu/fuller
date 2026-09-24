@@ -80,7 +80,8 @@ export const DiffView: React.FC<{ diff: string; maxLines?: number; showFile?: bo
       ) : null}
       {shown.map((l, i) => {
         if (l.type === 'sep') return <Text key={i} color={theme.subtle} backgroundColor={background}>{`${' '.repeat(numberWidth + 1)}…`.padEnd(background ? rowWidth : 0)}</Text>;
-        const no = String((l.type === 'add' ? l.newNo : l.oldNo) ?? '').padStart(numberWidth, ' ');
+        // Removed lines keep their old number; added and context lines show the new file's, as Claude Code does.
+        const no = String((l.type === 'del' ? l.oldNo : l.newNo) ?? '').padStart(numberWidth, ' ');
         const sign = l.type === 'add' ? '+' : l.type === 'del' ? '-' : ' ';
         const color = l.type === 'add' ? theme.diffAdded : l.type === 'del' ? theme.diffRemoved : theme.subtle;
         const bg = l.type === 'add' ? theme.diffAddedBg : l.type === 'del' ? theme.diffRemovedBg : background;

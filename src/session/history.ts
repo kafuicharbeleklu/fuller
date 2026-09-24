@@ -34,6 +34,21 @@ export function loadPromptHistory(cwd: string, limit = Infinity, scope: 'project
   }
 }
 
+/** When every prompt was sent (all projects), for /stats. */
+export function loadPromptTimestamps(): number[] {
+  try {
+    if (!fs.existsSync(HISTORY_FILE)) return [];
+    const out: number[] = [];
+    for (const line of fs.readFileSync(HISTORY_FILE, 'utf8').split('\n')) {
+      if (!line) continue;
+      try { const e = JSON.parse(line) as HistoryEntry; if (typeof e.ts === 'number') out.push(e.ts); } catch {}
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /** Latest time each prompt was sent, for the ages in ctrl+r ("11m ago"). */
 export function loadPromptTimes(): Map<string, number> {
   const times = new Map<string, number>();

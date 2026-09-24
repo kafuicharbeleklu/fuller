@@ -7,6 +7,8 @@ import { OverlayFrame } from './OverlayFrame.js';
 import { Select } from './Select.js';
 import { useRawInput } from './useRawInput.js';
 import { APP_NAME } from '../branding.js';
+import { StatsView } from './StatsView.js';
+import type { SessionMeta } from '../session/store.js';
 
 export interface InfoRow {
   label: string;
@@ -72,7 +74,7 @@ export interface ConfigItem {
   onOpen?: () => void;
 }
 
-export type SettingsTab = 'status' | 'config' | 'usage';
+export type SettingsTab = 'status' | 'config' | 'usage' | 'stats';
 type SettingsFocus = 'tabs' | 'search' | 'list';
 
 const CONFIG_LABEL_WIDTH = 43;
@@ -87,10 +89,10 @@ const CONFIG_HINTS: Record<SettingsFocus, string> = {
  * Status, Config and Usage tabs. Config opens on its search field ("Search
  * settings…"); ↓ enters the list, where Enter or Space changes the setting.
  */
-export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; config?: ConfigItem[]; initialTab: SettingsTab; onClose: () => void; ruleLabel?: string }> = ({ status, usage, config = [], initialTab, onClose, ruleLabel }) => {
+export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; config?: ConfigItem[]; stats?: () => { sessions: SessionMeta[]; prompts: number[] }; initialTab: SettingsTab; onClose: () => void; ruleLabel?: string }> = ({ status, usage, config = [], stats, initialTab, onClose, ruleLabel }) => {
   const theme = useTheme();
   const { stdout } = useStdout();
-  const tabs: Array<{ key: SettingsTab; label: string }> = [{ key: 'status', label: 'Status' }, ...(config.length ? [{ key: 'config' as const, label: 'Config' }] : []), { key: 'usage', label: 'Usage' }];
+  const tabs: Array<{ key: SettingsTab; label: string }> = [{ key: 'status', label: 'Status' }, ...(config.length ? [{ key: 'config' as const, label: 'Config' }] : []), { key: 'usage', label: 'Usage' }, ...(stats ? [{ key: 'stats' as const, label: 'Stats' }] : [])];
   const [tab, setTab] = useState(Math.max(0, tabs.findIndex((t) => t.key === initialTab)));
   const current = tabs[tab]?.key ?? 'status';
   const [focus, setFocus] = useState<SettingsFocus>(initialTab === 'config' ? 'search' : 'tabs');
@@ -183,8 +185,8 @@ export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; con
     </Box>
   );
   return (
-    <OverlayFrame title="Settings" header={header} hint={current === 'config' ? CONFIG_HINTS[focus] : 'Esc to cancel'} ruleLabel={ruleLabel}>
-      <Box flexDirection="column">{current === 'config' ? configView : rows(current === 'usage' ? usage : status)}</Box>
+    <OverlayFrame title="Settings" header={header} hint={current === 'config' ? CONFIG_HINTS[focus] : current === 'stats' ? undefined : 'Esc to cancel'} ruleLabel={ruleLabel}>
+      <Box flexDirection="column">{current === 'config' ? configView : current === 'stats' && stats ? <StatsView load={stats} width={width} /> : rows(current === 'usage' ? usage : status)}</Box>
     </OverlayFrame>
   );
 };
