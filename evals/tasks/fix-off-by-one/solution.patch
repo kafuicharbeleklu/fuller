@@ -1,0 +1,12 @@
+diff --git a/src/range.js b/src/range.js
+index a6fb399..0ab2ad7 100644
+--- a/src/range.js
++++ b/src/range.js
+@@ -1,6 +1,6 @@
+ /** Sum of the integers from a to b, both included. */
+ export function sumRange(a, b) {
+   let total = 0;
+-  for (let i = a; i < b; i++) total += i;
++  for (let i = a; i <= b; i++) total += i;
+   return total;
+ }

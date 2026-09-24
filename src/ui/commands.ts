@@ -233,6 +233,8 @@ function settingsRows(ctx: CommandContext): { status: InfoRow[]; usage: InfoRow[
       { label: 'Total tokens', value: u.cumulativeTokens.toLocaleString('en-US') },
       { label: 'Last request', value: `${u.promptTokens.toLocaleString('en-US')} prompt · ${u.responseTokens.toLocaleString('en-US')} response` },
       { label: 'API calls', value: `${u.apiCalls} · ${u.turns} tool turns` },
+      // Gemini's implicit cache: share of the prompt tokens it served (a stable prompt start raises it).
+      { label: 'Cached prompt', value: u.cumulativePromptTokens ? `${Math.round(((u.cumulativeCachedTokens ?? 0) / u.cumulativePromptTokens) * 100)}% · ${(u.cumulativeCachedTokens ?? 0).toLocaleString('en-US')} of ${u.cumulativePromptTokens.toLocaleString('en-US')} tokens` : undefined, placeholder: 'no request yet' },
       { label: 'Total duration', value: fmtDuration(Date.now() - ctx.startedAt) },
       { label: 'Pricing', value: `https://ai.google.dev/pricing (${ctx.config.model})` },
     ],

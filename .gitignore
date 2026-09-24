@@ -10,3 +10,6 @@ scratch/
 
 # Local notes with secrets
 note.txt
+
+# Benchmark traces of failed runs (kept locally for diagnosis)
+evals/results/traces/

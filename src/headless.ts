@@ -63,7 +63,11 @@ export async function runHeadless(config: AppConfig, prompt: string, format: Out
     session_id: agent.sessionId,
     model: config.model,
     num_tool_calls: tools.length,
-    usage: { total_tokens: agent.usage.cumulativeTokens, api_calls: agent.usage.apiCalls, turns: agent.usage.turns },
+    usage: {
+      total_tokens: agent.usage.cumulativeTokens, api_calls: agent.usage.apiCalls, turns: agent.usage.turns,
+      // Prompt tokens sent, and the part served by Gemini's implicit cache.
+      prompt_tokens: agent.usage.cumulativePromptTokens ?? 0, cached_tokens: agent.usage.cumulativeCachedTokens ?? 0,
+    },
     duration_ms: Date.now() - started,
     is_error: errored,
     error: errors.length ? errors.join('\n') : undefined,

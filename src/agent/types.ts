@@ -114,6 +114,9 @@ export interface UsageInfo {
   contextWindow: number;
   apiCalls: number;
   turns: number;
+  /** Prompt tokens sent over the session, and how many of them Gemini's cache served. */
+  cumulativePromptTokens?: number;
+  cumulativeCachedTokens?: number;
 }
 
 export type TranscriptItem =

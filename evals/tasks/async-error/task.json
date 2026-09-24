@@ -1,5 +1,8 @@
 {
   "prompt": "fetchAll in src/fetchAll.js sometimes crashes the process instead of reporting errors. Make it return { ok, failed } as documented, and make the tests pass.",
   "check": "node --test",
-  "timeoutSec": 240
+  "timeoutSec": 240,
+  "protect": [
+    "test"
+  ]
 }

@@ -1,5 +1,10 @@
 {
   "prompt": "Which function in this project computes the invoice total with tax? Answer with the function name only.",
   "check": "grep -q computeGrandTotal \"$EVAL_ANSWER\"",
-  "timeoutSec": 240
+  "timeoutSec": 240,
+  "mustNotChange": [
+    "src",
+    "package.json"
+  ],
+  "referenceAnswer": "computeGrandTotal"
 }

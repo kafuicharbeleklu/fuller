@@ -1,0 +1,10 @@
+diff --git a/cli.js b/cli.js
+index 995994e..90e716c 100644
+--- a/cli.js
++++ b/cli.js
+@@ -1,3 +1,4 @@
+ #!/usr/bin/env node
+ const [name = 'world'] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+-console.log(`Hello ${name}`);
++const text = `Hello ${name}`;
++console.log(process.argv.includes('--shout') ? text.toUpperCase() : text);

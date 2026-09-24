@@ -1,5 +1,8 @@
 {
   "prompt": "Rename the function getUsr to getUser everywhere in the project (definition, imports, calls). Keep the tests passing.",
   "check": "node --test && ! grep -rn 'getUsr' src test",
-  "timeoutSec": 240
+  "timeoutSec": 240,
+  "protect": [
+    "test"
+  ]
 }

@@ -1,5 +1,11 @@
 {
   "prompt": "Implement slugify in src/slugify.js so that the tests in test/ pass. Do not change the tests.",
   "check": "node --test",
-  "timeoutSec": 240
+  "timeoutSec": 240,
+  "protect": [
+    "test"
+  ],
+  "mustNotChange": [
+    "test"
+  ]
 }

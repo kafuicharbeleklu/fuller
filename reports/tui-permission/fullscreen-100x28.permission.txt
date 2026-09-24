@@ -1,17 +1,17 @@
+
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-ata8dsl2
+  █████╗   /tmp/fuller-permission-2fkrp6nl
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Type / for commands, @ to mention a file, ! to run a shell command.
 
 
 ❯ please ask permission                                                                            
 
 ● Bash(sudo ip link set tun0 down && sudo ip link set tun1 down)
   ⎿  Running…
+
 
 ───────────────────────────────────────────────────────────────────────────────────────────────────
  Bash command

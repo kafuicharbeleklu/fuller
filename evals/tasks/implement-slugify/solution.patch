@@ -1,0 +1,10 @@
+diff --git a/src/slugify.js b/src/slugify.js
+index da44771..302795e 100644
+--- a/src/slugify.js
++++ b/src/slugify.js
+@@ -1,4 +1,4 @@
+ /** Lowercase, ASCII-only, words joined by single dashes. */
+ export function slugify(text) {
+-  throw new Error('not implemented');
++  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+ }

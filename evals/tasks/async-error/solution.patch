@@ -1,0 +1,15 @@
+diff --git a/src/fetchAll.js b/src/fetchAll.js
+index 46f8f2b..bb589bc 100644
+--- a/src/fetchAll.js
++++ b/src/fetchAll.js
+@@ -3,7 +3,7 @@
+  * in the order of the loaders. Never rejects.
+  */
+ export async function fetchAll(loaders) {
+-  const ok = [];
+-  for (const load of loaders) ok.push(await load());
+-  return { ok, failed: [] };
++  const ok = [], failed = [];
++  for (const load of loaders) { try { ok.push(await load()); } catch (e) { failed.push(e.message); } }
++  return { ok, failed };
+ }

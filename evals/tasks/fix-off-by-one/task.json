@@ -1,5 +1,11 @@
 {
   "prompt": "The tests fail. Fix the bug in src/range.js without changing the tests.",
   "check": "node --test",
-  "timeoutSec": 240
+  "timeoutSec": 240,
+  "protect": [
+    "test"
+  ],
+  "mustNotChange": [
+    "test"
+  ]
 }

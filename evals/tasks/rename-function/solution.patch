@@ -1,0 +1,24 @@
+diff --git a/src/greet.js b/src/greet.js
+index 2c386fa..cfad135 100644
+--- a/src/greet.js
++++ b/src/greet.js
+@@ -1,6 +1,6 @@
+-import { getUsr } from './users.js';
++import { getUser } from './users.js';
+ 
+ export function greet(id) {
+-  const name = getUsr(id);
++  const name = getUser(id);
+   return name ? `Hello ${name}` : 'Hello stranger';
+ }
+diff --git a/src/users.js b/src/users.js
+index 97a549b..e794964 100644
+--- a/src/users.js
++++ b/src/users.js
+@@ -1,5 +1,5 @@
+ const USERS = { 1: 'Ada', 2: 'Linus' };
+ 
+-export function getUsr(id) {
++export function getUser(id) {
+   return USERS[id] ?? null;
+ }

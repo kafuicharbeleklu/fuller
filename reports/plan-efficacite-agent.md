@@ -67,6 +67,14 @@ Chaque étape suivante se valide par une comparaison `--compare` avec la référ
 
 Voir [Comparaison_trois_recherches_Claude.md](Comparaison_trois_recherches_Claude.md) : les seuils cités sont des hypothèses à mesurer ; ajouter au lot de mesure la protection des évaluateurs (l'agent ne doit pas pouvoir modifier les tests qui le jugent).
 
+## État au 24/09 (soir) — lots 0 et 1 faits
+
+- **Lot 0** : évaluateurs protégés (tests remis dans leur version d'origine avant la vérification ; `mustNotChange` seulement quand la consigne interdit de toucher un fichier, fichiers nouveaux compris), solution de référence par tâche (`--verify-solutions`), erreurs d'API comptées à part, modèle réellement utilisé enregistré, traces d'échec sans clés, tokens servis par le cache.
+- **Lot 1** : température retirée, `finishReason` traité (réponse vide relancée, refus et réponse tronquée signalés), environnement placé en fin de prompt système, cache mesuré (`/stats`, JSON de `-p`), compaction qui garde le début et la fin des sorties d'outils, chemin du fichier complet dans les sorties tronquées.
+- **Mesure de référence** (Gemini 3.6 Flash, 1 essai par tâche, `evals/results/2026-09-24-19-10-gemini-3.6-flash.json`) : 7/8 brut, 351 893 tokens, 68 appels d'outils, 365 s. Le seul échec (async-error) venait du correcteur : la correction était juste, mais l'agent avait ajouté des tests alors que le dossier `test` était interdit sans que la consigne le dise. Règle corrigée ; avec les règles actuelles, ce passage compte 8/8.
+- **Cache** : 0 % mesuré. Sur le banc, chaque appel envoie environ 3 400 tokens, sous le minimum de 4 096 tokens de Gemini 3 Flash ([caching](https://ai.google.dev/gemini-api/docs/caching)). Un essai direct avec un préfixe identique de 8 300 tokens sur Gemini 3.5 Flash-Lite a aussi donné 0 % ; la documentation ne garantit pas les succès de cache et ne dit pas si l'offre gratuite en profite. À revérifier sur une longue session réelle.
+- **Limites** : 8 tâches et 1 essai ne suffisent pas à comparer deux versions ; il faut `--repeat 3` et 20 à 30 tâches tirées de vrais échecs avant de juger les lots suivants.
+
 ## Ordre conseillé
 
 Étape 0, puis 1 → 2 → 3, en mesurant après chaque lot. Les éléments 1, 2, 6, 8 et 10 sont ceux qui ont les gains mesurés les plus nets pour l'effort.

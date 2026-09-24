@@ -20,12 +20,29 @@ export interface TurnUsage {
   responseTokens: number;
   totalTokens: number;
   thoughtsTokens: number;
+  /** Prompt tokens served from Gemini's cache (implicit caching). */
+  cachedTokens?: number;
 }
 
 export interface ModelTurnOutput {
   text: string;
   functionCalls: FunctionCallInfo[];
   usage?: TurnUsage;
+  /** Why the model stopped (STOP, MAX_TOKENS, SAFETY, MALFORMED_FUNCTION_CALL…). */
+  finishReason?: string;
+}
+
+/** Finish reasons where the model refused or was filtered: never retried, reported to the user. */
+export const BLOCKED_FINISH_REASONS = new Set(['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'IMAGE_SAFETY', 'LANGUAGE']);
+
+/** The model answered nothing usable (empty, thoughts only, or a malformed tool call): the request is sent again. */
+export class EmptyTurnError extends Error {
+  constructor(readonly finishReason?: string) {
+    super(finishReason === 'MALFORMED_FUNCTION_CALL' || finishReason === 'UNEXPECTED_TOOL_CALL'
+      ? `The model produced an invalid tool call (${finishReason}) several times.`
+      : `The model returned an empty response${finishReason ? ` (${finishReason})` : ''} several times.`);
+    this.name = 'EmptyTurnError';
+  }
 }
 
 export interface ToolResponsePayload {
@@ -189,7 +206,9 @@ export class GeminiAgentSession {
    */
   private makeRecover(signal?: AbortSignal): (err: any) => Promise<boolean> {
     let overloaded = 0;
+    let empty = 0;
     return async (err: any): Promise<boolean> => {
+      if (err instanceof EmptyTurnError) return ++empty <= EMPTY_TURN_RETRIES;
       let reason: 'quota' | 'overloaded';
       if (isDeadKeyError(err)) { this.scheduler.markDead(this.keyIndexInUse, err); reason = 'quota'; }
       else if (isQuotaError(err)) { this.scheduler.markQuota(this.keyIndexInUse, this.config.model, err); reason = 'quota'; }
@@ -258,7 +277,7 @@ export class GeminiAgentSession {
         autoMemory: !this.toolFilter && this.config.settings.autoMemory !== false,
       }),
       tools: [{ functionDeclarations: [...geminiToolDeclarations.filter((d) => (!this.toolFilter || this.toolFilter.has(d.name!)) && (d.name !== 'memory' || this.config.settings.autoMemory !== false)), ...(this.toolFilter ? [] : this.extraTools)] }],
-      temperature: 0.2,
+      // No temperature: Google asks to keep Gemini 3's sampling defaults (lower values can loop or degrade reasoning).
       ...(thinkingLevel
         ? { thinkingConfig: { thinkingLevel: ThinkingLevel[thinkingLevel.toUpperCase() as keyof typeof ThinkingLevel] } }
         : {}),
@@ -356,9 +375,12 @@ export class GeminiAgentSession {
         });
         let text = '';
         let usage: TurnUsage | undefined;
+        let finishReason: string | undefined;
         const functionCalls: FunctionCallInfo[] = [];
         for await (const chunk of stream) {
           if (signal?.aborted) throw new Error('Interrupted');
+          const reason = chunk.candidates?.[0]?.finishReason;
+          if (reason) finishReason = String(reason);
           const parts: Part[] = chunk.candidates?.[0]?.content?.parts ?? [];
           for (const part of parts) {
             if (part.text && !part.thought) {
@@ -381,11 +403,17 @@ export class GeminiAgentSession {
               responseTokens: u.candidatesTokenCount ?? usage?.responseTokens ?? 0,
               totalTokens: u.totalTokenCount ?? usage?.totalTokens ?? 0,
               thoughtsTokens: u.thoughtsTokenCount ?? usage?.thoughtsTokens ?? 0,
+              cachedTokens: u.cachedContentTokenCount ?? usage?.cachedTokens ?? 0,
             };
           }
         }
         if (usage?.promptTokens) this.lastPromptTokens = usage.promptTokens;
-        return { text, functionCalls, usage };
+        // Gemini CLI resends a turn that brought nothing usable; the SDK already left it out of the
+        // history, so sending the same message again is consistent. Refusals are not retried.
+        if (!text && functionCalls.length === 0 && finishReason !== 'MAX_TOKENS' && !BLOCKED_FINISH_REASONS.has(finishReason ?? '')) {
+          throw new EmptyTurnError(finishReason);
+        }
+        return { text, functionCalls, usage, finishReason };
       },
       {
         signal,
@@ -412,7 +440,7 @@ Write a dense summary (Markdown, max ~600 words) with these sections:
 Conversation:
 ${historyText}`;
     const res = await withRetry(
-      () => this.ai.models.generateContent({ model: this.config.model, contents: prompt, config: { abortSignal: signal, temperature: 0.1 } }),
+      () => this.ai.models.generateContent({ model: this.config.model, contents: prompt, config: { abortSignal: signal } }),
       { signal, recover: this.makeRecover(signal) }
     );
     return res.text || 'Context compacted.';
@@ -465,6 +493,9 @@ export class QuotaExhaustedError extends Error {
     this.name = 'QuotaExhaustedError';
   }
 }
+
+/** An empty or malformed answer is sent again this many times before the turn ends with an error. */
+const EMPTY_TURN_RETRIES = 2;
 
 /** A model whose keys all come back within this delay (per-minute limits) is waited for, not left. */
 const SHORT_WAIT_MS = 5 * 60_000;
@@ -520,8 +551,10 @@ export function historyToText(history: Content[]): string {
           if (p.text) return p.text;
           if (p.functionCall) return `[tool call ${p.functionCall.name}(${JSON.stringify(p.functionCall.args ?? {}).slice(0, 400)})]`;
           if (p.functionResponse) {
+            // Keep both ends: errors and test summaries are usually at the end of a log.
             const out = String((p.functionResponse.response as any)?.output ?? '');
-            return `[tool result ${p.functionResponse.name}: ${out.slice(0, 600)}${out.length > 600 ? '…' : ''}]`;
+            const kept = out.length > 1600 ? `${out.slice(0, 400)}\n… [${out.length - 1600} characters left out] …\n${out.slice(-1200)}` : out;
+            return `[tool result ${p.functionResponse.name}: ${kept}]`;
           }
           return '';
         })

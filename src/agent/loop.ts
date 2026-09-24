@@ -1,4 +1,4 @@
-import { QuotaExhaustedError, type FallbackRequest, type FallbackChoice, type ModelChangeReason } from './gemini.js';
+import { QuotaExhaustedError, BLOCKED_FINISH_REASONS, type FallbackRequest, type FallbackChoice, type ModelChangeReason } from './gemini.js';
 import { GeminiAgentSession, historyToText, type ToolResponsePayload, type TurnUsage } from './gemini.js';
 import { dispatchTool, previewTool, toolLabel } from '../tools/registry.js';
 import { evaluatePermission, type Evaluation } from '../permissions/rules.js';
@@ -670,6 +670,9 @@ export class AgentLoop {
     this.usage.responseTokens = u.responseTokens;
     this.usage.cumulativeTokens += u.totalTokens;
     this.usage.apiCalls++;
+    // Implicit cache: how much of the prompt Gemini served from its cache (cheaper, faster).
+    this.usage.cumulativePromptTokens = (this.usage.cumulativePromptTokens ?? 0) + u.promptTokens;
+    this.usage.cumulativeCachedTokens = (this.usage.cumulativeCachedTokens ?? 0) + (u.cachedTokens ?? 0);
     this.callbacks.onUsage({ ...this.usage });
   }
 
@@ -777,7 +780,15 @@ export class AgentLoop {
         this.callbacks.onNotice(null);
         this.recordUsage(turn.usage);
         commitText(turn.text);
-        if (turn.functionCalls.length === 0) break;
+        if (turn.functionCalls.length === 0) {
+          // The model stopped for a reason worth telling (never retried: a refusal is not transient).
+          if (turn.finishReason && BLOCKED_FINISH_REASONS.has(turn.finishReason)) {
+            this.addSystemMessage(`⚠ The model stopped without answering (${turn.finishReason === 'RECITATION' ? 'recitation filter' : `safety filter: ${turn.finishReason}`}). Rephrase the request, or try another model with /model.`, 'notice');
+          } else if (turn.finishReason === 'MAX_TOKENS') {
+            this.addSystemMessage('⚠ The answer reached the output limit and was cut off. Ask to continue.', 'notice');
+          }
+          break;
+        }
         turns++;
         this.usage.turns++;
         if (turns > this.config.maxTurns) {
@@ -939,6 +950,7 @@ export class AgentLoop {
       },
       outputFile: name === 'execute_bash' ? path.join(sessionsDir(this.config.workspaceDir), 'outputs', this.sessionId, `${state.id}.log`) : undefined,
       fileTracker: this.fileTracker,
+      readableDirs: [path.join(sessionsDir(this.config.workspaceDir), 'outputs', this.sessionId)],
     };
 
     if (name === 'edit_file' || name === 'write_file') {

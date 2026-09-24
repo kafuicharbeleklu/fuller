@@ -238,6 +238,8 @@ export interface ToolContext {
   outputFile?: string;
   /** Read-before-edit guard; absent in contexts that do not edit (tests, headless helpers). */
   fileTracker?: FileTracker;
+  /** Extra directories read_file may read but nothing may write (Fuller's saved command outputs). */
+  readableDirs?: string[];
 }
 
 const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
@@ -317,7 +319,9 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       let out = parts.join('\n');
       if (res.timedOut) out += `\n\n[Command timed out after ${Math.round(timeoutMs / 1000)}s]`;
       if (res.exitCode !== 0) out += `\n\n[Exit code: ${res.exitCode}]`;
-      const output = truncateMiddle(out || '(no output)', LIMITS.bashOutput);
+      let output = truncateMiddle(out || '(no output)', LIMITS.bashOutput);
+      // The whole output is on disk: say where, so the model can read the part it needs.
+      if (out.length > LIMITS.bashOutput && res.outputFile) output += `\n\n[Full output saved to ${res.outputFile} — read it with read_file (offset/limit) if you need the part left out.]`;
       const lineCount = (res.stdout + res.stderr).split('\n').filter(Boolean).length;
       return {
         output,
@@ -347,8 +351,10 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
     }
 
     case 'read_file': {
-      const r = await readFile(args.file_path, fileCtx, args.offset, args.limit);
-      ctx.fileTracker?.record(resolveInWorkspace(String(args.file_path), ctx.cwd, ctx.extraDirs));
+      // Saved command outputs (outside the workspace) may be read too.
+      const readDirs = [...ctx.extraDirs, ...(ctx.readableDirs ?? [])];
+      const r = await readFile(args.file_path, { ...fileCtx, extraDirs: readDirs }, args.offset, args.limit);
+      ctx.fileTracker?.record(resolveInWorkspace(String(args.file_path), ctx.cwd, readDirs));
       return { output: r.content, summary: r.summary };
     }
 
