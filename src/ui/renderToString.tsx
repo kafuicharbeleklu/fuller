@@ -27,6 +27,8 @@ export function renderToString(element: React.ReactElement, columns: number, row
   try {
     instance.unmount();
   } catch {}
-  const last = writes[writes.length - 1] ?? '';
+  // In CI (is-in-ci) Ink ends with its own lastOutput + '\n', empty in debug mode: keep the last real frame.
+  const frames = writes.filter((chunk) => chunk !== '\n');
+  const last = frames[frames.length - 1] ?? '';
   return trimTrailing ? last.replace(/\n+$/, '') : last;
 }
