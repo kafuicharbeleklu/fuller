@@ -36,7 +36,8 @@ import { Pager } from './Pager.js';
 import { editPromptExternally } from './externalEditor.js';
 import { FullscreenTranscript, useTranscriptRows, type ScrollAction } from './FullscreenTranscript.js';
 import { transcriptLines } from './viewerText.js';
-import { readGitDiff, readFileDiffs, isTestOrGenerated, nextDiffBase, defaultBranch, type FileDiff, type DiffBase } from './gitDiff.js';
+import { readFileDiffs, isTestOrGenerated, nextDiffBase, defaultBranch, type FileDiff, type DiffBase } from './gitDiff.js';
+import { DiffViewer, turnViews, type DiffViewerData } from './DiffViewer.js';
 import { saveUserSetting, saveProjectLocalSetting } from '../config.js';
 import { DiffPanel, diffPanelClick, maxPanelScroll, type DiffPanelState } from './DiffPanel.js';
 import { toolLabel, toolArgSummary } from '../tools/registry.js';
@@ -125,7 +126,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const agentsCtrlC = useRef(0);
   const startedInBypass = useRef(config.permissionMode === 'bypassPermissions');
   const [commandUsage, setCommandUsage] = useState<CommandUsage>(() => loadCommandUsage());
-  const [diffLines, setDiffLines] = useState<string[]>([]);
+  const [diffData, setDiffData] = useState<DiffViewerData>({ current: [], currentBase: 'none', turns: [] });
   const [scrollRequest, setScrollRequest] = useState<{ id: number; direction: ScrollAction }>({ id: 0, direction: 'up' });
   const [showHelp, setShowHelp] = useState(false);
   const [rewindOpen, setRewindOpen] = useState(false);
@@ -187,6 +188,15 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
     config.settings.diffPanel = value;
     try { saveUserSetting(['diffPanel'], value); } catch {}
   }, [config]);
+  /** Current: uncommitted changes, or what the branch adds on top of the default branch; then one view per turn with edits. */
+  const loadDiffViewer = useCallback((): DiffViewerData => {
+    const uncommitted = readFileDiffs(config.workspaceDir, 'uncommitted') ?? [];
+    const turns = turnViews(agentRef.current?.getMessages() ?? []);
+    if (uncommitted.length) return { current: uncommitted, currentBase: 'uncommitted', turns };
+    const branch = defaultBranch(config.workspaceDir);
+    const since = branch ? readFileDiffs(config.workspaceDir, 'branch') ?? [] : [];
+    return { current: since, currentBase: since.length ? 'branch' : 'none', branch, turns };
+  }, [config.workspaceDir]);
   const openDiffViewer = useCallback(() => {
     const columns = (stdout?.columns ?? 80) + 1;
     // Claude Code 2.1.282 only has the panel: narrower, it says how wide the terminal must be.
@@ -205,10 +215,10 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       setTimeout(() => { if (diffPanelRef.current) setDiffPanel(loadDiffPanel()); }, 0);
       return;
     }
-    // Classic renderer, or no git repository for the panel: the viewer.
-    setDiffLines(readGitDiff(config.workspaceDir));
+    // Classic renderer, or no git repository for the panel: the viewer (Claude Code's Current and turn views).
+    setDiffData(loadDiffViewer());
     setViewer((v) => (v === 'diff' ? null : 'diff'));
-  }, [config.workspaceDir, fullscreen, stdout, loadDiffPanel, setDiffPreference]);
+  }, [config.workspaceDir, fullscreen, stdout, loadDiffPanel, loadDiffViewer, setDiffPreference]);
   const diffPanelRef = useRef(diffPanel);
   diffPanelRef.current = diffPanel;
   // The panel follows the agent's work: refreshed after each edit or shell command, and at the end of
@@ -673,7 +683,8 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onCtrlC={() => { const now = Date.now(); if (now - agentsCtrlC.current < 1000) void handleExit(); agentsCtrlC.current = now; }}
           />
         ) : null}
-        {viewer ? <Pager title={viewer === 'diff' ? 'Diff viewer' : 'Transcript viewer'} status={viewer === 'transcript' ? 'Showing detailed transcript · ctrl+o to toggle · ? for shortcuts' : undefined} rightLabel={viewer === 'transcript' ? 'verbose' : undefined} lines={viewer === 'diff' ? diffLines : detailedLines} ansi={viewer === 'transcript'} sectionPrefix={viewer === 'diff' ? 'diff --git ' : '❯ '} onClose={() => setViewer(null)} onRefresh={viewer === 'diff' ? openDiffViewer : undefined} onToggleDetails={viewer === 'transcript' && !fullscreen ? () => setVerbose((v) => !v) : undefined} onExport={viewer === 'transcript' && fullscreen ? exportTranscript : undefined} onOpenEditor={viewer === 'transcript' && fullscreen ? openTranscriptEditor : undefined} /> : null}
+        {viewer === 'diff' ? <DiffViewer data={diffData} onClose={() => setViewer(null)} onRefresh={() => setDiffData(loadDiffViewer())} /> : null}
+        {viewer === 'transcript' ? <Pager title="Transcript viewer" status="Showing detailed transcript · ctrl+o to toggle · ? for shortcuts" rightLabel="verbose" lines={detailedLines} ansi sectionPrefix="❯ " onClose={() => setViewer(null)} onToggleDetails={!fullscreen ? () => setVerbose((v) => !v) : undefined} onExport={fullscreen ? exportTranscript : undefined} onOpenEditor={fullscreen ? openTranscriptEditor : undefined} /> : null}
         <Box flexDirection="column" display={viewer || agentReport || (agentsOpen && !confirmation) ? 'none' : 'flex'} flexGrow={welcome || fullscreen ? 1 : undefined}>
         {welcome ? <Box flexGrow={1} /> : null}
         {fullscreen && !welcome ? (

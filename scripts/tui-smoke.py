@@ -115,13 +115,13 @@ def scenario(mode: str, width: int, active: bool = False) -> None:
             os.write(fd, b"q")
             interaction += transcript_view + capture(fd, 0.15)
             os.write(fd, b"/diff\r")
-            diff_view = capture_for(fd, (b"Diff panel shown", b"Diff viewer"), 0.4)
+            diff_view = capture_for(fd, (b"Diff panel shown", b"Enter to open"), 0.4)
             if mode == "fullscreen" and min(200, width + 60) >= 110:
                 # Claude Code opens /diff as a panel beside the conversation from 110 columns.
                 assert b"Diff panel shown" in diff_view, f"/diff did not open the diff panel: {diff_view[-1500:]!r}"
                 os.write(fd, b"/diff\r")
             else:
-                assert b"Diff viewer" in diff_view, "/diff did not open the diff viewer"
+                assert b"Enter to open" in diff_view, "/diff did not open the diff viewer"
                 os.write(fd, b"q")
             interaction += diff_view + capture(fd, 0.15)
         os.write(fd, b"\x03\x03")
