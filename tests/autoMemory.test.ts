@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,9 +7,15 @@ import { dispatchTool } from '../src/tools/registry.js';
 import { evaluatePermission } from '../src/permissions/rules.js';
 
 let workspace: string;
+let homeDir: string;
 beforeEach(() => {
-  process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-mem-home-'));
+  homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-mem-home-'));
+  process.env.HOME = homeDir;
   workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-mem-ws-'));
+});
+afterEach(() => {
+  if (homeDir) fs.rmSync(homeDir, { recursive: true, force: true });
+  if (workspace) fs.rmSync(workspace, { recursive: true, force: true });
 });
 
 describe('learned memory', () => {

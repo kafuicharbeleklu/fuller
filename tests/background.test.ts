@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,7 +7,12 @@ import { BackgroundTaskManager } from '../src/tools/background.js';
 
 describe('background tasks', () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-bg-'));
-  process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-bg-home-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-bg-home-'));
+  process.env.HOME = home;
+  afterAll(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  });
 
   it('starts, streams to a log, reads incrementally and notifies on completion', async () => {
     const finished: string[] = [];

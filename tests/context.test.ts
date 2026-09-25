@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +6,9 @@ import { loadProjectContext, resolveImports } from '../src/agent/contextLoader.j
 
 describe('memory files', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-mem-'));
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   const project = path.join(root, 'proj');
   fs.mkdirSync(project);
   fs.writeFileSync(path.join(root, 'FULLER.md'), '# parent\n');

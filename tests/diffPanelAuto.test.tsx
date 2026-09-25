@@ -33,6 +33,7 @@ afterEach(() => { cleanups.splice(0).forEach((c) => c()); });
 
 function repo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-diff-auto-'));
+  cleanups.push(() => { fs.rmSync(dir, { recursive: true, force: true }); });
   const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir });
   git('init', '-q');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
@@ -43,7 +44,9 @@ function repo(): string {
 }
 
 async function app(columns: number, preference?: 'opened' | 'closed') {
-  process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-diff-home-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-diff-home-'));
+  process.env.HOME = home;
+  cleanups.push(() => { fs.rmSync(home, { recursive: true, force: true }); });
   const chunks: string[] = [];
   const stdout = Object.assign(new Writable({ write(chunk, _e, done) { chunks.push(chunk.toString()); done(); } }), { isTTY: true, columns, rows: 40 });
   const stdin = Object.assign(new PassThrough(), { isTTY: true, setRawMode() {}, ref() {}, unref() {} });

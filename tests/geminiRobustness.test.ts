@@ -1,10 +1,14 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterAll, describe, expect, it, vi, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Content } from '@google/genai';
 
-process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-robust-home-'));
+const robustHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-robust-home-'));
+process.env.HOME = robustHome;
+afterAll(() => {
+  fs.rmSync(robustHome, { recursive: true, force: true });
+});
 
 /** Each call to sendMessageStream takes the next scripted answer. */
 let script: Array<{ text?: string; call?: boolean; finish?: string; cached?: number }> = [];
@@ -179,12 +183,17 @@ describe('long command outputs', () => {
     const { dispatchTool } = await import('../src/tools/registry.js');
     const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-robust-ws-'));
     const outputs = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-robust-out-'));
-    const outputFile = path.join(outputs, 'cmd.log');
-    const ctx = { cwd: ws, extraDirs: [], bashTimeoutMs: 20_000, outputFile, readableDirs: [outputs] };
-    const res = await dispatchTool('execute_bash', { command: 'seq 1 20000; echo LAST-LINE' }, ctx as any);
-    expect(res.output).toContain(`[Full output saved to ${outputFile}`);
-    const read = await dispatchTool('read_file', { file_path: outputFile, offset: 20000, limit: 5 }, ctx as any);
-    expect(read.output).toContain('LAST-LINE');
-    await expect(dispatchTool('read_file', { file_path: path.join(os.tmpdir(), 'elsewhere.txt') }, ctx as any)).rejects.toThrow();
+    try {
+      const outputFile = path.join(outputs, 'cmd.log');
+      const ctx = { cwd: ws, extraDirs: [], bashTimeoutMs: 20_000, outputFile, readableDirs: [outputs] };
+      const res = await dispatchTool('execute_bash', { command: 'seq 1 20000; echo LAST-LINE' }, ctx as any);
+      expect(res.output).toContain(`[Full output saved to ${outputFile}`);
+      const read = await dispatchTool('read_file', { file_path: outputFile, offset: 20000, limit: 5 }, ctx as any);
+      expect(read.output).toContain('LAST-LINE');
+      await expect(dispatchTool('read_file', { file_path: path.join(os.tmpdir(), 'elsewhere.txt') }, ctx as any)).rejects.toThrow();
+    } finally {
+      fs.rmSync(ws, { recursive: true, force: true });
+      fs.rmSync(outputs, { recursive: true, force: true });
+    }
   });
 });

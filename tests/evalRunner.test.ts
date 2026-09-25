@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,9 +7,15 @@ import { spawnSync } from 'node:child_process';
 const runner = path.resolve('scripts/eval.mjs');
 const source = path.resolve('evals/tasks/fix-off-by-one');
 
+const cleanups: string[] = [];
+afterEach(() => {
+  cleanups.splice(0).forEach((dir) => fs.rmSync(dir, { recursive: true, force: true }));
+});
+
 /** A copy of one task with a chosen solution.patch (and task.json fields changed if asked). */
 function taskWith(patch: string, taskFields: Record<string, unknown> = {}): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-evaltasks-'));
+  cleanups.push(dir);
   const copy = path.join(dir, 'fix-off-by-one');
   fs.cpSync(source, copy, { recursive: true });
   fs.writeFileSync(path.join(copy, 'solution.patch'), patch);

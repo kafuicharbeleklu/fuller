@@ -211,19 +211,23 @@ describe('/add-dir input dialog', () => {
     const path = await import('node:path');
     const { InputDialog, completeDirectory } = await import('../src/ui/InfoDialogs.js');
     const base = fs.mkdtempSync(path.join(os.tmpdir(), 'adddir-'));
-    fs.mkdirSync(path.join(base, 'packages'));
-    fs.mkdirSync(path.join(base, 'public'));
-    expect(completeDirectory('pa', base, fs, path)).toBe('packages/');
-    expect(completeDirectory('p', base, fs, path)).toBe('p');
-    const onSubmit = vi.fn();
-    const screen = render(wrap(<InputDialog title="Add directory to workspace" label="Enter the path to the directory:" placeholder="Directory path…" complete={(v) => completeDirectory(v, base, fs, path)} onSubmit={onSubmit} onClose={() => {}} />));
-    await tick();
-    expect(screen.lastFrame()).toContain('Directory path…');
-    screen.stdin.write('pa'); await tick();
-    screen.stdin.write('\t'); await tick();
-    expect(screen.lastFrame()).toContain('packages/');
-    screen.stdin.write('\r'); await tick();
-    expect(onSubmit).toHaveBeenCalledWith('packages/');
-    screen.unmount();
+    try {
+      fs.mkdirSync(path.join(base, 'packages'));
+      fs.mkdirSync(path.join(base, 'public'));
+      expect(completeDirectory('pa', base, fs, path)).toBe('packages/');
+      expect(completeDirectory('p', base, fs, path)).toBe('p');
+      const onSubmit = vi.fn();
+      const screen = render(wrap(<InputDialog title="Add directory to workspace" label="Enter the path to the directory:" placeholder="Directory path…" complete={(v) => completeDirectory(v, base, fs, path)} onSubmit={onSubmit} onClose={() => {}} />));
+      await tick();
+      expect(screen.lastFrame()).toContain('Directory path…');
+      screen.stdin.write('pa'); await tick();
+      screen.stdin.write('\t'); await tick();
+      expect(screen.lastFrame()).toContain('packages/');
+      screen.stdin.write('\r'); await tick();
+      expect(onSubmit).toHaveBeenCalledWith('packages/');
+      screen.unmount();
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
   });
 });
