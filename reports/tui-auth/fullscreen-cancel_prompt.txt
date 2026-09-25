@@ -1,17 +1,17 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-oqdlxzaq
+  █████╗   /tmp/fuller-auth-c1r7tu_o
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Ctrl+O toggles the detailed transcript with full tool output.
 
 
 ! sudo fuller-auth-test cancel_prompt                                                              
 
   ⎿  exit 124
+
+
 
 
 

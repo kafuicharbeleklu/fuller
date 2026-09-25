@@ -1,8 +1,8 @@
+  ██╔═══╝  Gemini 3.8 Flash · Gemini API
+  █████╗   /tmp/fuller-permission-r3t79rfy
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  /model <name> switches models and keeps the conversation.
 
 
 ❯ please ask permission                                    

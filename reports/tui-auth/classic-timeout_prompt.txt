@@ -1,12 +1,12 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-csqom12o
+  █████╗   /tmp/fuller-auth-a957bobd
   ██╔══╝ 
   ██║    
   ╚═╝    
 
-  Add a FULLER.md at the project root to give Fuller lasting context.
+  Pasted text longer than a few lines is collapsed into [Pasted text #N +L lines].
 
 
 ! sudo fuller-auth-test timeout_prompt                                                             

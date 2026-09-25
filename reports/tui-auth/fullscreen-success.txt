@@ -1,17 +1,17 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-87y74dd9
+  █████╗   /tmp/fuller-auth-4tzry2gw
   ██╔══╝ 
   ██║    
   ╚═╝    
-
-  Pasted text longer than a few lines is collapsed into [Pasted text #N +L lines].
 
 
 ! sudo fuller-auth-test success                                                                    
 
   ⎿  AUTH_RESULT_UNIQUE
+
+
 
 
 
