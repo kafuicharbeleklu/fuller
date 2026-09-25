@@ -223,3 +223,49 @@ Compte rendu : `chat/2026-09-25_145500_claude_compte_rendu_tmp.md` (K006). Fulle
 ## 17. Quatrième tâche réelle (25/09, 14:50–15:14 UTC) — nettoyage terminé, comparaison des masquages
 
 Compte rendu : `chat/2026-09-25_153000_claude_compte_rendu_tmp_2.md` (K007). Avec le masquage par budget, Fuller a fini le nettoyage (15 fichiers, `tests/loop.test.ts` en tête) : **0 dossier `/tmp` ajouté** sur deux suites complètes, vérifié par moi. Comparaison à forme de tâche égale : le budget supprime le tourbillon (fichier le plus relu : 2 fois contre 12) mais laisse grossir le contexte (dernière requête 125 757 tokens, 12,4 M tokens de prompt à 88 % de cache contre 2,7 M à 64 %) ; gardé. Fait nouveau traité : `search_files` signale une requête à caractères d'expression régulière cherchée littéralement (vingt appels perdus en une session). Trois plafonds `maxTurns` sur un besoin réel de 150 appels : la question est désormais « faut-il un plafond ? ».
+
+## 18. Fin de journée du 25/09 — ce qu'il faut savoir pour reprendre
+
+Pour Codex, Antigravity et les suivants. Dépôt à `aeb9c0f` (15 commits depuis `6f78c5d`), arbre propre, **non poussé** depuis `fd13a05`. Les échanges du jour sont dans `chat/` (19 fichiers, index dans `chat/README.md`) ; les comptes rendus des quatre sessions réelles sont K003, K005, K006, K007.
+
+### A. Ce qui a changé dans l'agent aujourd'hui (tout vérifié : typage, 486 tests, build, fumée PTY)
+
+| Changement | Fichier | Origine |
+|---|---|---|
+| Masquage des vieilles sorties d'outils, **par budget d'ensemble de travail** : 3 derniers lots + sorties récentes jusqu'à 200 000 caractères ; au-delà, effacement par lots de 40 000 ; sorties de commandes archivées sur disque, jamais effacées sans archive ; sous-agents avec `contextDir` | `src/agent/contextPruning.ts`, `pruneHistory` dans `gemini.ts`, `pruneContext` dans `loop.ts` | Lots 3 ; C001 (archive) ; K006/K007 (budget) |
+| Historique : un tour du modèle découpé par le SDK en `[functionCall]` puis `[text]` est traité en bloc | `sanitizeHistory`, `modelGroupStart`, `findCall` | K003 (défaut réel, 400 possible après interruption) |
+| Contrôle de syntaxe différentiel après `write_file`/`edit_file` (JSON, JSONC nommés, JS/TS, Python) | `src/tools/syntaxCheck.ts`, `newSyntaxWarning` dans `registry.ts` | Lot 4 ; C001 (différentiel) |
+| `edit_file` : correspondance sans indentation ni espaces de fin si unique, lignes candidates, refus des remplacements à trous | `src/tools/fileOps.ts` | Lot 4 |
+| Réflexion `high` par défaut pour les Flash | `src/agent/thinking.ts` | Choix de l'équipe |
+| `todo_write` : message de refus avec exemple | `src/tools/registry.ts` | 2 cas réels (K005, K006) |
+| `search_files` : indice quand une requête à caractères regex est cherchée littéralement et ne trouve rien | `src/tools/search.ts` | ~20 appels perdus (K007) |
+| Prompt système : règle 6 (sorties effacées, erreur de syntaxe à corriger tout de suite) | `src/agent/systemPrompt.ts` | |
+
+Tests : `tests/contextPruning.test.ts`, `tests/syntaxCheck.test.ts`, `tests/fileOps.test.ts`, cas ajoutés dans `geminiRobustness`, `search`, `overlays`. Le faux `GeminiAgentSession` de `tests/loop.test.ts` a `pruneHistory`.
+
+### B. Ce que les sessions réelles ont appris, et qu'aucun rapport n'aurait donné
+
+1. **Le banc ne voit rien de tout ça.** Quatre défauts de fonctionnement en quatre sessions (historique découpé, tourbillon du masquage, écouteur Ink attaché après le premier rendu, recherche littérale prise pour une regex). Le banc de 8 tâches était à 100 % avant et après.
+2. **Le cache implicite fonctionne** dès qu'une session s'installe : 55 %, 69 %, 64 %, 88 %. Le « 0 % » du 24/09 venait des tâches courtes du banc.
+3. **Le masquage a besoin d'un ensemble de travail.** Trois lots gardés → un fichier lu 12 fois, 2,7 M tokens pour 8 fichiers. Budget de 200 k caractères → fichier le plus relu 2 fois, 15 fichiers, mais contexte non élagué (125 k tokens par requête en fin de session, 12,4 M tokens à 88 % de cache). Gardé ; à revoir seulement si la qualité en souffre, pas pour le seul coût.
+4. **`maxTurns` = 50** a été atteint 6 fois sur des besoins réels (70 puis 150 appels). Ce n'est plus « faut-il relever ? » mais « faut-il un plafond ? ». Décision de l'utilisateur, non prise.
+5. **Piloter Fuller sans humain** demande : dossier approuvé d'avance (`trusted-folders.json`), `modelFallback: auto` (sinon la fenêtre « changer de modèle ? » bloque sans fin), lecture du pied de page pour distinguer occupé/libre (« esc to interrupt »), Échap avant `/exit` si une boîte est ouverte. Le pilote qui fait tout ça : `reports/usage/2026-09-25-tache-tmp/pilote-task2.py` (copie de `task2.py`) ; consignes dans `consigne*.txt`.
+6. **Le modèle** (3.6 à 3.8 Flash) lit par tranches de 20 à 60 lignes, relance une recherche sans résultat sans changer d'approche, et a deux fois renvoyé le texte d'un résultat comme arguments d'outil. Chaque cas a reçu une réponse dans l'outil, pas dans le prompt.
+7. **Quota** : le jour gratuit de 3.8 Flash est parti à 14:20 UTC sur les 15 clés (≈ 20 M tokens de prompt sur la journée, cache compris). Les sessions suivantes ont tourné sur 3.6 et 3.7. La remise à zéro est à 07:00 UTC.
+
+### C. Tâches livrées par Fuller lui-même (vérifiées par moi)
+
+- `tests/sessionPicker.test.tsx` : test intermittent reproduit sous charge puis corrigé (K005), complété par la sonde de saisie (K006) après trois nouveaux échecs. 4 suites complètes de suite au vert.
+- La suite ne laisse plus de dossiers temporaires dans `/tmp` (K006 + K007) : 23 fichiers de tests, 0 dossier par passage sur 2 suites.
+
+### D. Règles de travail confirmées à trois (C001 à C005, A001 à A005, K001 à K007)
+
+Moteur conservé ; `taskState.ts` gelé ; pas de nouveau mécanisme sans échec réel (les cinq changements d'aujourd'hui ont chacun un ou deux cas réels cités) ; pas de campagne préventive ; gains d'autres produits = hypothèses ; un accord entre agents n'autorise ni commit, ni quota, ni facturation ; le prochain message utile est un compte rendu d'usage, pas une note d'orientation. Avant d'écrire une réponse, relire les messages postés après celui auquel on répond (deux réponses se sont croisées le matin).
+
+### E. Ouvert
+
+- Décision `maxTurns` (utilisateur).
+- 5 225 dossiers `fuller-*` déjà dans `/tmp`, à supprimer à la main (aucun test ne les utilise).
+- Les autres tests Ink qui tapent après un simple `setImmediate` : candidats si un nouvel échec les désigne, pas avant.
+- La comparaison des seuils du budget de masquage : deux sessions, pas plus. Ne pas retoucher sans une troisième qui montre un problème de qualité.
+- Pousser : `git push origin main` (7 commits en attente).
