@@ -32,6 +32,8 @@ export interface InputBoxProps {
   onSubmit: (text: string, attachments: ImageAttachment[]) => void;
   onSendNow?: (text: string, attachments: ImageAttachment[]) => void;
   onBackground?: () => boolean;
+  /** Ctrl+X Ctrl+K pressed twice within 3 s: stop the background agents (returns how many were running). */
+  onStopAgents?: () => number;
   onCommand: (command: string) => void;
   onBash: (command: string) => void;
   onInterrupt: () => void;
@@ -87,7 +89,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const {
     isActive, busy, queue, history: initialHistory, allHistory = initialHistory, sessionHistory = [], fullscreen = false, cwd, commands, showHelp, compactEmpty = false, placeholder,
     onSubmit, onCommand, onBash, onInterrupt, onExit, onCycleMode, onClearScreen,
-    onToggleVerbose, onToggleHelp, onToggleTodos, onOpenDiff, onCycleDiffBase, onScrollTranscript, onDoubleEscape, onPopQueue, onStateChange, onSwitchModel, onSuspend, onAgents, onMouseClick, onMouseRelease, injected, commandUsage = {}, onSendNow, onBackground, onTakeQueue,
+    onToggleVerbose, onToggleHelp, onToggleTodos, onOpenDiff, onCycleDiffBase, onScrollTranscript, onDoubleEscape, onPopQueue, onStateChange, onSwitchModel, onSuspend, onAgents, onMouseClick, onMouseRelease, injected, commandUsage = {}, onSendNow, onBackground, onStopAgents, onTakeQueue,
   } = props;
 
   const ed = useRef<EditorState>({ text: '', cursor: 0 });
@@ -106,6 +108,9 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   if (!promptTimes.current) promptTimes.current = loadPromptTimes();
   const searchDraft = useRef<EditorState>({ text: '', cursor: 0 });
   const sendChord = useRef(false);
+  /** Claude Code waits 3 s for the second key of a chord. */
+  const chordTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastStopAgents = useRef(0);
   const historyIndex = useRef(-1);
   const draft = useRef('');
   const lastCtrlC = useRef(0);
@@ -119,14 +124,16 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const [midSlashOpen, setMidSlashOpen] = useState(false);
   const [menuNavigated, setMenuNavigated] = useState(false);
   const [fileIndex, setFileIndex] = useState<string[]>([]);
-  const [ctrlCHint, setCtrlCHint] = useState(false);
+  /** "Press Ctrl-C again to exit" / "Press Ctrl-D again to exit" while the second press is awaited. */
+  const [exitHint, setExitHint] = useState<string | null>(null);
+  const lastCtrlD = useRef(0);
   /** Last collapsed paste, expanded in place when the same text is pasted again. */
   const lastPaste = useRef<{ label: string; text: string } | null>(null);
   const [pasteHint, setPasteHint] = useState(false);
   /** Text was deleted into the kill ring and can be yanked back (Claude Code: "Ctrl+Y to paste deleted text"). */
   const [killed, setKilled] = useState(false);
   /** ctrl+s: prompt put aside with its cursor, pastes and images (Claude Code "stash"). */
-  const stash = useRef<{ text: string; cursor: number; pastes: Map<number, string>; images: ImageAttachment[] } | null>(null);
+  const stash = useRef<{ text: string; cursor: number; pastes: Map<number, string>; images: ImageAttachment[]; bashMode: boolean } | null>(null);
   const [stashed, setStashed] = useState(false);
   const remember = (deleted: string) => { killRing.current = deleted; if (deleted) setKilled(true); };
   const keybindings = useMemo(loadKeybindings, []);
@@ -167,7 +174,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   useEffect(() => { if (empty) setKilled(false); }, [empty]);
 
   const multiline = text.includes('\n');
-  const inputHint = ctrlCHint ? 'Press Ctrl-C again to exit' : pasteHint ? 'paste again to expand' : undefined;
+  const inputHint = exitHint ?? (pasteHint ? 'paste again to expand' : undefined);
   useEffect(() => {
     onStateChange?.({ empty, bashMode, menuOpen, hint: inputHint, multiline, killed: killed && !empty, stashed, searching: !!search && fullscreen });
   }, [empty, bashMode, menuOpen, onStateChange, inputHint, multiline, killed, stashed, !!search && fullscreen]);
@@ -381,7 +388,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
     }
     if (removed) {
       if (cleaned.removed) set(cleaned.text, Math.min(ed.current.cursor, cleaned.text.length));
-      setInputWarning(`Removed ${removed} invisible character${removed === 1 ? '' : 's'} · review and press Enter again`);
+      setInputWarning(`Removed ${removed} invisible character${removed === 1 ? '' : 's'} · review and press Enter to send`);
       return;
     }
     const trimmed = raw.trim();
@@ -540,7 +547,24 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
 
     if (sendChord.current) {
       sendChord.current = false;
+      if (chordTimer.current) { clearTimeout(chordTimer.current); chordTimer.current = null; }
       if (e.name === 'char' && e.ctrl && e.text === 's') { submit(true); return; }
+      // Ctrl+X Ctrl+E: external editor; Ctrl+X Ctrl+B: background (for tmux, where Ctrl+B is the prefix).
+      if (e.name === 'char' && e.ctrl && e.text === 'e') { openEditor(); return; }
+      if (e.name === 'char' && e.ctrl && e.text === 'b') { onBackground?.(); return; }
+      // Ctrl+X Ctrl+K: stop the background agents, on a second press within 3 s.
+      if (e.name === 'char' && e.ctrl && e.text === 'k') {
+        if (Date.now() - lastStopAgents.current < 3000) {
+          lastStopAgents.current = 0;
+          setExitHint(null);
+          onStopAgents?.();
+        } else {
+          lastStopAgents.current = Date.now();
+          setExitHint('Press ctrl+x ctrl+k again to stop background agents');
+          setTimeout(() => setExitHint((h) => (h?.includes('ctrl+k') ? null : h)), 3000);
+        }
+        return;
+      }
       // Ctrl+X B: the /diff panel compares against the next base (Claude Code).
       if (e.name === 'char' && !e.ctrl && !e.alt && e.text.toLowerCase() === 'b') { onCycleDiffBase?.(); return; }
     }
@@ -553,11 +577,18 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
           // Claude Code clears the input and arms the exit on the same press.
           if (ed.current.text) resetEditor();
           lastCtrlC.current = Date.now();
-          setCtrlCHint(true);
-          setTimeout(() => setCtrlCHint(false), 1500);
+          setExitHint('Press Ctrl-C again to exit');
+          setTimeout(() => setExitHint((h) => (h?.includes('Ctrl-C') ? null : h)), 1500);
           return;
         case 'd':
-          if (!ed.current.text && !busy) { onExit(); return; }
+          // Claude Code: on an empty prompt, Ctrl+D exits only when pressed twice within 800 ms.
+          if (!ed.current.text && !busy) {
+            if (Date.now() - lastCtrlD.current < 800) { lastCtrlD.current = 0; setExitHint(null); onExit(); return; }
+            lastCtrlD.current = Date.now();
+            setExitHint('Press Ctrl-D again to exit');
+            setTimeout(() => setExitHint((h) => (h?.includes('Ctrl-D') ? null : h)), 800);
+            return;
+          }
           del();
           return;
         case 'o': onToggleVerbose(); return;
@@ -566,14 +597,20 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
         case 'v': void pasteImage(); return;
         case 'l': onClearScreen(); return;
         case 'r': startSearch(); return;
-        case 'x': sendChord.current = true; return;
+        case 'x':
+          sendChord.current = true;
+          if (chordTimer.current) clearTimeout(chordTimer.current);
+          chordTimer.current = setTimeout(() => { sendChord.current = false; chordTimer.current = null; }, 3000);
+          return;
         case '_': undoOnce(); return;
         case 'z': if (onSuspend) onSuspend(); else undoOnce(); return;
         case 's': {
           // Claude Code: stash a non-empty prompt, restore the stash on an empty one.
           if (ed.current.text) {
-            stash.current = { ...ed.current, pastes: new Map(pastes.current), images: [...images.current] };
+            // The input mode goes with it: a stashed `!` command comes back as a shell command (Claude Code 2.1.280).
+            stash.current = { ...ed.current, pastes: new Map(pastes.current), images: [...images.current], bashMode };
             resetEditor();
+            setBashMode(false);
             setStashed(true);
           } else if (stash.current) {
             const saved = stash.current;
@@ -581,6 +618,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
             set(saved.text, saved.cursor);
             pastes.current = new Map(saved.pastes);
             images.current = [...saved.images];
+            setBashMode(saved.bashMode);
             setStashed(false);
           }
           return;
@@ -607,7 +645,16 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
         if (busy) { onInterrupt(); lastEsc.current = 0; return; }
         if (bashMode && !ed.current.text) { setBashMode(false); return; }
         const now = Date.now();
-        if (now - lastEsc.current < 600) { lastEsc.current = 0; if (ed.current.text) resetEditor(); else onDoubleEscape(); return; }
+        if (now - lastEsc.current < 600) {
+          lastEsc.current = 0;
+          if (ed.current.text) {
+            // Claude Code clears the input and keeps the draft in the history: ↑ brings it back.
+            const draftText = ed.current.text;
+            if (draftText.trim() && history.current[history.current.length - 1] !== draftText) history.current.push(draftText);
+            resetEditor();
+          } else onDoubleEscape();
+          return;
+        }
         lastEsc.current = now;
         return;
       }

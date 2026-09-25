@@ -90,6 +90,79 @@ describe('prompt parity', () => {
     expect(onMouseRelease).toHaveBeenCalledWith(12, 7);
   });
 
+  it('exits with Ctrl+D only on a second press within 800 ms, and says so (report of 25/09)', async () => {
+    const onExit = vi.fn();
+    const onStateChange = vi.fn();
+    const screen = await input({ onExit, onStateChange });
+    await screen.keys('\x04');
+    expect(onExit).not.toHaveBeenCalled();
+    expect(onStateChange).toHaveBeenLastCalledWith(expect.objectContaining({ hint: 'Press Ctrl-D again to exit' }));
+    await screen.keys('\x04');
+    expect(onExit).toHaveBeenCalledTimes(1);
+    // Too slow: the first press expires.
+    await screen.keys('\x04');
+    await new Promise((r) => setTimeout(r, 900));
+    await screen.keys('\x04');
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the draft in the history when Esc Esc clears it', async () => {
+    const screen = await input();
+    await screen.keys('a draft worth keeping', '\x1b');
+    await new Promise((r) => setTimeout(r, 50));
+    await screen.keys('\x1b');
+    expect(screen.lastFrame()).not.toContain('a draft worth keeping');
+    await screen.keys('\x1b[A');
+    expect(screen.lastFrame()).toContain('a draft worth keeping');
+  });
+
+  it('stashes a ! command with its mode and brings it back as a shell command', async () => {
+    const onStateChange = vi.fn();
+    const screen = await input({ onStateChange });
+    await screen.keys('!', 'ls -la');
+    expect(onStateChange).toHaveBeenLastCalledWith(expect.objectContaining({ bashMode: true }));
+    await screen.keys('\x13');
+    expect(onStateChange).toHaveBeenLastCalledWith(expect.objectContaining({ bashMode: false, empty: true, stashed: true }));
+    await screen.keys('\x13');
+    expect(onStateChange).toHaveBeenLastCalledWith(expect.objectContaining({ bashMode: true, empty: false }));
+    expect(screen.lastFrame()).toContain('ls -la');
+  });
+
+  it('handles the Ctrl+X chords: Ctrl+B backgrounds, Ctrl+K twice stops agents, and the chord expires after 3 s', async () => {
+    const onBackground = vi.fn(() => true);
+    const onStopAgents = vi.fn(() => 2);
+    const onCycleDiffBase = vi.fn();
+    const screen = await input({ onBackground, onStopAgents, onCycleDiffBase });
+    await screen.keys('\x18', '\x02');
+    expect(onBackground).toHaveBeenCalledTimes(1);
+    await screen.keys('\x18', '\x0b');
+    expect(onStopAgents).not.toHaveBeenCalled();
+    await screen.keys('\x18', '\x0b');
+    expect(onStopAgents).toHaveBeenCalledTimes(1);
+    // A chord left open for more than 3 s is dropped: the next b is plain text.
+    await screen.keys('\x18');
+    await new Promise((r) => setTimeout(r, 3100));
+    await screen.keys('b');
+    expect(onCycleDiffBase).not.toHaveBeenCalled();
+    expect(screen.lastFrame()).toContain('b');
+  }, 10_000);
+
+  it('/tasks opens a task with Enter and stops it with x', async () => {
+    const { ListDialog } = await import('../src/ui/InfoDialogs.js');
+    const { ThemeProvider, loadTheme } = await import('../src/ui/theme.js');
+    const opened = vi.fn();
+    const stopped = vi.fn();
+    const close = vi.fn();
+    const items = [{ label: 'bg1 · running · 3s · npm run dev', onSelect: opened, onShortcut: stopped }, { label: 'bg2 · completed', onSelect: vi.fn() }];
+    const screen = render(<ThemeProvider theme={loadTheme('dark')}><ListDialog title="Background" items={items} shortcutKey="x" onClose={close} /></ThemeProvider>);
+    await settle();
+    screen.stdin.write('x'); await settle();
+    expect(stopped).toHaveBeenCalledTimes(1);
+    screen.stdin.write('\r'); await settle();
+    expect(opened).toHaveBeenCalledTimes(1);
+    screen.unmount();
+  });
+
   it('takes the queue ahead of a draft on its first line', async () => {
     const take = vi.fn(() => ({ text: 'one\ntwo', attachments: [], bash: false }));
     const screen = await input({ queue: ['one', 'two'], onTakeQueue: take });

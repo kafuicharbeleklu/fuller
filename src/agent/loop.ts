@@ -66,6 +66,9 @@ export interface TurnOptions {
 
 /** How long the auto mode classifier may take before the user is asked. */
 const AUTO_MODE_TIMEOUT_MS = 30_000;
+/** Auto mode pauses after this many denials in a row, or in the whole session (Claude Code docs). */
+const AUTO_PAUSE_STREAK = 3;
+const AUTO_PAUSE_TOTAL = 20;
 
 const PARALLEL_READ_TOOLS = new Set(['read_file', 'outline_file', 'list_directory', 'search_files', 'glob']);
 
@@ -170,6 +173,14 @@ export class AgentLoop {
   private fileTracker = new FileTracker();
   /** Auto mode denials, newest first. */
   private recentDenials: Array<{ action: string; reason: string; timestamp: number }> = [];
+  /**
+   * Claude Code: after 3 denials in a row or 20 in the session, auto mode pauses and prompts come
+   * back (docs, permission-modes). Here it also stops spending a Gemini call per blocked action.
+   * Entering auto mode again (Shift+Tab) resumes it.
+   */
+  private autoDenialStreak = 0;
+  private autoDenialTotal = 0;
+  private autoPaused = false;
   private agentControllers = new Map<string, AbortController>();
   private customTitle?: string;
   private mcp: McpManager;
@@ -307,6 +318,28 @@ export class AgentLoop {
 
   public describeBackgroundTasks(): string[] {
     return this.background.list().map(describeTask);
+  }
+
+  /** The background tasks of this session, for /tasks. */
+  public backgroundTasks(): BackgroundTask[] {
+    return this.background.list();
+  }
+
+  /** The whole log of a background task (its last 2 MB when longer), for /tasks → Enter. */
+  public backgroundTaskOutput(id: string): string | undefined {
+    const task = this.background.list().find((t) => t.id === id);
+    if (!task) return undefined;
+    try {
+      const size = fs.statSync(task.logFile).size;
+      const from = Math.max(0, size - 2 * 1024 * 1024);
+      const fd = fs.openSync(task.logFile, 'r');
+      const buf = Buffer.alloc(size - from);
+      fs.readSync(fd, buf, 0, buf.length, from);
+      fs.closeSync(fd);
+      return (from ? `[… first ${from.toLocaleString('en-US')} bytes not shown]\n` : '') + buf.toString('utf8');
+    } catch {
+      return '';
+    }
   }
 
   public killBackgroundTask(id: string): BackgroundTask | undefined {
@@ -531,6 +564,8 @@ export class AgentLoop {
   public setPermissionMode(mode: PermissionMode) {
     if (this.config.permissionMode === mode) return;
     this.config.permissionMode = mode;
+    // Entering auto mode again resumes it after a pause, with fresh counters.
+    if (mode === 'auto') { this.autoPaused = false; this.autoDenialStreak = 0; this.autoDenialTotal = 0; }
     this.session.refresh();
     this.callbacks.onModeChange?.(mode);
   }
@@ -1313,6 +1348,7 @@ export class AgentLoop {
    */
   private async autoDecide(state: ToolCallState, evaluation: Evaluation, signal?: AbortSignal): Promise<AutoVerdict | null> {
     if (evaluation.matchedRule && (this.config.settings.permissions?.ask ?? []).includes(evaluation.matchedRule)) return null;
+    if (this.autoPaused) return null;
     const action = `${evaluation.displayName}(${evaluation.target})`;
     let verdict: AutoVerdict | null;
     if (evaluation.risk === 'danger') verdict = { decision: 'deny', reason: `Hard deny: ${evaluation.reason}` };
@@ -1341,6 +1377,15 @@ export class AgentLoop {
     if (verdict.decision === 'deny') {
       this.recentDenials.unshift({ action, reason: verdict.reason, timestamp: Date.now() });
       this.recentDenials = this.recentDenials.slice(0, 50);
+      this.autoDenialStreak++;
+      this.autoDenialTotal++;
+      if (this.autoDenialStreak >= AUTO_PAUSE_STREAK || this.autoDenialTotal >= AUTO_PAUSE_TOTAL) {
+        this.autoPaused = true;
+        const why = this.autoDenialStreak >= AUTO_PAUSE_STREAK ? `${this.autoDenialStreak} denials in a row` : `${this.autoDenialTotal} denials this session`;
+        this.addSystemMessage(`Auto mode paused after ${why} · asking you from now on · shift+tab to resume auto mode`, 'notice');
+      }
+    } else {
+      this.autoDenialStreak = 0;
     }
     return verdict;
   }
@@ -1449,6 +1494,17 @@ export class AgentLoop {
 
   public getAgentTasks(): AgentTask[] {
     return this.agentTasks.map((task) => ({ ...task }));
+  }
+
+  /** Ctrl+X Ctrl+K (twice): stops every background agent still working; returns how many. */
+  public stopAllAgents(): number {
+    let stopped = 0;
+    for (const task of this.agentTasks) {
+      const controller = this.agentControllers.get(task.id);
+      if (controller && !controller.signal.aborted) { controller.abort(); stopped++; }
+    }
+    if (stopped) this.callbacks.onAgentsChange?.(this.getAgentTasks());
+    return stopped;
   }
 
   /** ctrl+x in the agents view: stops the agent if it still works and forgets it. */

@@ -45,6 +45,8 @@ export interface CommandContext {
   exit: () => void;
   openRewind: () => void;
   openDiffViewer: () => void;
+  /** A read-only text viewer (the transcript viewer's keys: scroll, / search, q to close). */
+  openTextViewer: (title: string, lines: string[]) => void;
   toggleVerbose: () => void;
   transcriptMarkdown: () => string;
   addDir: (dir: string) => void;
@@ -69,7 +71,7 @@ export type InfoDialog =
   | { kind: 'btw'; question: string }
   | { kind: 'effort' }
   | { kind: 'input'; title: string; description?: string; label?: string; placeholder?: string; hint?: string; complete?: (value: string) => string; onSubmit: (value: string) => void }
-  | { kind: 'list'; title: string; header?: string[]; items: ListItem[]; empty?: string; footer?: string; numbered?: boolean; hint?: string }
+  | { kind: 'list'; title: string; header?: string[]; items: ListItem[]; empty?: string; footer?: string; numbered?: boolean; hint?: string; shortcutKey?: string }
   | { kind: 'permissions'; allow: string[]; ask: string[]; deny: string[]; directories: string[]; denials: Denial[]; autoRules: string[]; disabledBuiltin: Array<'softAllow' | 'softDeny'>; onAddRule: (kind: 'allow' | 'ask' | 'deny', rule: string) => void; onRemoveRule: (rule: string) => void; onAddAutoRule: (rule: string) => void; onRemoveAutoRule: (rule: string) => void; onToggleBuiltin: (group: 'softAllow' | 'softDeny') => void; onAddDirectory: () => void };
 
 /** /permissions dialog data; its actions update the settings and reopen it. */
@@ -757,14 +759,24 @@ export const COMMANDS: SlashCommand[] = [
         ctx.addSystem(t ? `Task ${t.id}: ${t.status}` : `Unknown task "${id}".`);
         return;
       }
-      const lines = ctx.agent.describeBackgroundTasks();
-      ctx.openDialog({
-        kind: 'list',
-        title: 'Background',
-        items: lines.map((line) => ({ label: line })),
-        empty: 'No tasks currently running',
-        hint: lines.length ? '↑/↓ to select · Enter to view · Esc to close' : 'Esc to close',
-      });
+      // Claude Code: Enter opens a task's output, x stops it.
+      const open = (): void => {
+        const tasks = ctx.agent.backgroundTasks();
+        const lines = ctx.agent.describeBackgroundTasks();
+        ctx.openDialog({
+          kind: 'list',
+          title: 'Background',
+          items: tasks.map((task, i) => ({
+            label: lines[i] ?? task.id,
+            onSelect: () => ctx.openTextViewer(`${task.id} · ${task.description ?? task.command.split('\n')[0]}`, (ctx.agent.backgroundTaskOutput(task.id) || '(no output yet)').replace(/\n$/, '').split('\n')),
+            onShortcut: task.status === 'running' ? () => { const t = ctx.agent.killBackgroundTask(task.id); ctx.addSystem(t ? `Task ${t.id}: ${t.status}` : `Unknown task "${task.id}".`); open(); } : undefined,
+          })),
+          empty: 'No tasks currently running',
+          shortcutKey: 'x',
+          hint: tasks.length ? '↑/↓ to select · Enter to view · x to stop · Esc to close' : 'Esc to close',
+        });
+      };
+      open();
     },
   },
   {

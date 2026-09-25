@@ -119,6 +119,8 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   // Normal view is condensed like Claude Code; ctrl+o shows the detailed transcript.
   const [verbose, setVerbose] = useState(false);
   const [viewer, setViewer] = useState<'transcript' | 'diff' | null>(null);
+  /** A read-only text view opened by a command (/tasks → Enter shows a task's output). */
+  const [textView, setTextView] = useState<{ title: string; lines: string[] } | null>(null);
   // ← on an empty prompt: the agents view, its agents, and the report opened from it.
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [agentTasks, setAgentTasks] = useState<AgentTask[]>([]);
@@ -158,10 +160,11 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
 
   useEffect(() => {
     if (fullscreen || process.env.FULLER_DISABLE_MOUSE === '1' || !process.stdout.isTTY) return;
-    if (screen !== 'picker' && !modelPickerOpen && !rewindOpen && !viewer) return;
+    // Every list takes the wheel in classic mode too: /theme and /resume opened during a session included.
+    if (screen !== 'picker' && !modelPickerOpen && !rewindOpen && !viewer && !themePickerOpen && !resumeOpen) return;
     process.stdout.write('\x1b[?1000h\x1b[?1006h');
     return () => { process.stdout.write('\x1b[?1000l\x1b[?1006l'); };
-  }, [fullscreen, screen, modelPickerOpen, rewindOpen, viewer]);
+  }, [fullscreen, screen, modelPickerOpen, rewindOpen, viewer, themePickerOpen, resumeOpen]);
 
   // /diff: at 110 columns and more in fullscreen, Claude Code's panel beside the conversation.
   const [diffPanel, setDiffPanel] = useState<DiffPanelState | null>(null);
@@ -441,7 +444,8 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
 
   const cycleMode = useCallback(() => {
     const current = agentRef.current?.permissionMode ?? mode;
-    const order: PermissionMode[] = startedInBypass.current ? [...CYCLE_MODES, 'bypassPermissions'] : CYCLE_MODES;
+    // Claude Code places bypass right after plan when the session started in it, then auto, then back to manual.
+    const order: PermissionMode[] = startedInBypass.current ? ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'auto'] : CYCLE_MODES;
     applyMode(order[(order.indexOf(current) + 1) % order.length]);
   }, [applyMode, mode]);
 
@@ -499,6 +503,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       openRewind: () => setRewindOpen(true),
       toggleVerbose: () => setViewer((v) => (v === 'transcript' ? null : 'transcript')),
       openDiffViewer,
+      openTextViewer: (title: string, lines: string[]) => setTextView({ title, lines }),
       transcriptMarkdown,
       addDir: (dir) => { config.additionalDirectories.push(dir); },
       openModelPicker: () => setModelPickerOpen(true),
@@ -638,7 +643,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   // The effort shown in dialog rules, as Claude Code does ("◐ medium · /effort").
   const effortLevel = effectiveThinkingLevel(model, thinking);
   const effortLabel = effortLevel ? `${EFFORT_GLYPHS[effortLevel] ?? '◐'} ${effortLevel} · /effort` : undefined;
-  const modalOpen = confirmation !== null || modelSwitch !== null || rewindOpen || modelPickerOpen || themePickerOpen || resumeOpen || infoDialog !== null || viewer !== null || agentsOpen || agentReport !== null;
+  const modalOpen = confirmation !== null || modelSwitch !== null || rewindOpen || modelPickerOpen || themePickerOpen || resumeOpen || infoDialog !== null || viewer !== null || textView !== null || agentsOpen || agentReport !== null;
   const pickerOpen = modelPickerOpen || themePickerOpen || rewindOpen || resumeOpen || infoDialog !== null;
   const pickerTranscriptHeight = rows < 14 ? 0 : Math.max(2, rows - 18);
   const transcriptHeight = pickerOpen ? pickerTranscriptHeight : confirmation ? Math.max(2, rows - (rows < 20 ? 14 : 17)) : Math.max(4, rows - 9 - (showHelp ? SHORTCUTS_HELP_EXTRA_ROWS : 0) - (inputState.menuOpen ? SUGGESTION_LINES - 1 : 0));
@@ -712,6 +717,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
           />
         ) : null}
         {viewer === 'diff' ? <DiffViewer data={diffData} onClose={() => setViewer(null)} onRefresh={() => setDiffData(loadDiffViewer())} /> : null}
+        {textView && !viewer ? <Pager title={textView.title} lines={textView.lines} onClose={() => setTextView(null)} /> : null}
         {viewer === 'transcript' ? <Pager title="Transcript viewer" status="Showing detailed transcript · ctrl+o to toggle · ? for shortcuts" rightLabel="verbose" lines={detailedLines} ansi sectionPrefix="❯ " onClose={() => setViewer(null)} onToggleDetails={!fullscreen ? () => setVerbose((v) => !v) : undefined} onExport={fullscreen ? exportTranscript : undefined} onOpenEditor={fullscreen ? openTranscriptEditor : undefined} /> : null}
         <Box flexDirection="column" display={viewer || agentReport || (agentsOpen && !confirmation) ? 'none' : 'flex'} flexGrow={welcome || fullscreen ? 1 : undefined}>
         {welcome ? <Box flexGrow={1} /> : null}
@@ -794,7 +800,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
           : infoDialog.kind === 'settings' ? <SettingsDialog status={infoDialog.status} usage={infoDialog.usage} config={infoDialog.config} stats={infoDialog.stats} initialTab={infoDialog.tab} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
           : infoDialog.kind === 'permissions' ? <PermissionsDialog allow={infoDialog.allow} ask={infoDialog.ask} deny={infoDialog.deny} denials={infoDialog.denials} autoRules={infoDialog.autoRules} disabledBuiltin={infoDialog.disabledBuiltin} onAddAutoRule={infoDialog.onAddAutoRule} onRemoveAutoRule={infoDialog.onRemoveAutoRule} onToggleBuiltin={infoDialog.onToggleBuiltin} directories={infoDialog.directories} onAddRule={infoDialog.onAddRule} onRemoveRule={infoDialog.onRemoveRule} onAddDirectory={infoDialog.onAddDirectory} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
           : infoDialog.kind === 'input' ? <InputDialog title={infoDialog.title} description={infoDialog.description} label={infoDialog.label} placeholder={infoDialog.placeholder} hint={infoDialog.hint} complete={infoDialog.complete} onSubmit={infoDialog.onSubmit} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
-          : <ListDialog title={infoDialog.title} header={infoDialog.header} items={infoDialog.items} empty={infoDialog.empty} footer={infoDialog.footer} numbered={infoDialog.numbered} hint={infoDialog.hint} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
+          : <ListDialog shortcutKey={infoDialog.shortcutKey} title={infoDialog.title} header={infoDialog.header} items={infoDialog.items} empty={infoDialog.empty} footer={infoDialog.footer} numbered={infoDialog.numbered} hint={infoDialog.hint} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
         ) : null}
         {resumeOpen && !confirmation ? (
           <SessionPicker
@@ -858,6 +864,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onSubmit={onSubmit}
             onSendNow={onSendNow}
             onBackground={() => agentRef.current?.backgroundCurrentBash() ?? false}
+            onStopAgents={() => { const n = agentRef.current?.stopAllAgents() ?? 0; addSystem(n ? `Stopped ${n} background agent${n === 1 ? '' : 's'}` : 'No background agents running', 'notice'); return n; }}
             onTakeQueue={(empty) => agentRef.current?.takeQueue(empty)}
             onCommand={onCommand}
             onBash={onBash}

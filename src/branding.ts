@@ -30,7 +30,7 @@ export const SPINNER_PAST_VERBS = ['Baked', 'Brewed', 'Churned', 'Cooked', 'Crun
 /** Startup tips, shown under the banner on some launches only, like Claude Code's notices. */
 export const STARTUP_TIPS = [
   'Type / for commands, @ to mention a file, ! to run a shell command.',
-  'Shift+Tab cycles modes: manual → accept edits → plan → bypass.',
+  'Shift+Tab cycles modes: manual → accept edits → plan → auto.',
   'Esc interrupts; Esc Esc opens the rewind menu.',
   'Ctrl+O toggles the detailed transcript with full tool output.',
   'Pasted text longer than a few lines is collapsed into [Pasted text #N +L lines].',

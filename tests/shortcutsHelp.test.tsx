@@ -32,9 +32,13 @@ describe('shortcut help (?)', () => {
         onClearScreen={() => {}} onToggleVerbose={() => {}} onToggleHelp={onToggleHelp} onDoubleEscape={() => {}} onPopQueue={() => undefined}
         onSwitchModel={onSwitchModel} />,
     ));
-    await new Promise((resolve) => setImmediate(resolve));
-    screen.stdin.write('\x1b');
-    await vi.waitFor(() => expect(onToggleHelp).toHaveBeenCalledOnce());
+    // The input listener is attached by an effect after the first frame: under load a key typed
+    // before it is lost (same cause as the session picker, 25/09). Press Esc until it is heard.
+    for (let i = 0; i < 40 && onToggleHelp.mock.calls.length === 0; i++) {
+      screen.stdin.write('\x1b');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(onToggleHelp).toHaveBeenCalledOnce();
     screen.stdin.write('\x1bp');
     await vi.waitFor(() => expect(onSwitchModel).toHaveBeenCalledOnce());
     screen.unmount();

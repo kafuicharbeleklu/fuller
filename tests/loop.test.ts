@@ -141,6 +141,34 @@ describe('AgentLoop', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('pauses auto mode after 3 denials in a row and asks the user, until auto mode is entered again', async () => {
+    const asked: unknown[] = [];
+    const { cb, items } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) { asked.push(c); c.onDecide({ kind: 'no' } as any); } } });
+    const config = getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'auto' });
+    const loop = new AgentLoop(config, cb);
+    oneShotReply = '{"decision": "deny", "reason": "not requested"}';
+    for (let i = 0; i < 3; i++) {
+      script = [{ functionCalls: [{ name: 'execute_bash', args: { command: `git push origin b${i}` } }] }, { text: 'ok' }];
+      await loop.handleUserInput(`try ${i}`);
+    }
+    expect(asked).toHaveLength(0);
+    expect(items.some((i) => i.kind === 'system' && String(i.message?.content ?? '').startsWith('Auto mode paused after 3 denials in a row'))).toBe(true);
+    const classified = calls.filter((c) => c.kind === 'oneShot').length;
+    // Paused: the next action goes to the user, and the classifier is not called.
+    script = [{ functionCalls: [{ name: 'execute_bash', args: { command: 'git push origin b3' } }] }, { text: 'ok' }];
+    await loop.handleUserInput('again');
+    expect(asked).toHaveLength(1);
+    expect(calls.filter((c) => c.kind === 'oneShot').length).toBe(classified);
+    // Entering auto mode again resumes it.
+    loop.setPermissionMode('default');
+    loop.setPermissionMode('auto');
+    script = [{ functionCalls: [{ name: 'execute_bash', args: { command: 'git push origin b4' } }] }, { text: 'ok' }];
+    await loop.handleUserInput('resumed');
+    expect(asked).toHaveLength(1);
+    expect(calls.filter((c) => c.kind === 'oneShot').length).toBe(classified + 1);
+    oneShotReply = '';
+  });
+
   it('lets the auto mode classifier allow or deny instead of asking', async () => {
     const asked: unknown[] = [];
     const { cb, items } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) asked.push(c); } });
@@ -172,7 +200,8 @@ describe('AgentLoop', () => {
     const { cb } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) { asked(); c.onDecide({ kind: 'no', feedback: 'Not approved' }); } } });
     const config = getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'auto' });
     const loop = new AgentLoop(config, cb);
-    oneShotReply = '{"decision":"deny","reason":"No command needed for this test"}';
+    // Allowed, not denied: six denials in a row would pause auto mode (3 in a row) and stop the classifier calls this test checks.
+    oneShotReply = '{"decision":"allow","reason":"Harmless command for this test"}';
     const review = async (agent: AgentLoop, input: string) => {
       script = [
         { functionCalls: [{ name: 'execute_bash', args: { command: 'node -e "console.log(123)"' } }] },

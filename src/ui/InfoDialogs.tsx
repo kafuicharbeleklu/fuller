@@ -229,13 +229,15 @@ export interface ListItem {
   glyphColor?: 'success' | 'warning' | 'error' | 'subtle';
   /** Runs after the dialog closes when the item is chosen with Enter. */
   onSelect?: () => void;
+  /** Runs after the dialog closes when the list's shortcut key is pressed on this item (/tasks: x stops the task). */
+  onShortcut?: () => void;
 }
 
 /**
  * Read-only list dialog in Claude Code's style (/memory, /mcp, /hooks, /tasks):
  * a title, a few header lines, a list and the key hint.
  */
-export const ListDialog: React.FC<{ title: string; header?: string[]; items: ListItem[]; empty?: string; footer?: string; numbered?: boolean; hint?: string; onClose: () => void; ruleLabel?: string }> = ({ title, header = [], items, empty, footer, numbered = true, hint, onClose, ruleLabel }) => {
+export const ListDialog: React.FC<{ title: string; header?: string[]; items: ListItem[]; empty?: string; footer?: string; numbered?: boolean; hint?: string; shortcutKey?: string; onClose: () => void; ruleLabel?: string }> = ({ title, header = [], items, empty, footer, numbered = true, hint, shortcutKey, onClose, ruleLabel }) => {
   const theme = useTheme();
   const { stdout } = useStdout();
   const labelWidth = Math.min(32, Math.max(10, ...items.map((item) => item.label.length + (item.glyph ? 2 : 0) + 3)));
@@ -254,6 +256,8 @@ export const ListDialog: React.FC<{ title: string; header?: string[]; items: Lis
           labelWidth={labelWidth}
           maxVisible={Math.max(3, (stdout.rows || 24) - 10 - header.length)}
           onSelect={(i) => { onClose(); items[i]?.onSelect?.(); }}
+          shortcutKey={shortcutKey}
+          onShortcutSelect={(i) => { if (items[i]?.onShortcut) { onClose(); items[i].onShortcut!(); } }}
           onCancel={onClose}
         />
       ) : null}
