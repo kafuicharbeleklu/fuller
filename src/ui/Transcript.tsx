@@ -132,6 +132,21 @@ export const TranscriptItemView: React.FC<Props> = React.memo(({ item, verbose, 
         </Box>
       );
 
+    case 'thinking': {
+      // Claude Code: "✻ Thinking…" folded, dim and italic; the summary itself in the detailed view (Ctrl+O).
+      const lines = item.content.split('\n');
+      return (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={theme.subtle} italic>✻ Thinking…</Text>
+          {verbose ? (
+            <Box flexDirection="column" marginLeft={2}>
+              {lines.map((line, i) => <Text key={i} color={theme.subtle} italic wrap="wrap">{line.replace(/\*\*/g, '') || ' '}</Text>)}
+            </Box>
+          ) : null}
+        </Box>
+      );
+    }
+
     case 'tool':
       return (
         <Box marginTop={1}>

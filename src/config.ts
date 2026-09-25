@@ -54,6 +54,8 @@ export interface Settings {
   replyAfterShell?: boolean;
   /** Before the model concludes, ask it to check its changes, finish its task list or explain a failed check (default true). */
   verifyWork?: boolean;
+  /** Ask Gemini for its thought summaries and show them folded as "✻ Thinking…" (default true); they are not sent back to the model. */
+  showThinking?: boolean;
   /** Clear old long tool outputs from the conversation sent to the model, keeping them on disk (default true). */
   contextPruning?: boolean;
   /** The /diff panel as Claude Code remembers it: opened with /diff (opens on its own at 110 columns), or closed (stays closed). */

@@ -11,7 +11,7 @@ afterAll(() => {
 });
 
 /** Each call to sendMessageStream takes the next scripted answer. */
-let script: Array<{ text?: string; call?: boolean; finish?: string; cached?: number }> = [];
+let script: Array<{ text?: string; call?: boolean; finish?: string; cached?: number; thought?: string }> = [];
 let requests = 0;
 let lastConfig: any;
 let lastHistory: Content[] = [];
@@ -27,7 +27,7 @@ vi.mock('@google/genai', async (importOriginal) => {
           sendMessageStream: async () => {
             requests++;
             const step = script.shift() ?? { text: 'done', finish: 'STOP' };
-            const parts = [...(step.text ? [{ text: step.text }] : []), ...(step.call ? [{ functionCall: { id: 'c1', name: 'read_file', args: { file_path: 'a' } } }] : [])];
+            const parts = [...(step.thought ? [{ text: step.thought, thought: true }] : []), ...(step.text ? [{ text: step.text }] : []), ...(step.call ? [{ functionCall: { id: 'c1', name: 'read_file', args: { file_path: 'a' } } }] : [])];
             return (async function* () {
               yield { candidates: [{ content: { parts }, finishReason: step.finish }], usageMetadata: { promptTokenCount: 1000, cachedContentTokenCount: step.cached ?? 0, totalTokenCount: 1010 } };
             })();
@@ -40,7 +40,7 @@ vi.mock('@google/genai', async (importOriginal) => {
   return { ...real, GoogleGenAI };
 });
 
-import { GeminiAgentSession, EmptyTurnError, historyToText, sanitizeHistory } from '../src/agent/gemini.js';
+import { GeminiAgentSession, EmptyTurnError, historyToText, sanitizeHistory, stripThoughtSummaries } from '../src/agent/gemini.js';
 import { getConfig } from '../src/config.js';
 import { getSystemPrompt } from '../src/agent/systemPrompt.js';
 
@@ -130,6 +130,43 @@ describe('history repair', () => {
 });
 
 describe('Gemini integration (lot 1)', () => {
+  it('asks Gemini 3 for thought summaries unless turned off, never Gemma', () => {
+    newSession();
+    expect(lastConfig.thinkingConfig.includeThoughts).toBe(true);
+    const off = new GeminiAgentSession({ ...getConfig({ workspaceDir: process.cwd(), apiKey: 'robust-key', model: 'gemini-3.6-flash' }), apiKeys: ['robust-key'] } as any);
+    (off as any).config.settings.showThinking = false;
+    off.initChat();
+    expect(lastConfig.thinkingConfig.includeThoughts).toBeUndefined();
+    const gemma = new GeminiAgentSession({ ...getConfig({ workspaceDir: process.cwd(), apiKey: 'robust-key', model: 'gemma-4-26b-a4b-it' }), apiKeys: ['robust-key'] } as any);
+    gemma.initChat();
+    expect(lastConfig.thinkingConfig?.includeThoughts).toBeUndefined();
+  });
+
+  it('returns the thought summary with the reply, streams it, and keeps it out of the history sent back', async () => {
+    const session = newSession();
+    session.initChat([
+      { role: 'user', parts: [{ text: 'hi' }] },
+      { role: 'model', parts: [{ text: '**Planning**\nOld thought', thought: true }, { text: 'hello', thoughtSignature: 'sig' }] },
+    ]);
+    script = [{ thought: '**Reading**\nLooking at the file.', text: 'Here it is.', finish: 'STOP' }];
+    const streamed: string[] = [];
+    const out = await session.sendUserMessage('show me', { onThought: (t) => streamed.push(t) });
+    expect(out.text).toBe('Here it is.');
+    expect(out.thoughts).toBe('**Reading**\nLooking at the file.');
+    expect(streamed).toEqual(['**Reading**\nLooking at the file.']);
+    expect(lastHistory.flatMap((c) => c.parts ?? []).some((p: any) => p.thought)).toBe(false);
+    expect(lastHistory[1].parts).toEqual([{ text: 'hello', thoughtSignature: 'sig' }]);
+  });
+
+  it('strips only thought summary parts: signatures and calls stay, an emptied model turn goes', () => {
+    const history: Content[] = [
+      { role: 'user', parts: [{ text: 'go' }] },
+      { role: 'model', parts: [{ text: 'summary', thought: true }] },
+      { role: 'model', parts: [{ text: 'signed thought', thought: true, thoughtSignature: 's1' }, { functionCall: { name: 'read_file', args: {} }, thoughtSignature: 's2' }] },
+    ];
+    expect(stripThoughtSummaries(history)).toEqual([history[0], history[2]]);
+  });
+
   it('sends no temperature (Google: keep Gemini 3 sampling defaults)', () => {
     newSession();
     expect(lastConfig.temperature).toBeUndefined();

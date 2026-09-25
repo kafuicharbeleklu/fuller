@@ -6,7 +6,7 @@ import path from 'node:path';
 const calls: any[] = [];
 let oneShotReply = '';
 let refreshes = 0;
-let script: Array<{ text?: string; functionCalls?: any[]; finishReason?: string; error?: Error; retry?: boolean }> = [];
+let script: Array<{ text?: string; functionCalls?: any[]; finishReason?: string; error?: Error; retry?: boolean; thoughts?: string }> = [];
 
 vi.mock('../src/agent/gemini.js', () => {
   class GeminiAgentSession {
@@ -40,7 +40,7 @@ vi.mock('../src/agent/gemini.js', () => {
       if (step.retry) opts?.onRetry?.({ attempt: 4, maxAttempts: 5, delayMs: 8000, status: 429 });
       if (step.text) opts?.onChunk?.(step.text);
       if (step.error) throw step.error;
-      return { text: step.text ?? '', functionCalls: step.functionCalls ?? [], finishReason: step.finishReason, usage: { promptTokens: 10, responseTokens: 5, totalTokens: 15, thoughtsTokens: 0 } };
+      return { text: step.text ?? '', functionCalls: step.functionCalls ?? [], finishReason: step.finishReason, thoughts: step.thoughts, usage: { promptTokens: 10, responseTokens: 5, totalTokens: 15, thoughtsTokens: 0 } };
     }
     async compactHistory() { return 'summary'; }
     async oneShot(question: string) { calls.push({ kind: 'oneShot', text: question }); return oneShotReply; }
@@ -167,6 +167,19 @@ describe('AgentLoop', () => {
     expect(asked).toHaveLength(1);
     expect(calls.filter((c) => c.kind === 'oneShot').length).toBe(classified + 1);
     oneShotReply = '';
+  });
+
+  it('commits the thought summary before the step\'s text, and keeps it in the saved message', async () => {
+    const { cb, items } = makeCallbacks();
+    const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+    script = [{ thoughts: '**Checking**\nThe answer is short.', text: 'Four.' }];
+    await loop.handleUserInput('2+2?');
+    const kinds = items.filter((i) => i.kind === 'thinking' || i.kind === 'text').map((i) => i.kind);
+    expect(kinds).toEqual(['thinking', 'text']);
+    expect(items.find((i) => i.kind === 'thinking').content).toBe('**Checking**\nThe answer is short.');
+    const saved = loop.getMessages().find((m) => m.role === 'assistant')!;
+    expect(saved.parts!.map((p) => p.type)).toEqual(['thinking', 'text']);
+    expect(saved.content).toBe('Four.');
   });
 
   it('lets the auto mode classifier allow or deny instead of asking', async () => {

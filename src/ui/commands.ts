@@ -192,6 +192,11 @@ function configItems(ctx: CommandContext): ConfigItem[] {
       onChange: (value) => { ctx.config.settings.verifyWork = value === 'true'; saveUserSetting(['verifyWork'], value === 'true'); },
     },
     {
+      label: 'Show thinking', value: bool(ctx.config.settings.showThinking !== false), options: ['true', 'false'],
+      description: 'Gemini 3 sends a summary of its reasoning, shown folded as "✻ Thinking…" (ctrl+o to read it); it is not sent back to the model',
+      onChange: (value) => { ctx.config.settings.showThinking = value === 'true'; saveUserSetting(['showThinking'], value === 'true'); ctx.agent.reloadInstructions(); },
+    },
+    {
       label: 'Clear old tool output', value: bool(ctx.config.settings.contextPruning !== false), options: ['true', 'false'],
       description: 'Long tool outputs from earlier rounds leave the conversation sent to the model (they stay on disk); fewer tokens, steadier attention',
       onChange: (value) => { ctx.config.settings.contextPruning = value === 'true'; saveUserSetting(['contextPruning'], value === 'true'); },

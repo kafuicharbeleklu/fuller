@@ -36,6 +36,8 @@ export interface ToolCallState {
 
 export type MessagePart =
   | { type: 'text'; id: string; content: string }
+  /** Gemini's thought summary for this step, shown folded as "✻ Thinking…" (Ctrl+O shows it). */
+  | { type: 'thinking'; id: string; content: string }
   | { type: 'tool'; id: string; toolCall: ToolCallState };
 
 export type MessageKind = 'normal' | 'command' | 'bash' | 'compact' | 'notice' | 'context' | 'warning' | 'event';
@@ -131,6 +133,7 @@ export type TranscriptItem =
   | { key: string; kind: 'user'; message: ChatMessage }
   | { key: string; kind: 'system'; message: ChatMessage }
   | { key: string; kind: 'text'; messageId: string; content: string; timestamp: number }
+  | { key: string; kind: 'thinking'; messageId: string; content: string; timestamp: number }
   | { key: string; kind: 'tool'; messageId: string; toolCall: ToolCallState }
   | { key: string; kind: 'turn_end'; messageId: string; durationMs: number; toolCount: number; timestamp: number };
 

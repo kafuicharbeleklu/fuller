@@ -153,7 +153,7 @@ Les raccourcis se redéfinissent dans `~/.fuller/keybindings.json` (à défaut, 
 
 **Erreurs d'édition utiles.** Quand le texte cible d'`edit_file` n'est pas dans le fichier, Fuller cherche d'abord une correspondance ligne à ligne en ignorant l'indentation et les espaces de fin ; s'il y en a exactement une, il l'applique et ré-indente le remplacement comme le fichier. Sinon, l'erreur nomme les lignes qui ressemblent à la première ligne cible, pour une relecture ciblée avec `read_file`. Un remplacement contenant une ligne de remplissage (« // ... rest of the code ») est refusé au lieu d'être écrit tel quel. Pas de correspondance floue : elle peut modifier la mauvaise fonction.
 
-**Réflexion.** Les modèles Flash réfléchissent au niveau `high` par défaut (qualité avant vitesse) ; `/effort` ou `/model` change ce réglage.
+**Réflexion.** Les modèles Flash réfléchissent au niveau `high` par défaut (qualité avant vitesse) ; `/effort` ou `/model` change ce réglage. Comme Claude Code, Fuller montre la réflexion du modèle : Gemini 3 envoie un résumé de son raisonnement, affiché replié en « ✻ Thinking… » (gris, italique) au-dessus de la réponse ; `Ctrl+O` le déplie. Ces résumés ne sont pas renvoyés au modèle : l'historique reste celui d'avant (les parties signées sont gardées). `/config` → « Show thinking » les coupe. Gemma n'en envoie pas.
 
 **Vérifier après chaque modification.** Un hook `PostToolUse` renvoie sa sortie au modèle, qui corrige de lui-même. Exemple pour un projet TypeScript, dans `.fuller/settings.json` :
 

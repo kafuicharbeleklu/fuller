@@ -490,6 +490,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
         parts.push(`## ⏺ ${APP_NAME}\n`);
         for (const p of m.parts ?? []) {
           if (p.type === 'text') parts.push(`${p.content}\n`);
+          else if (p.type === 'thinking') parts.push(`> ✻ Thinking…\n> ${p.content.trim().replace(/\n/g, '\n> ')}\n`);
           else parts.push(`\`\`\`\n${p.toolCall.name}(${JSON.stringify(p.toolCall.args).slice(0, 500)})\n→ ${p.toolCall.status}${p.toolCall.summary ? ` · ${p.toolCall.summary}` : ''}\n${(p.toolCall.result ?? p.toolCall.error ?? '').slice(0, 2000)}\n\`\`\`\n`);
         }
       }

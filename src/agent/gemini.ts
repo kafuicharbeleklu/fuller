@@ -31,6 +31,8 @@ export interface ModelTurnOutput {
   usage?: TurnUsage;
   /** Why the model stopped (STOP, MAX_TOKENS, SAFETY, MALFORMED_FUNCTION_CALL…). */
   finishReason?: string;
+  /** Gemini's thought summary for this reply, when asked for (shown as "✻ Thinking…"). */
+  thoughts?: string;
 }
 
 /** Finish reasons where the model refused or was filtered: never retried, reported to the user. */
@@ -60,6 +62,8 @@ export interface StreamOptions {
   gitBranch?: string;
   /** Text only: the model may not call tools in this reply (the turn is being stopped). */
   noTools?: boolean;
+  /** Thought summary text as it streams in. */
+  onThought?: (text: string) => void;
 }
 
 export class GeminiAgentSession {
@@ -264,6 +268,11 @@ export class GeminiAgentSession {
     this.subagents = defs;
   }
 
+  /** Thought summaries (Gemini 3, not Gemma), unless the user turned them off. */
+  private wantsThoughts(): boolean {
+    return this.config.settings.showThinking !== false && /^gemini-3/.test(this.config.model);
+  }
+
   public initChat(history?: Content[]) {
     const thinkingLevel = effectiveThinkingLevel(this.config.model, this.config.thinkingLevel);
     this.chatConfig = {
@@ -282,7 +291,7 @@ export class GeminiAgentSession {
       tools: [{ functionDeclarations: [...geminiToolDeclarations.filter((d) => (!this.toolFilter || this.toolFilter.has(d.name!)) && (d.name !== 'memory' || this.config.settings.autoMemory !== false)), ...(this.toolFilter ? [] : this.extraTools)] }],
       // No temperature: Google asks to keep Gemini 3's sampling defaults (lower values can loop or degrade reasoning).
       ...(thinkingLevel
-        ? { thinkingConfig: { thinkingLevel: ThinkingLevel[thinkingLevel.toUpperCase() as keyof typeof ThinkingLevel] } }
+        ? { thinkingConfig: { thinkingLevel: ThinkingLevel[thinkingLevel.toUpperCase() as keyof typeof ThinkingLevel], ...(this.wantsThoughts() ? { includeThoughts: true } : {}) } }
         : {}),
     };
     this.chat = this.ai.chats.create({
@@ -388,6 +397,11 @@ export class GeminiAgentSession {
       return await this.streamWithRetry(message, options, () => delivered, () => { delivered = true; });
     } finally {
       this.streaming--;
+      // The summaries were for the screen: the model does not get them back (same history as without them).
+      if (this.streaming === 0 && this.wantsThoughts()) {
+        const history = this.getHistory();
+        if (history.some((c) => (c.parts ?? []).some(isThoughtSummary))) this.initChat(stripThoughtSummaries(history));
+      }
       if (this.streaming === 0 && this.pendingRebuild) {
         const apply = this.pendingRebuild;
         this.pendingRebuild = null;
@@ -409,6 +423,7 @@ export class GeminiAgentSession {
           },
         });
         let text = '';
+        let thoughts = '';
         let usage: TurnUsage | undefined;
         let finishReason: string | undefined;
         const functionCalls: FunctionCallInfo[] = [];
@@ -422,6 +437,9 @@ export class GeminiAgentSession {
               text += part.text;
               markDelivered();
               onChunk?.(part.text);
+            } else if (part.text && part.thought) {
+              thoughts += part.text;
+              options.onThought?.(part.text);
             }
             if (part.functionCall) {
               functionCalls.push({
@@ -448,7 +466,7 @@ export class GeminiAgentSession {
         if (!text && functionCalls.length === 0 && finishReason !== 'MAX_TOKENS' && !BLOCKED_FINISH_REASONS.has(finishReason ?? '')) {
           throw new EmptyTurnError(finishReason);
         }
-        return { text, functionCalls, usage, finishReason };
+        return { text, functionCalls, usage, finishReason, ...(thoughts ? { thoughts } : {}) };
       },
       {
         signal,
@@ -632,4 +650,16 @@ export function historyToText(history: Content[]): string {
       return `${role}:\n${body}`;
     })
     .join('\n\n');
+}
+
+/** A thought summary part: shown to the user, not needed by the model (parts with a signature are kept). */
+export function isThoughtSummary(part: Part): boolean {
+  return !!part.thought && typeof part.text === 'string' && !part.thoughtSignature && !part.functionCall;
+}
+
+/** The history without the thought summary parts; a model turn left empty is dropped with them. */
+export function stripThoughtSummaries(history: Content[]): Content[] {
+  return history
+    .map((c) => (c.role === 'model' && (c.parts ?? []).some(isThoughtSummary) ? { ...c, parts: (c.parts ?? []).filter((p) => !isThoughtSummary(p)) } : c))
+    .filter((c) => (c.parts ?? []).length > 0);
 }

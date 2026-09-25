@@ -38,6 +38,7 @@ export function transcriptLines(items: TranscriptItem[], detailed: boolean): str
       if (!(item.message.kind === 'command' && next?.kind === 'system' && next.message.kind === 'notice')) lines.push('');
     }
     else if (item.kind === 'text') lines.push(`● ${new Date(item.timestamp).toLocaleTimeString()}  ${safeText(item.content)}`, '');
+    else if (item.kind === 'thinking') lines.push('✻ Thinking…', ...safeText(item.content.replace(/\*\*/g, '')).split('\n').map((line) => `  ${line}`), '');
     else if (item.kind === 'system' && item.message.kind === 'context') lines.push('  ⎿ Context Usage (see /context)', '');
     else if (item.kind === 'system') lines.push(`${item.message.kind === 'notice' ? '  ⎿' : '※'} ${safeText(stripSegments(item.message.content))}`, '');
     else if (item.kind === 'tool') {

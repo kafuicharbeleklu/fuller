@@ -829,6 +829,14 @@ export class AgentLoop {
       },
     };
 
+    // Gemini's thought summary for a step: committed before the step's text, folded as "✻ Thinking…".
+    const commitThinking = (content?: string) => {
+      if (!content?.trim()) return;
+      const part = { type: 'thinking' as const, id: uid(), content: content.trim() };
+      assistant.parts!.push(part);
+      this.callbacks.onCommit({ key: part.id, kind: 'thinking', messageId: assistant.id, content: part.content, timestamp: Date.now() });
+    };
+
     const commitText = (content: string) => {
       if (!content) return;
       const part = { type: 'text' as const, id: uid(), content };
@@ -866,6 +874,7 @@ export class AgentLoop {
         batcher.flush();
         this.callbacks.onNotice(null);
         this.recordUsage(turn.usage);
+        commitThinking(turn.thoughts);
         commitText(turn.text);
         if (turn.functionCalls.length === 0 || stopping) {
           // The model stopped for a reason worth telling (never retried: a refusal is not transient).
