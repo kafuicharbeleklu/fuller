@@ -60,36 +60,34 @@ export interface AutoRequest {
   action: string;
   /** What Fuller's risk analysis says about it. */
   risk: string;
-  /** The user's latest prompts, most recent last. */
+  /** All user requests in the active conversation, most recent last (also on session resume). */
   userRequests: string[];
   settings?: AutoModeSettings;
 }
 
 /**
- * The latest request carries the task's own limits ("do not delete the directories that already
- * exist…"): it goes to the classifier whole, up to a generous bound (head and tail kept beyond
- * it). Older requests only need their gist. Before 25/09 every request was cut at 600
- * characters and a limit written further down vanished from the classifier's view (Codex, C007).
+ * A continuation does not replace the original task's constraints. Keep every user request
+ * intact, including on restored sessions; never guess which older instructions can be cut.
+ * Bound the classifier's input without losing instructions: above this size, throw so the
+ * caller's existing fallback asks for explicit approval instead of classifying partial context.
+ * This is a resource guard, not a claim that the classifier can enforce filesystem isolation.
  */
-const LATEST_REQUEST_MAX = 6_000;
-const OLDER_REQUEST_MAX = 600;
-
-function clipRequest(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const head = Math.floor(max * 0.6);
-  return `${text.slice(0, head)} […] ${text.slice(-(max - head))}`;
-}
+const USER_REQUESTS_MAX_CHARS = 24_000;
 
 export function autoModePrompt(request: AutoRequest): string {
+  const requestChars = request.userRequests.reduce((sum, text) => sum + text.length, 0);
+  if (requestChars > USER_REQUESTS_MAX_CHARS) {
+    throw new Error(`Complete user instructions exceed ${USER_REQUESTS_MAX_CHARS} characters; explicit approval is required instead of truncating permission context.`);
+  }
   const disabled = new Set(request.settings?.disabledBuiltin ?? []);
   const list = (rules: string[]) => rules.map((rule) => `- ${rule}`).join('\n');
-  const requests = request.userRequests.slice(-3);
   return [
     'You are the permission classifier of a coding agent running in auto mode. Decide whether the agent may perform the action below without asking the user.',
     disabled.has('softAllow') ? '' : `Usually allow:\n${list(SOFT_ALLOW_RULES)}`,
     disabled.has('softDeny') ? '' : `Usually deny, unless the user explicitly asked for exactly this:\n${list(SOFT_DENY_RULES)}`,
     request.settings?.rules?.length ? `The user's own rules (they take precedence over the lists above):\n${list(request.settings.rules)}` : '',
-    `What the user asked (most recent last):\n${requests.map((text, i) => `> ${clipRequest(text, i === requests.length - 1 ? LATEST_REQUEST_MAX : OLDER_REQUEST_MAX)}`).join('\n') || '> (nothing yet)'}`,
+    'Earlier task constraints still apply on continuation or resume unless the user explicitly changes them. A request to continue is not permission to widen the scope. Deny if the applicable scope is unclear.',
+    `What the user asked (most recent last):\n${request.userRequests.map((text) => `> ${text}`).join('\n') || '> (nothing yet)'}`,
     `Action: ${request.action}\nRisk analysis: ${request.risk}`,
     'Answer with JSON only: {"decision": "allow" | "deny", "reason": "<one short sentence>"}',
   ].filter(Boolean).join('\n\n');

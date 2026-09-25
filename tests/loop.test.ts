@@ -72,6 +72,7 @@ describe('AgentLoop', () => {
   let homeDir: string;
   beforeEach(() => {
     calls.length = 0;
+    oneShotReply = '';
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-loop-'));
     fs.writeFileSync(path.join(cwd, 'a.txt'), 'hello\n');
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-home-'));
@@ -162,6 +163,56 @@ describe('AgentLoop', () => {
     expect(asked).toHaveLength(0);
     expect(calls.find((c) => c.kind === 'tools').responses[0].output).toContain('auto-ok');
     oneShotReply = '';
+  });
+
+  it('keeps auto permission constraints across multiple continuations and a restored session, until history is cleared', async () => {
+    const constraint = 'Never modify production.conf.';
+    const task = `${'Task context. '.repeat(80)}${constraint}${' More context.'.repeat(80)}`;
+    const asked = vi.fn();
+    const { cb } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) { asked(); c.onDecide({ kind: 'no', feedback: 'Not approved' }); } } });
+    const config = getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'auto' });
+    const loop = new AgentLoop(config, cb);
+    oneShotReply = '{"decision":"deny","reason":"No command needed for this test"}';
+    const review = async (agent: AgentLoop, input: string) => {
+      script = [
+        { functionCalls: [{ name: 'execute_bash', args: { command: 'node -e "console.log(123)"' } }] },
+        { text: 'Paused.' },
+      ];
+      await agent.handleUserInput(input);
+    };
+    for (const input of [task, 'continue', 'continue', 'continue', 'continue']) await review(loop, input);
+    const persisted = JSON.parse(JSON.stringify(loop.getSessionData()));
+    const resumed = new AgentLoop(config, cb, persisted);
+    await review(resumed, 'continue');
+    const prompts = calls.filter((c) => c.kind === 'oneShot').map((c) => c.text);
+    expect(prompts).toHaveLength(6);
+    for (const prompt of prompts) expect(prompt).toContain(task);
+    expect(asked).not.toHaveBeenCalled();
+
+    resumed.clearHistory();
+    await review(resumed, 'Start a new task.');
+    const latest = calls.filter((c) => c.kind === 'oneShot').at(-1).text;
+    expect(latest).toContain('Start a new task.');
+    expect(latest).not.toContain(constraint);
+  });
+
+  it('asks for permission without calling the classifier when the full user instructions exceed its budget', async () => {
+    const asked = vi.fn();
+    const notice = vi.fn();
+    const { cb, items } = makeCallbacks({
+      onNotice: notice,
+      onRequestConfirmation: (c) => { if (c) { asked(); c.onDecide({ kind: 'no', feedback: 'No unattended approval' }); } },
+    });
+    const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'auto' }), cb);
+    script = [
+      { functionCalls: [{ name: 'execute_bash', args: { command: 'node -e "console.log(123)"' } }] },
+      { text: 'Permission needed.' },
+    ];
+    await loop.handleUserInput('x'.repeat(30_000));
+    expect(calls.some((c) => c.kind === 'oneShot')).toBe(false);
+    expect(asked).toHaveBeenCalledOnce();
+    expect(notice).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Complete user instructions exceed') }));
+    expect(items.find((item) => item.kind === 'tool').toolCall.status).toBe('rejected');
   });
 
   it('refuses to edit a file it has not read, or that changed since it was read', async () => {

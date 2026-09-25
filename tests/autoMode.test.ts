@@ -23,20 +23,49 @@ describe('auto mode', () => {
     expect(prompt).not.toContain(SOFT_DENY_RULES[0]);
   });
 
-  it('keeps a limit written far down a long request, and only the gist of older ones (C007)', () => {
+  it('keeps complete earlier instructions as well as the latest request', () => {
     const consigne = fs.readFileSync(path.resolve('reports/usage/2026-09-25-tache-tmp/consigne-2.txt'), 'utf8');
     expect(consigne.indexOf('do not delete the directories that already exist')).toBeGreaterThan(600);
     const older = 'earlier request '.repeat(80); // 1 280 characters
     const prompt = autoModePrompt({ action: 'Bash(rm -rf /tmp/fuller-evaltasks-x)', risk: 'exec · deletes files', userRequests: [older, consigne] });
     expect(prompt).toContain('do not delete the directories that already exist in /tmp');
-    expect(prompt).not.toContain(older); // the older one is cut to its gist (head, marker, tail)
-    expect(prompt).toContain(`> ${older.slice(0, 360)} […] `);
-    // A huge latest request keeps its head and its tail.
-    const huge = `START ${'x'.repeat(10_000)} never touch prod END`;
-    const clipped = autoModePrompt({ action: 'Bash(ls)', risk: 'read', userRequests: [huge] });
-    expect(clipped).toContain('START');
-    expect(clipped).toContain('never touch prod END');
-    expect(clipped).toContain('[…]');
+    expect(prompt).toContain(older);
+    expect(prompt).toContain(consigne);
+  });
+
+  it.each([1, 3, 6])('keeps the original restriction after %i continuation messages', (count) => {
+    const consigne = fs.readFileSync(path.resolve('reports/usage/2026-09-25-tache-tmp/consigne-2.txt'), 'utf8');
+    const prompt = autoModePrompt({ action: 'Bash(command under review)', risk: 'exec', userRequests: [consigne, ...Array(count).fill('continue')] });
+    expect(prompt).toContain(consigne);
+    expect(prompt).toContain('do not delete the directories that already exist in /tmp');
+  });
+
+  it('preserves restrictions in the middle of a long request, not just its head and tail', () => {
+    const task = `${'x'.repeat(5_000)}\nNever modify production.conf.\n${'y'.repeat(5_000)}`;
+    const prompt = autoModePrompt({ action: 'Bash(command under review)', risk: 'exec', userRequests: [task, 'continue'] });
+    expect(prompt).toContain(task);
+    expect(prompt).not.toContain('[…]');
+  });
+
+  it('keeps explicit user amendments in order instead of guessing which task limits expired', () => {
+    const requests = ['Do not edit tests.', 'Only tests/unit.ts may now be edited.', 'continue'];
+    const prompt = autoModePrompt({ action: 'Bash(command under review)', risk: 'exec', userRequests: requests });
+    const offsets = requests.map((text) => prompt.indexOf(`> ${text}`));
+    expect(offsets.every((offset) => offset >= 0)).toBe(true);
+    expect(offsets).toEqual([...offsets].sort((a, b) => a - b));
+  });
+
+  it('requires explicit approval when the full instructions cannot fit, without silently clipping them', () => {
+    const request = { action: 'Bash(command under review)', risk: 'exec' };
+    expect(() => autoModePrompt({ ...request, userRequests: ['x'.repeat(30_000)] })).toThrow('Complete user instructions exceed');
+    expect(() => autoModePrompt({ ...request, userRequests: ['x'.repeat(13_000), 'y'.repeat(13_000), 'continue'] })).toThrow('Complete user instructions exceed');
+  });
+
+  it('keeps instructions at the size limit and asks for approval if a continuation exceeds it', () => {
+    const task = 'x'.repeat(24_000);
+    const request = { action: 'Bash(command under review)', risk: 'exec' };
+    expect(autoModePrompt({ ...request, userRequests: [task] })).toContain(task);
+    expect(() => autoModePrompt({ ...request, userRequests: [task, 'continue'] })).toThrow('Complete user instructions exceed');
   });
 
   it('lets workspace edits through without the classifier', () => {
