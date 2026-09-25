@@ -69,3 +69,45 @@ Pour continuer à exécuter la feuille de route consolidée :
 - Tester l'interface TUI avec `python3 scripts/tui-smoke.py`.
 - Commits courts en français décrivant l'action concrète.
 - Ne jamais inclure de clés API ou de secrets dans les commits ou les logs.
+
+---
+
+## 5. Mise à jour stratégique du 25/09/2026 — Directive utilisateur : Pragmatisme et efficacité réelle
+
+### A. Retour d'expérience et directive formelle de l'utilisateur
+
+L'utilisateur a partagé un enseignement fondamental issu des débuts du projet :
+- Le projet avait démarré en **Python + Rich**, ce qui a conduit à des bugs insolubles et un blocage en boucle pendant plus d'un mois.
+- La décision de tout reprendre à zéro avec **React + Ink** a permis d'atteindre en **3 jours** un niveau de fidélité TUI/UX et une stabilité supérieurs à un mois de dev Python.
+- **Consigne expresse pour tous les agents :** Ne pas reproduire ce schéma d'égarement technique dans le raisonnement et l'apprentissage de l'agent. Bannir les architectures inutilement complexes et les "fausses bonnes idées" théoriques. Aller droit au but avec des solutions concrètes, mesurables et éprouvées (comme dans Claude Code).
+
+---
+
+### B. Matrice d'orientation : Pièges à bannir vs Leviers éprouvés
+
+| Approche théorique (À BANNIR — pièges à boucles) | Pourquoi c'est un piège | Solution pragmatique retenue (CE QUI MARCHE VRAIMENT) |
+| :--- | :--- | :--- |
+| **RAG / Embeddings locaux / Base vectorielle** | Lourd, désynchronisé aux changements de branches Git, lent, ne trouve pas les symboles précis. | **`search_files` (ripgrep) + `glob` + `outline_file` (AST)** : instantané, zéro indexation, 100 % exact. |
+| **Swarm d'agents multiples pour coder** (planner + coder + tester + critique pour chaque tâche) | Latence x5, coût tokens x4, incohérences de diff, perte du fil conducteur. | **Un seul agent principal solide** ; des sous-agents *uniquement* pour de l'exploration en lecture seule isolée. |
+| **Auto-apprentissage continu "magique"** (meta-réflexion après chaque action) | L'agent hallucine sur ses propres réflexions, pollue son contexte et tourne en rond sur des règles obsolètes. | **Fichier Markdown simple ([`MEMORY.md`](../src/agent/autoMemory.ts))**, mis à jour sur retour explicite (`/learn`) ou correction avérée d'un piège du projet. |
+| **Édition de code floue / tolérante (Fuzzy matching)** | Risque de casser le code silencieusement ou de modifier la mauvaise fonction. | **Remplacement exact strict** (`target_content` $\rightarrow$ `replacement_content`). Si échec, diagnostic avec lignes candidates et relecture ciblée. |
+
+---
+
+### C. Les 3 chantiers prioritaires à implémenter
+
+Pour améliorer le fonctionnement, le raisonnement et l'apprentissage de Fuller sans ouvrir de cercle vicieux :
+
+1. **Masquage récupérable des vieilles sorties d'outils (*Context Pruning*) dans [`src/agent/loop.ts`](../src/agent/loop.ts) :**
+   - Conserver intactes les sorties des 2 ou 3 derniers tours.
+   - Pour les tours antérieurs, compacter le corps de la réponse d'outil en un résumé + chemin du log sauvegardé sur disque.
+   - Gain documenté chez Anthropic : **+29 % de taux de succès et -84 % de tokens** sur tâches longues.
+
+2. **Feedback syntaxique immédiat post-édition dans [`src/tools/fileOps.ts`](../src/tools/fileOps.ts) :**
+   - Dès qu'un fichier est édité ou écrit, exécuter un contrôle syntaxique ultraléger immédiat (`node --check` pour JS, analyseur AST TypeScript déjà embarqué dans Fuller pour TS, `JSON.parse` pour JSON).
+   - Injecter l'erreur éventuelle directement dans le résultat de l'outil pour que le modèle corrige sa syntaxe au tour immédiatement suivant (zéro tour gaspillé).
+
+3. **Discipline de vérification par la preuve dans [`src/agent/taskState.ts`](../src/agent/taskState.ts) :**
+   - Maintenir la rigueur : reproduire le bug avant de corriger, vérifier par les tests (exit code 0) avant de conclure.
+   - Ne jamais déclarer une tâche terminée sans observation concrète de succès.
+
