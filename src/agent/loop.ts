@@ -839,9 +839,18 @@ export class AgentLoop {
         turns++;
         this.usage.turns++;
         if (turns > this.config.maxTurns) {
-          this.session.repairHistory();
-          this.addSystemMessage(`⚠ Max turns reached (${this.config.maxTurns}). Stopping. Ask to continue if needed.`, 'notice');
-          break;
+          // Three real sessions (25/09) ended here without any account of the work: the calls the
+          // model just asked for are answered "not executed" and it writes a status, tools off.
+          if (stopping) { this.session.repairHistory(); break; }
+          stopping = true;
+          this.addSystemMessage(`⚠ Max turns reached (${this.config.maxTurns}). Asking for a status; say "continue" to go on.`, 'notice');
+          const notExecuted = turn.functionCalls.map((c) => ({
+            id: c.id, name: c.name,
+            output: `Not executed: the limit of ${this.config.maxTurns} tool turns for one message was reached. Do not call tools now. Write a short status for the user: the files you changed, the checks you ran with their results, and what remains to do. The user can answer "continue".`,
+          }));
+          this.callbacks.onStatusChange('thinking');
+          turn = await this.session.sendToolResponses(notExecuted, { ...streamOptions, noTools: true });
+          continue;
         }
 
         const states: ToolCallState[] = turn.functionCalls.map((c) => ({

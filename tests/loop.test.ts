@@ -568,10 +568,11 @@ describe('AgentLoop', () => {
       expect(calls[3].text).toContain('no test, type check, lint or build command ran after the change');
     });
 
-    it('repairs a dangling call at the turn limit before the next user message', async () => {
+    it('asks for a status at the turn limit, tools off, and the next user message resumes cleanly', async () => {
       script = [
         { functionCalls: [{ id: 'first', name: 'read_file', args: { file_path: 'a.txt' } }] },
         { functionCalls: [{ id: 'pending', name: 'read_file', args: { file_path: 'a.txt' } }] },
+        { text: 'Status: read a.txt; nothing changed; remaining: the edit.' },
         { text: 'Resumed.' },
       ];
       const { cb, items } = makeCallbacks();
@@ -579,12 +580,34 @@ describe('AgentLoop', () => {
       config.maxTurns = 1;
       const loop = new AgentLoop(config, cb);
       await loop.handleUserInput('read');
-      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'repair']);
+      // The second batch of calls is answered "not executed" with tools off; the model writes the status.
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'tools']);
+      expect(calls[2].noTools).toBe(true);
+      expect(calls[2].responses.map((r: any) => r.id)).toEqual(['pending']);
+      expect(calls[2].responses[0].output).toContain('Not executed: the limit of 1 tool turns');
       expect(notices(items).some((n) => n.includes('Max turns reached'))).toBe(true);
       expect(items.filter((i) => i.kind === 'tool')).toHaveLength(1);
+      expect(items.some((i) => i.kind === 'text' && i.content.startsWith('Status:'))).toBe(true);
       await loop.handleUserInput('continue');
-      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'repair', 'user']);
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'tools', 'user']);
       expect(items.some((i) => i.kind === 'text' && i.content === 'Resumed.')).toBe(true);
+    });
+
+    it('repairs the history when the model calls a tool anyway at the turn limit', async () => {
+      script = [
+        { functionCalls: [{ id: 'first', name: 'read_file', args: { file_path: 'a.txt' } }] },
+        { functionCalls: [{ id: 'pending', name: 'read_file', args: { file_path: 'a.txt' } }] },
+        { functionCalls: [{ id: 'again', name: 'read_file', args: { file_path: 'a.txt' } }] },
+        { text: 'Resumed.' },
+      ];
+      const { cb } = makeCallbacks();
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      config.maxTurns = 1;
+      const loop = new AgentLoop(config, cb);
+      await loop.handleUserInput('read');
+      expect(calls.map((c) => c.kind)).toEqual(['user', 'tools', 'tools', 'repair']);
+      await loop.handleUserInput('continue');
+      expect(calls.map((c) => c.kind).slice(-1)).toEqual(['user']);
     });
 
     it('can be turned off', async () => {
