@@ -38,18 +38,23 @@ describe('rebuilding the chat during a streamed reply', () => {
     process.env.GOOGLE_GEMINI_BASE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const { getConfig } = await import('../src/config.js');
     const { GeminiAgentSession } = await import('../src/agent/gemini.js');
-    const config = getConfig({ workspaceDir: fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-stream-')), apiKey: 'fake-key-for-local-server' });
-    config.apiKeys = ['fake-key-for-local-server'];
-    const session = new GeminiAgentSession(config);
-    let streamed = '';
-    const turn = session.sendUserMessage('hello', { onChunk: (t) => { streamed += t; if (streamed === 'first half ') { rebuild(session); release(); } } });
-    const result = await turn;
-    expect(result.text).toBe('first half second half');
-    const history = session.getHistory();
-    // The SDK records each streamed chunk as its own model content.
-    expect(history[0]?.role).toBe('user');
-    expect(history.slice(1).every((c) => c.role === 'model')).toBe(true);
-    const text = history.slice(1).flatMap((c) => c.parts ?? []).map((p) => p.text ?? '').join('');
-    expect(text).toBe('first half second half');
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-stream-'));
+    try {
+      const config = getConfig({ workspaceDir: ws, apiKey: 'fake-key-for-local-server' });
+      config.apiKeys = ['fake-key-for-local-server'];
+      const session = new GeminiAgentSession(config);
+      let streamed = '';
+      const turn = session.sendUserMessage('hello', { onChunk: (t) => { streamed += t; if (streamed === 'first half ') { rebuild(session); release(); } } });
+      const result = await turn;
+      expect(result.text).toBe('first half second half');
+      const history = session.getHistory();
+      // The SDK records each streamed chunk as its own model content.
+      expect(history[0]?.role).toBe('user');
+      expect(history.slice(1).every((c) => c.role === 'model')).toBe(true);
+      const text = history.slice(1).flatMap((c) => c.parts ?? []).map((p) => p.text ?? '').join('');
+      expect(text).toBe('first half second half');
+    } finally {
+      fs.rmSync(ws, { recursive: true, force: true });
+    }
   });
 });

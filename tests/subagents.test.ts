@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +6,9 @@ import { loadSubagents, normalizeToolName } from '../src/agent/subagents.js';
 
 describe('subagent definitions', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-agents-'));
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   const project = path.join(root, 'p');
   const home = path.join(root, 'h');
   fs.mkdirSync(path.join(project, '.fuller', 'agents'), { recursive: true });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +6,9 @@ import { searchFiles, formatSearchOutput, findRipgrep } from '../src/tools/searc
 
 describe('search_files', () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-search-'));
+  afterAll(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
   fs.mkdirSync(path.join(cwd, 'src'));
   fs.writeFileSync(path.join(cwd, 'src', 'a.ts'), 'const alpha = 1;\nconst beta = 2;\n// TODO alpha again\n');
   fs.writeFileSync(path.join(cwd, 'src', 'b.md'), 'alpha in markdown\n');

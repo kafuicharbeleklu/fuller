@@ -11,29 +11,37 @@ import { ThemeProvider, loadTheme } from '../src/ui/theme.js';
 
 const tick = () => new Promise((r) => setTimeout(r, 30));
 const realHome = process.env.HOME;
-beforeEach(() => { process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-mcp-home-')); });
-afterEach(() => { process.env.HOME = realHome; });
+let tempHome: string;
+beforeEach(() => { tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-mcp-home-')); process.env.HOME = tempHome; });
+afterEach(() => {
+  process.env.HOME = realHome;
+  if (tempHome) fs.rmSync(tempHome, { recursive: true, force: true });
+});
 const entry = (name: string, scope: 'project' | 'user' = 'project'): McpServerEntry => ({ name, scope, file: '.mcp.json', config: { command: 'x' } });
 const show = (names: string[], onDone: (a: any) => void) => render(<ThemeProvider theme={loadTheme('dark')}><McpApprovalDialog names={names} onDone={onDone} /></ThemeProvider>);
 
 describe('project MCP server approval', () => {
   it('starts user servers, and project servers only once enabled; remembers answers outside the project', () => {
     const project = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-mcp-project-'));
-    const entries = [entry('alpha'), entry('beta'), entry('mine', 'user')];
-    expect(pendingServers(entries, mcpApproval(project)).map((e) => e.name)).toEqual(['alpha', 'beta']);
-    expect(isApproved(entries[2], mcpApproval(project))).toBe(true);
-    saveMcpApproval(project, { enabled: ['alpha'], disabled: ['beta'] });
-    const approval = mcpApproval(project);
-    expect(isApproved(entries[0], approval)).toBe(true);
-    expect(isApproved(entries[1], approval)).toBe(false);
-    expect(pendingServers([...entries, entry('gamma')], approval).map((e) => e.name)).toEqual(['gamma']);
-    // "all future servers": new ones start without a question, an explicit refusal still holds.
-    saveMcpApproval(project, { enabled: ['gamma'], disabled: [], all: true });
-    expect(pendingServers([entry('delta')], mcpApproval(project))).toEqual([]);
-    expect(isApproved(entry('delta'), mcpApproval(project))).toBe(true);
-    expect(isApproved(entries[1], mcpApproval(project))).toBe(false);
-    expect(fs.existsSync(path.join(project, '.fuller'))).toBe(false);
-    expect(fs.statSync(approvalFile()).mode & 0o077).toBe(0);
+    try {
+      const entries = [entry('alpha'), entry('beta'), entry('mine', 'user')];
+      expect(pendingServers(entries, mcpApproval(project)).map((e) => e.name)).toEqual(['alpha', 'beta']);
+      expect(isApproved(entries[2], mcpApproval(project))).toBe(true);
+      saveMcpApproval(project, { enabled: ['alpha'], disabled: ['beta'] });
+      const approval = mcpApproval(project);
+      expect(isApproved(entries[0], approval)).toBe(true);
+      expect(isApproved(entries[1], approval)).toBe(false);
+      expect(pendingServers([...entries, entry('gamma')], approval).map((e) => e.name)).toEqual(['gamma']);
+      // "all future servers": new ones start without a question, an explicit refusal still holds.
+      saveMcpApproval(project, { enabled: ['gamma'], disabled: [], all: true });
+      expect(pendingServers([entry('delta')], mcpApproval(project))).toEqual([]);
+      expect(isApproved(entry('delta'), mcpApproval(project))).toBe(true);
+      expect(isApproved(entries[1], mcpApproval(project))).toBe(false);
+      expect(fs.existsSync(path.join(project, '.fuller'))).toBe(false);
+      expect(fs.statSync(approvalFile()).mode & 0o077).toBe(0);
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
   });
 
   it('asks about one server like Claude Code, "Continue without" selected', async () => {

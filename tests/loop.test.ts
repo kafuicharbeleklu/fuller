@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -69,11 +69,17 @@ function makeCallbacks(overrides: Partial<AgentCallbacks> = {}) {
 
 describe('AgentLoop', () => {
   let cwd: string;
+  let homeDir: string;
   beforeEach(() => {
     calls.length = 0;
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-loop-'));
     fs.writeFileSync(path.join(cwd, 'a.txt'), 'hello\n');
-    process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-home-'));
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-home-'));
+    process.env.HOME = homeDir;
+  });
+  afterEach(() => {
+    if (cwd) fs.rmSync(cwd, { recursive: true, force: true });
+    if (homeDir) fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
   it('clears retry and live state before committing the final quota error', async () => {
@@ -425,6 +431,9 @@ describe('AgentLoop', () => {
       outside = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-outside-'));
       fs.writeFileSync(path.join(outside, 'a.txt'), 'OUTSIDE_A\n');
       fs.writeFileSync(path.join(outside, 'b.txt'), 'OUTSIDE_B\n');
+    });
+    afterEach(() => {
+      if (outside) fs.rmSync(outside, { recursive: true, force: true });
     });
     const answer = (decision: any, asked: any[]) => makeCallbacks({ onRequestConfirmation: (c) => { if (c) { asked.push(c); c.onDecide(decision); } } });
 

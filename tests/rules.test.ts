@@ -57,29 +57,38 @@ describe('evaluatePermission', () => {
   });
   it('asks before a file tool leaves the workspace, whatever the mode', () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-rules-outside-'));
-    const read = { file_path: path.join(outside, 'notes.txt') };
-    for (const mode of ['default', 'acceptEdits', 'plan'] as const) {
-      const ev = evaluatePermission('read_file', read, cwd, mode, {});
-      expect(ev.decision).toBe('ask');
-      expect(ev.outsideDir).toBe(outside);
-    }
-    expect(evaluatePermission('write_file', read, cwd, 'plan', {}).decision).toBe('deny');
-    expect(evaluatePermission('write_file', read, cwd, 'acceptEdits', {}).decision).toBe('ask');
-    expect(evaluatePermission('read_file', read, cwd, 'bypassPermissions', {})).toMatchObject({ decision: 'allow', outsideDir: outside });
-    // An added directory is part of the workspace; a deny rule still wins.
-    expect(evaluatePermission('read_file', read, cwd, 'default', {}, [outside])).toMatchObject({ decision: 'allow', outsideDir: undefined });
-    expect(evaluatePermission('read_file', read, cwd, 'default', { permissions: { deny: [`Read(/${outside}/**)`] } }).decision).toBe('deny');
-    const home = process.env.HOME;
     try {
-      process.env.HOME = path.dirname(outside);
-      expect(evaluatePermission('read_file', read, cwd, 'default', { permissions: { deny: [`Read(~/${path.basename(outside)}/*.txt)`] } }).decision).toBe('deny');
-    } finally { process.env.HOME = home; }
+      const read = { file_path: path.join(outside, 'notes.txt') };
+      for (const mode of ['default', 'acceptEdits', 'plan'] as const) {
+        const ev = evaluatePermission('read_file', read, cwd, mode, {});
+        expect(ev.decision).toBe('ask');
+        expect(ev.outsideDir).toBe(outside);
+      }
+      expect(evaluatePermission('write_file', read, cwd, 'plan', {}).decision).toBe('deny');
+      expect(evaluatePermission('write_file', read, cwd, 'acceptEdits', {}).decision).toBe('ask');
+      expect(evaluatePermission('read_file', read, cwd, 'bypassPermissions', {})).toMatchObject({ decision: 'allow', outsideDir: outside });
+      // An added directory is part of the workspace; a deny rule still wins.
+      expect(evaluatePermission('read_file', read, cwd, 'default', {}, [outside])).toMatchObject({ decision: 'allow', outsideDir: undefined });
+      expect(evaluatePermission('read_file', read, cwd, 'default', { permissions: { deny: [`Read(/${outside}/**)`] } }).decision).toBe('deny');
+      const home = process.env.HOME;
+      try {
+        process.env.HOME = path.dirname(outside);
+        expect(evaluatePermission('read_file', read, cwd, 'default', { permissions: { deny: [`Read(~/${path.basename(outside)}/*.txt)`] } }).decision).toBe('deny');
+      } finally { process.env.HOME = home; }
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
   it('sees a symlink leaving the workspace as outside', () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-rules-link-'));
     const project = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-rules-project-'));
-    fs.symlinkSync(outside, path.join(project, 'link'));
-    expect(evaluatePermission('list_directory', { dir_path: 'link' }, project, 'default', {})).toMatchObject({ decision: 'ask', outsideDir: outside });
+    try {
+      fs.symlinkSync(outside, path.join(project, 'link'));
+      expect(evaluatePermission('list_directory', { dir_path: 'link' }, project, 'default', {})).toMatchObject({ decision: 'ask', outsideDir: outside });
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+      fs.rmSync(project, { recursive: true, force: true });
+    }
   });
   it('asks for sudo like Claude Code: an approval note and the exact command to remember', () => {
     const command = 'sudo ip link set tun0 down && sudo ip link set tun1 down';

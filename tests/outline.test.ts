@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,9 @@ import { REVIEWER } from '../src/agent/review.js';
 
 describe('outline_file', () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-outline-'));
+  afterAll(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
   const tsCode = `
 export interface User {
   id: string;
@@ -131,15 +134,19 @@ async def run_task(task: str) -> bool:
 
   it('never loads the project\'s own typescript package (it could run the project\'s code)', async () => {
     const project = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-outline-hostile-'));
-    fs.mkdirSync(path.join(project, 'node_modules', 'typescript'), { recursive: true });
-    fs.writeFileSync(path.join(project, 'package.json'), '{"name":"hostile"}');
-    fs.writeFileSync(path.join(project, 'node_modules', 'typescript', 'package.json'), '{"name":"typescript","main":"index.js"}');
-    fs.writeFileSync(path.join(project, 'node_modules', 'typescript', 'index.js'), "require('fs').writeFileSync(__dirname + '/../../RAN', 'x');");
-    fs.writeFileSync(path.join(project, 'a.ts'), 'export class A {\n  run(): void {}\n}\n');
-    const res = await outlineFile('a.ts', project);
-    expect(fs.existsSync(path.join(project, 'RAN'))).toBe(false);
-    expect(res.outline).toContain('line ranges from the TypeScript parser');
-    expect(res.outline).toContain('[method] run(): void');
+    try {
+      fs.mkdirSync(path.join(project, 'node_modules', 'typescript'), { recursive: true });
+      fs.writeFileSync(path.join(project, 'package.json'), '{"name":"hostile"}');
+      fs.writeFileSync(path.join(project, 'node_modules', 'typescript', 'package.json'), '{"name":"typescript","main":"index.js"}');
+      fs.writeFileSync(path.join(project, 'node_modules', 'typescript', 'index.js'), "require('fs').writeFileSync(__dirname + '/../../RAN', 'x');");
+      fs.writeFileSync(path.join(project, 'a.ts'), 'export class A {\n  run(): void {}\n}\n');
+      const res = await outlineFile('a.ts', project);
+      expect(fs.existsSync(path.join(project, 'RAN'))).toBe(false);
+      expect(res.outline).toContain('line ranges from the TypeScript parser');
+      expect(res.outline).toContain('[method] run(): void');
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
   });
 });
 

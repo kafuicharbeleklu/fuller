@@ -147,18 +147,23 @@ describe('deleting a stored session', () => {
     const fs = await import('node:fs');
     const os = await import('node:os');
     const path = await import('node:path');
-    process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-del-home-'));
-    const { saveSessionSync, sessionsDir, deleteSession, listSessions } = await import('../src/session/store.js');
-    const ws = '/tmp/demo-delete-project';
-    saveSessionSync({ meta: { id: 's1', workspaceDir: ws, model: 'm', createdAt: 0, updatedAt: 1, messageCount: 1, tokenCount: 0 }, messages: [] } as any);
-    const dir = sessionsDir(ws);
-    fs.mkdirSync(path.join(dir, 'rewind', 's1'), { recursive: true });
-    fs.mkdirSync(path.join(dir, 'outputs', 's1'), { recursive: true });
-    expect(listSessions(ws).map((s) => s.id)).toEqual(['s1']);
-    expect(deleteSession(ws, 's1')).toBe(true);
-    expect(listSessions(ws)).toEqual([]);
-    expect(fs.existsSync(path.join(dir, 'rewind', 's1'))).toBe(false);
-    expect(fs.existsSync(path.join(dir, 'outputs', 's1'))).toBe(false);
-    expect(deleteSession(ws, '../escape')).toBe(false);
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-del-home-'));
+    process.env.HOME = home;
+    try {
+      const { saveSessionSync, sessionsDir, deleteSession, listSessions } = await import('../src/session/store.js');
+      const ws = '/tmp/demo-delete-project';
+      saveSessionSync({ meta: { id: 's1', workspaceDir: ws, model: 'm', createdAt: 0, updatedAt: 1, messageCount: 1, tokenCount: 0 }, messages: [] } as any);
+      const dir = sessionsDir(ws);
+      fs.mkdirSync(path.join(dir, 'rewind', 's1'), { recursive: true });
+      fs.mkdirSync(path.join(dir, 'outputs', 's1'), { recursive: true });
+      expect(listSessions(ws).map((s) => s.id)).toEqual(['s1']);
+      expect(deleteSession(ws, 's1')).toBe(true);
+      expect(listSessions(ws)).toEqual([]);
+      expect(fs.existsSync(path.join(dir, 'rewind', 's1'))).toBe(false);
+      expect(fs.existsSync(path.join(dir, 'outputs', 's1'))).toBe(false);
+      expect(deleteSession(ws, '../escape')).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

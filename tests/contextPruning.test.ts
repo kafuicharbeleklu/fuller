@@ -35,40 +35,43 @@ describe('context pruning', () => {
 
   it('clears old long outputs at once when they weigh enough, keeping calls, ids and signatures', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-prune-'));
-    // Two old outputs of ~30k characters each: past the 40k trigger together.
-    const rounds = [
-      { id: 'c1', name: 'read_file', args: { file_path: 'src/agent/loop.ts' }, output: big('loop', 2000) },
-      { id: 'c2', name: 'execute_bash', args: { command: 'npm test 2>&1' }, output: big('test', 2000) },
-      { id: 'c3', name: 'edit_file', args: { file_path: 'x.ts' }, output: 'Updated x.ts with 1 addition and 1 removal.' },
-      { id: 'c4', name: 'search_files', args: { query: 'foo' }, output: big('grep', 2000) },
-      { id: 'c5', name: 'read_file', args: { file_path: 'recent.ts' }, output: big('recent', 2000) },
-      { id: 'c6', name: 'read_file', args: { file_path: 'newest.ts' }, output: big('newest', 2000) },
-    ];
-    const history = conversation(rounds);
-    const before = JSON.stringify(history);
-    const result = pruneToolOutputs(history, { saveDir: dir, budgetChars: 0 });
-    expect(JSON.stringify(history)).toBe(before); // the input is not modified
-    // Rounds 1-3 are old (the last 3 stay): the two long ones are cleared, the short edit result stays.
-    expect(result.pruned).toBe(2);
-    expect(result.chars).toBeGreaterThan(20_000);
-    const responses = result.history.filter((c) => c.role === 'user' && c.parts![0].functionResponse);
-    expect(outputOf(responses[0])).toMatch(/^\[Cleared from context to save space: the output of read_file\(src\/agent\/loop\.ts\) \(2000 lines, [\d,]+ characters\)\. Read the file again if you need it \(you will see its current content, which may have changed since\)\.\]\nloop line 1 …$/);
-    expect(outputOf(responses[1])).toContain('the output of execute_bash(npm test 2>&1)');
-    expect(outputOf(responses[1])).toMatch(/Full output saved at (.+ctx-4-0\.txt)/);
-    const saved = outputOf(responses[1]).match(/saved at (\S+ctx-4-0\.txt)/)![1];
-    expect(fs.readFileSync(saved, 'utf8')).toBe(big('test', 2000));
-    expect(outputOf(responses[2])).toBe('Updated x.ts with 1 addition and 1 removal.');
-    for (const i of [3, 4, 5]) expect(outputOf(responses[i])).toBe(rounds[i].output);
-    // The model turns are untouched: same calls, same signatures.
-    const calls = result.history.filter((c) => c.role === 'model' && c.parts![0].functionCall);
-    expect(calls.map((c) => c.parts![0].functionCall!.id)).toEqual(['c1', 'c2', 'c3', 'c4', 'c5', 'c6']);
-    expect(calls.every((c) => String(c.parts![0].thoughtSignature).startsWith('sig-'))).toBe(true);
-    // Response ids and names survive, so the pairs still match.
-    expect(responses[0].parts![0].functionResponse!.id).toBe('c1');
-    expect(responses[0].parts![0].functionResponse!.name).toBe('read_file');
-    // A second pass finds nothing left to clear.
-    expect(pruneToolOutputs(result.history, { saveDir: dir, force: true, budgetChars: 0 }).pruned).toBe(0);
-    fs.rmSync(dir, { recursive: true, force: true });
+    try {
+      // Two old outputs of ~30k characters each: past the 40k trigger together.
+      const rounds = [
+        { id: 'c1', name: 'read_file', args: { file_path: 'src/agent/loop.ts' }, output: big('loop', 2000) },
+        { id: 'c2', name: 'execute_bash', args: { command: 'npm test 2>&1' }, output: big('test', 2000) },
+        { id: 'c3', name: 'edit_file', args: { file_path: 'x.ts' }, output: 'Updated x.ts with 1 addition and 1 removal.' },
+        { id: 'c4', name: 'search_files', args: { query: 'foo' }, output: big('grep', 2000) },
+        { id: 'c5', name: 'read_file', args: { file_path: 'recent.ts' }, output: big('recent', 2000) },
+        { id: 'c6', name: 'read_file', args: { file_path: 'newest.ts' }, output: big('newest', 2000) },
+      ];
+      const history = conversation(rounds);
+      const before = JSON.stringify(history);
+      const result = pruneToolOutputs(history, { saveDir: dir, budgetChars: 0 });
+      expect(JSON.stringify(history)).toBe(before); // the input is not modified
+      // Rounds 1-3 are old (the last 3 stay): the two long ones are cleared, the short edit result stays.
+      expect(result.pruned).toBe(2);
+      expect(result.chars).toBeGreaterThan(20_000);
+      const responses = result.history.filter((c) => c.role === 'user' && c.parts![0].functionResponse);
+      expect(outputOf(responses[0])).toMatch(/^\[Cleared from context to save space: the output of read_file\(src\/agent\/loop\.ts\) \(2000 lines, [\d,]+ characters\)\. Read the file again if you need it \(you will see its current content, which may have changed since\)\.\]\nloop line 1 …$/);
+      expect(outputOf(responses[1])).toContain('the output of execute_bash(npm test 2>&1)');
+      expect(outputOf(responses[1])).toMatch(/Full output saved at (.+ctx-4-0\.txt)/);
+      const saved = outputOf(responses[1]).match(/saved at (\S+ctx-4-0\.txt)/)![1];
+      expect(fs.readFileSync(saved, 'utf8')).toBe(big('test', 2000));
+      expect(outputOf(responses[2])).toBe('Updated x.ts with 1 addition and 1 removal.');
+      for (const i of [3, 4, 5]) expect(outputOf(responses[i])).toBe(rounds[i].output);
+      // The model turns are untouched: same calls, same signatures.
+      const calls = result.history.filter((c) => c.role === 'model' && c.parts![0].functionCall);
+      expect(calls.map((c) => c.parts![0].functionCall!.id)).toEqual(['c1', 'c2', 'c3', 'c4', 'c5', 'c6']);
+      expect(calls.every((c) => String(c.parts![0].thoughtSignature).startsWith('sig-'))).toBe(true);
+      // Response ids and names survive, so the pairs still match.
+      expect(responses[0].parts![0].functionResponse!.id).toBe('c1');
+      expect(responses[0].parts![0].functionResponse!.name).toBe('read_file');
+      // A second pass finds nothing left to clear.
+      expect(pruneToolOutputs(result.history, { saveDir: dir, force: true, budgetChars: 0 }).pruned).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('keeps a command output that cannot be archived, instead of inviting to run the command again (C001)', () => {
@@ -90,10 +93,13 @@ describe('context pruning', () => {
     expect(JSON.stringify(result.history)).not.toContain('Run it again');
     // With an archive, the command output goes and the marker points at the file.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-prune-'));
-    const archived = pruneToolOutputs(history, { saveDir: dir, budgetChars: 0 });
-    expect(archived.pruned).toBe(3);
-    expect(outputOf(archived.history.filter((c) => c.role === 'user' && c.parts![0].functionResponse)[0])).toMatch(/Full output saved at .*ctx-2-0\.txt/);
-    fs.rmSync(dir, { recursive: true, force: true });
+    try {
+      const archived = pruneToolOutputs(history, { saveDir: dir, budgetChars: 0 });
+      expect(archived.pruned).toBe(3);
+      expect(outputOf(archived.history.filter((c) => c.role === 'user' && c.parts![0].functionResponse)[0])).toMatch(/Full output saved at .*ctx-2-0\.txt/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('finds the call when the SDK split the model turn into a call content and a text content (real session, 25/09)', () => {

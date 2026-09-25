@@ -228,20 +228,24 @@ describe('WorkTracker.recordCall (no progress)', () => {
 describe('review', () => {
   it('builds the diff of a turn from its first checkpoint to the current files', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-review-'));
-    fs.writeFileSync(path.join(dir, 'a.js'), 'const a = 2;\n');
-    fs.writeFileSync(path.join(dir, 'new.js'), 'export {};\n');
-    const diff = turnDiff([
-      { id: '2', timestamp: 2, description: 'edit', files: [{ filePath: 'a.js', originalContent: 'const a = 1.5;\n' }] },
-      { id: '1', timestamp: 1, description: 'edit', files: [{ filePath: 'a.js', originalContent: 'const a = 1;\n' }] },
-      { id: '3', timestamp: 3, description: 'write', files: [{ filePath: 'new.js', originalContent: null }] },
-    ], dir);
-    expect(diff.files).toEqual(['a.js', 'new.js']);
-    expect(diff.diff).toContain('-const a = 1;\n+const a = 2;');
-    expect(diff.codeFiles).toBe(2);
-    expect(diff.codeLines).toBe(3);
-    expect(isRisky(diff)).toBe(false);
-    expect(isRisky({ ...diff, codeLines: 400 })).toBe(true);
-    expect(reviewPrompt('fix a', diff, 'Done.')).toContain('<request>\nfix a\n</request>');
+    try {
+      fs.writeFileSync(path.join(dir, 'a.js'), 'const a = 2;\n');
+      fs.writeFileSync(path.join(dir, 'new.js'), 'export {};\n');
+      const diff = turnDiff([
+        { id: '2', timestamp: 2, description: 'edit', files: [{ filePath: 'a.js', originalContent: 'const a = 1.5;\n' }] },
+        { id: '1', timestamp: 1, description: 'edit', files: [{ filePath: 'a.js', originalContent: 'const a = 1;\n' }] },
+        { id: '3', timestamp: 3, description: 'write', files: [{ filePath: 'new.js', originalContent: null }] },
+      ], dir);
+      expect(diff.files).toEqual(['a.js', 'new.js']);
+      expect(diff.diff).toContain('-const a = 1;\n+const a = 2;');
+      expect(diff.codeFiles).toBe(2);
+      expect(diff.codeLines).toBe(3);
+      expect(isRisky(diff)).toBe(false);
+      expect(isRisky({ ...diff, codeLines: 400 })).toBe(true);
+      expect(reviewPrompt('fix a', diff, 'Done.')).toContain('<request>\nfix a\n</request>');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('reads the reviewer verdict', () => {

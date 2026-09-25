@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 // Keep the key state of these sessions out of the real ~/.fuller.
-process.env.HOME = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'fuller-fallback-home-'));
+const fallbackHome = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'fuller-fallback-home-'));
+process.env.HOME = fallbackHome;
+afterAll(() => {
+  require('node:fs').rmSync(fallbackHome, { recursive: true, force: true });
+});
 
 /** Which (key, model) pairs fail, and how. */
 let failing: Record<string, 'quota' | 'rpm' | 'overloaded'> = {};

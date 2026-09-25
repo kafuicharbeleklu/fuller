@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +7,9 @@ import { resolveInWorkspace, assertReadable, isSensitivePath, PathAccessError } 
 const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-paths-'));
 fs.mkdirSync(path.join(cwd, 'src'));
 fs.writeFileSync(path.join(cwd, 'src', 'a.ts'), 'x');
+afterAll(() => {
+  fs.rmSync(cwd, { recursive: true, force: true });
+});
 
 describe('resolveInWorkspace', () => {
   it('accepts paths inside the workspace', () => {
@@ -20,13 +23,21 @@ describe('resolveInWorkspace', () => {
   });
   it('allows additional directories', () => {
     const extra = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-extra-'));
-    expect(resolveInWorkspace(path.join(extra, 'x'), cwd, [extra])).toBe(path.join(extra, 'x'));
+    try {
+      expect(resolveInWorkspace(path.join(extra, 'x'), cwd, [extra])).toBe(path.join(extra, 'x'));
+    } finally {
+      fs.rmSync(extra, { recursive: true, force: true });
+    }
   });
   it('follows symlinks that escape', () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-out-'));
-    fs.writeFileSync(path.join(outside, 'secret'), 's');
-    fs.symlinkSync(outside, path.join(cwd, 'link'));
-    expect(() => resolveInWorkspace('link/secret', cwd)).toThrow(PathAccessError);
+    try {
+      fs.writeFileSync(path.join(outside, 'secret'), 's');
+      fs.symlinkSync(outside, path.join(cwd, 'link'));
+      expect(() => resolveInWorkspace('link/secret', cwd)).toThrow(PathAccessError);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
 

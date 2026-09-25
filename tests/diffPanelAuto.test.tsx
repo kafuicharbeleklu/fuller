@@ -29,7 +29,7 @@ import { App } from '../src/ui/App.js';
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 250));
 const cleanups: Array<() => void> = [];
-afterEach(() => { cleanups.splice(0).forEach((c) => c()); });
+afterEach(() => { cleanups.splice(0).reverse().forEach((c) => { try { c(); } catch {} }); });
 
 function repo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-diff-auto-'));

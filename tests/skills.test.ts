@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,6 +20,9 @@ describe('frontmatter', () => {
 
 describe('loadSkills', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-skills-'));
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   const project = path.join(root, 'proj');
   const home = path.join(root, 'home');
   fs.mkdirSync(path.join(project, '.fuller', 'commands', 'git'), { recursive: true });
