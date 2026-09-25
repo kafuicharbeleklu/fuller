@@ -29,17 +29,27 @@ describe('/resume session picker (Claude Code 2.1.281 layout)', () => {
     const keys = async (...sequences: string[]) => { for (const s of sequences) { screen.stdin.write(s); await new Promise((r) => setTimeout(r, 30)); } };
     await new Promise((r) => setImmediate(r));
     await keys('beta');
-    expect(screen.lastFrame()).toContain('Type to Search · Enter to select · Esc to clear');
-    expect(screen.lastFrame()).not.toContain('Alpha task');
+    await vi.waitFor(() => {
+      expect(screen.lastFrame()).toContain('Type to Search · Enter to select · Esc to clear');
+      expect(screen.lastFrame()).not.toContain('Alpha task');
+    });
     await keys('\x1b');
-    expect(onCancel).not.toHaveBeenCalled();
-    expect(screen.lastFrame()).toContain('Alpha task');
+    await vi.waitFor(() => {
+      expect(onCancel).not.toHaveBeenCalled();
+      expect(screen.lastFrame()).toContain('Alpha task');
+    });
     await keys('\x02');
-    expect(screen.lastFrame()).not.toContain('Beta task');
+    await vi.waitFor(() => {
+      expect(screen.lastFrame()).not.toContain('Beta task');
+    });
     await keys('\r');
-    expect(onSelect).toHaveBeenCalledWith('a', '/tmp/demo-project');
+    await vi.waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith('a', '/tmp/demo-project');
+    });
     await keys('\x1b');
-    expect(onCancel).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(onCancel).toHaveBeenCalledOnce();
+    });
     screen.unmount();
   });
 
@@ -53,21 +63,30 @@ describe('/resume session picker (Claude Code 2.1.281 layout)', () => {
     expect(screen.lastFrame()).toContain('Ctrl+A to show all projects');
     expect(screen.lastFrame()).toContain('Space to preview');
     await keys('\x01');
-    expect(screen.lastFrame()).toContain('❯ Elsewhere');
-    expect(screen.lastFrame()).toContain('/srv/other-repo');
-    expect(screen.lastFrame()).toContain('Ctrl+A to only show current repo');
+    await vi.waitFor(() => {
+      expect(screen.lastFrame()).toContain('❯ Elsewhere');
+      expect(screen.lastFrame()).toContain('/srv/other-repo');
+      expect(screen.lastFrame()).toContain('Ctrl+A to only show current repo');
+    });
     await keys('\x12');
-    expect(screen.lastFrame()).toContain('Rename session:');
-    expect(screen.lastFrame()).toContain('Enter new session name');
+    await vi.waitFor(() => {
+      expect(screen.lastFrame()).toContain('Rename session:');
+      expect(screen.lastFrame()).toContain('Enter new session name');
+    });
     await keys('New name', '\r');
-    expect(onRename).toHaveBeenCalledWith(expect.objectContaining({ id: 'z' }), 'New name');
-    expect(screen.lastFrame()).toContain('❯ New name');
+    await vi.waitFor(() => {
+      expect(onRename).toHaveBeenCalledWith(expect.objectContaining({ id: 'z' }), 'New name');
+      expect(screen.lastFrame()).toContain('❯ New name');
+    });
     await keys(' ');
-    await new Promise((r) => setTimeout(r, 50));
-    expect(screen.lastFrame()).toContain('Enter to resume · Esc to cancel');
-    expect(screen.lastFrame()).toContain('3 messages · main');
+    await vi.waitFor(() => {
+      expect(screen.lastFrame()).toContain('Enter to resume · Esc to cancel');
+      expect(screen.lastFrame()).toContain('3 messages · main');
+    });
     await keys('\r');
-    expect(onSelect).toHaveBeenCalledWith('z', '/srv/other-repo');
+    await vi.waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith('z', '/srv/other-repo');
+    });
     screen.unmount();
   });
 
@@ -78,18 +97,24 @@ describe('/resume session picker (Claude Code 2.1.281 layout)', () => {
     await new Promise((r) => setImmediate(r));
     expect(screen.lastFrame()).toContain('Ctrl+Del to delete');
     await keys('\x1b[3;5~'); // Ctrl+Delete
-    expect(screen.lastFrame()).toContain('Delete this conversation?');
-    expect(screen.lastFrame()).toContain('Alpha task');
-    expect(screen.lastFrame()).toContain('This cannot be undone.');
-    expect(screen.lastFrame()).toContain('Enter or Y to delete · Esc or N to cancel');
+    await vi.waitFor(() => {
+      expect(screen.lastFrame()).toContain('Delete this conversation?');
+      expect(screen.lastFrame()).toContain('Alpha task');
+      expect(screen.lastFrame()).toContain('This cannot be undone.');
+      expect(screen.lastFrame()).toContain('Enter or Y to delete · Esc or N to cancel');
+    });
     await keys('n');
-    expect(onDelete).not.toHaveBeenCalled();
-    expect(screen.lastFrame()).toContain('❯ Alpha task');
+    await vi.waitFor(() => {
+      expect(onDelete).not.toHaveBeenCalled();
+      expect(screen.lastFrame()).toContain('❯ Alpha task');
+    });
     await keys('\x1b[3;5~', 'y');
-    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }));
-    expect(screen.lastFrame()).not.toContain('Alpha task\n');
-    expect(screen.lastFrame()).toContain('Deleted "Alpha task"');
-    expect(screen.lastFrame()).toContain('❯ Beta task');
+    await vi.waitFor(() => {
+      expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }));
+      expect(screen.lastFrame()).not.toContain('Alpha task\n');
+      expect(screen.lastFrame()).toContain('Deleted "Alpha task"');
+      expect(screen.lastFrame()).toContain('❯ Beta task');
+    });
     screen.unmount();
   });
 
