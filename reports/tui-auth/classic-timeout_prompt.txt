@@ -1,10 +1,12 @@
 
   ██████╗  Fuller v0.3.0
   ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-auth-47p3u81h
+  █████╗   /tmp/fuller-auth-csqom12o
   ██╔══╝ 
   ██║    
   ╚═╝    
+
+  Add a FULLER.md at the project root to give Fuller lasting context.
 
 
 ! sudo fuller-auth-test timeout_prompt                                                             

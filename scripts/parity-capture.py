@@ -38,6 +38,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+
+def trust_folder(config_root, folder) -> None:
+    """Fuller asks before trusting a new folder: tests trust theirs in their private config root."""
+    target = os.path.join(str(config_root), ".fuller", "trusted-folders.json")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w") as handle:
+        json.dump({"folders": [os.path.realpath(str(folder))]}, handle)
+
 def main() -> None:
     spec, size, out, *steps = sys.argv[1:]
     target, _, extra = spec.partition(':')
@@ -61,6 +69,7 @@ def main() -> None:
         preloader = work / '.config-root.mjs'
         preloader.write_text("import os from 'node:os';\nos.homedir = () => process.env.FULLER_TEST_CONFIG_ROOT;\n")
         env.update(FULLER_TEST_CONFIG_ROOT=str(work))
+        trust_folder(work, work)
         # PARITY_KEEP_KEY=1 keeps the caller's GEMINI_API_KEY (e.g. to list models in /model).
         if not (os.environ.get('PARITY_KEEP_KEY') and env.get('GEMINI_API_KEY')):
             env['GEMINI_API_KEY'] = 'parity_dummy_key'

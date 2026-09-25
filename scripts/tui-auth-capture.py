@@ -20,6 +20,14 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / 'reports' / 'tui-auth'
 
 
+
+def trust_folder(config_root, folder) -> None:
+    """Fuller asks before trusting a new folder: tests trust theirs in their private config root."""
+    target = os.path.join(str(config_root), ".fuller", "trusted-folders.json")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w") as handle:
+        json.dump({"folders": [os.path.realpath(str(folder))]}, handle)
+
 def scenario(mode, action):
     with tempfile.TemporaryDirectory(prefix='fuller-auth-') as directory:
         fixture = Path(directory)
@@ -42,6 +50,7 @@ print('AUTH_RESULT_UNIQUE')
         # See src/config.ts: project settings are applied after user settings.
         settings = fixture / '.fuller' / 'settings.json'
         settings.parent.mkdir()
+        trust_folder(fixture, fixture)
         # The dummy key cannot answer, so no model reply after the `!` command.
         settings.write_text(json.dumps({'bashTimeoutMs': 3000 if action.startswith('timeout') else 15000, 'notifications': 'off', 'replyAfterShell': False}))
         pid, fd = pty.fork()
@@ -108,7 +117,8 @@ print('AUTH_RESULT_UNIQUE')
             capture(0.2)
             os.write(fd, b'\r')
             finished = 0
-            for _ in range(40):
+            # A slow machine can take several seconds to save the session and exit.
+            for _ in range(150):
                 capture(0.15)
                 finished, _ = os.waitpid(pid, os.WNOHANG)
                 if finished == pid:

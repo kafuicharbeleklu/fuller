@@ -3,7 +3,11 @@ import React from 'react';
 import { render } from 'ink';
 import { Command } from 'commander';
 import { App } from './ui/App.js';
-import { getConfig, DEFAULT_MODEL } from './config.js';
+import path from 'node:path';
+import { getConfig, loadEnvFiles, DEFAULT_MODEL } from './config.js';
+import { isTrusted, trustFolder } from './trust.js';
+import { TrustDialog } from './ui/TrustDialog.js';
+import { ThemeProvider, loadTheme } from './ui/theme.js';
 import { getLatestSession, loadSession } from './session/store.js';
 import { runHeadless, type OutputFormat } from './headless.js';
 import { APP_NAME, APP_SLUG, APP_VERSION } from './branding.js';
@@ -12,6 +16,18 @@ import { checkKeys } from './agent/keyCheck.js';
 import { listChatModels, formatModelTable, knownContextWindow } from './agent/models.js';
 import { installFrameWriter } from './ui/frameWriter.js';
 import { runScreenReader } from './ui/screenReader.js';
+
+/** The trust question, alone on screen before Fuller starts; resolves with the answer. */
+function askTrust(folder: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const app = render(
+      <ThemeProvider theme={loadTheme()}>
+        <TrustDialog folder={folder} onDecide={(trusted) => { app.clear(); app.unmount(); resolve(trusted); }} />
+      </ThemeProvider>,
+      { exitOnCtrlC: false, patchConsole: false },
+    );
+  });
+}
 
 const program = new Command();
 
@@ -47,6 +63,23 @@ program
       process.exit(2);
     }
     if (options.dangerouslySkipPermissions || options.yes) permissionMode = 'bypassPermissions';
+
+    // Claude Code's trust question comes before anything of the folder is read: its .env, settings
+    // (hooks, env, permission rules), MCP servers. -p and the key/model checks are run on purpose in
+    // the folder: like Claude Code's -p, they count as trusted.
+    const workspaceDir = path.resolve(options.dir ?? process.cwd());
+    const interactive = !options.print && !options.checkKeys && !options.listModels;
+    let trusted = isTrusted(workspaceDir);
+    if (!trusted && interactive) {
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        process.stderr.write(`${APP_NAME} needs a terminal to ask whether you trust ${workspaceDir}. Run it in a terminal, or use -p.\n`);
+        process.exit(1);
+      }
+      trusted = await askTrust(workspaceDir);
+      if (!trusted) process.exit(0);
+      trustFolder(workspaceDir);
+    }
+    loadEnvFiles(workspaceDir, trusted || !interactive);
 
     const config = getConfig({
       apiKey: options.key,
@@ -206,7 +239,9 @@ program
 
     await app.waitUntilExit();
     cleanup();
-    if (summary) originalWrite(`\n${summary}\n`);
+    // The session is saved (handleExit waited for it): leave now, as Claude Code does, rather than
+    // wait for whatever is still pending (a keep-alive socket, a timer, a slow child) to let go.
+    originalWrite(summary ? `\n${summary}\n` : '', () => process.exit(0));
   });
 
 function readStdin(): Promise<string> {

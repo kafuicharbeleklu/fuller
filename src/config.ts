@@ -9,9 +9,16 @@ import type { PermissionMode } from './agent/types.js';
 import type { HooksConfig } from './hooks/runner.js';
 import type { ThinkingLevelSetting } from './agent/thinking.js';
 
-dotenv.config();
-// Keys for every project: ~/.fuller/.env (the project's .env and the environment win).
-dotenv.config({ path: path.join(os.homedir(), CONFIG_DIR_NAME, '.env') });
+/**
+ * Keys and variables from .env files: the workspace's .env first (with the environment, it wins),
+ * then ~/.fuller/.env for every project. Called at startup once the workspace is trusted: a hostile
+ * .env read earlier could point the API at another server (GOOGLE_GEMINI_BASE_URL) and receive the
+ * user's key.
+ */
+export function loadEnvFiles(workspaceDir: string, trusted: boolean): void {
+  if (trusted) dotenv.config({ path: path.join(workspaceDir, '.env') });
+  dotenv.config({ path: path.join(os.homedir(), CONFIG_DIR_NAME, '.env') });
+}
 
 export const DEFAULT_MODEL = 'gemini-3.6-flash';
 export const DEFAULT_CONTEXT_WINDOW = 1_048_576;

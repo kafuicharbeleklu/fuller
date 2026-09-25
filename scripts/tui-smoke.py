@@ -54,10 +54,19 @@ def capture_until(fd: int, marker: bytes, timeout: float = 20.0) -> bytes:
 
 
 # A private home per scenario: the smoke test must not read or write the user's
+def trust_folder(config_root, folder) -> None:
+    """Fuller asks before trusting a new folder: tests trust theirs in their private config root."""
+    target = os.path.join(str(config_root), ".fuller", "trusted-folders.json")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w") as handle:
+        json.dump({"folders": [os.path.realpath(str(folder))]}, handle)
+
+
 # ~/.fuller, and one scenario's commands must not reorder the next one's / menu.
 def smoke_home() -> str:
     home = tempfile.mkdtemp(prefix="fuller-smoke-home-")
     os.makedirs(os.path.join(home, ".fuller"), exist_ok=True)
+    trust_folder(home, ROOT)
     # The dummy key cannot answer: no model reply after `!` commands.
     with open(os.path.join(home, ".fuller", "settings.json"), "w") as settings:
         json.dump({"replyAfterShell": False}, settings)
@@ -165,6 +174,7 @@ def model_picker_scenario(mode: str) -> None:
     with tempfile.TemporaryDirectory(prefix="fuller-picker-") as home:
         config_dir = Path(home) / ".fuller"
         config_dir.mkdir()
+        trust_folder(home, ROOT)
         models = [
             dict(id=model, displayName=model, description="A capable Gemini chat model",
                  inputTokenLimit=1_048_576, outputTokenLimit=65_536, actions=["generateContent"])

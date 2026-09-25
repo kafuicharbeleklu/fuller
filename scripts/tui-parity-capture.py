@@ -20,6 +20,14 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / 'reports' / 'tui-parity'
 
 
+
+def trust_folder(config_root, folder) -> None:
+    """Fuller asks before trusting a new folder: tests trust theirs in their private config root."""
+    target = os.path.join(str(config_root), ".fuller", "trusted-folders.json")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w") as handle:
+        json.dump({"folders": [os.path.realpath(str(folder))]}, handle)
+
 def scenario(mode: str, columns: int) -> None:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='fuller-parity-') as directory:
@@ -27,6 +35,7 @@ def scenario(mode: str, columns: int) -> None:
         # Isolate user settings without changing the HOME environment variable.
         preloader = fixture / 'config-root.mjs'
         preloader.write_text("import os from 'node:os';\nos.homedir = () => process.env.FULLER_TEST_CONFIG_ROOT;\n")
+        trust_folder(fixture, fixture)
         editor = fixture / 'editor.py'
         editor.write_text("#!/usr/bin/env python3\nimport os, pathlib, sys\npathlib.Path(os.environ['FULLER_EDITOR_CAPTURE']).write_text(pathlib.Path(sys.argv[1]).read_text())\n")
         editor.chmod(0o700)
