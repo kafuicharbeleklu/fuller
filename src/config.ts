@@ -265,7 +265,8 @@ export function getConfig(overrides: ConfigOverrides = {}): AppConfig {
     autoCompactThreshold: settings.autoCompactThreshold ?? 0.85,
     notifications: settings.notifications ?? 'permission',
     bashTimeoutMs: settings.bashTimeoutMs ?? 120_000,
-    maxTurns: overrides.maxTurns ?? settings.maxTurns ?? 50,
+    // 200: a safety net against runaway loops, not a work limit. 50 stopped six legitimate turns on 25/09 (70 and 150 tool calls); the model writes a status when it is reached.
+    maxTurns: overrides.maxTurns ?? settings.maxTurns ?? 200,
     headless: overrides.headless ?? false,
   };
 }

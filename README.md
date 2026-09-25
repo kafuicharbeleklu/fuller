@@ -191,7 +191,7 @@ Google compte les quotas **par projet et par modèle** (requêtes et tokens par 
   "autoCompactThreshold": 0.85,
   "notifications": "permission",
   "bashTimeoutMs": 120000,
-  "maxTurns": 50
+  "maxTurns": 200
 }
 ```
 
