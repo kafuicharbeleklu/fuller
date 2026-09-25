@@ -9,6 +9,23 @@ const session = (id: string, title: string, gitBranch: string): SessionMeta => (
   id, title, gitBranch, workspaceDir: '/tmp/demo-project', model: 'gemini-3.6-flash', createdAt: 0, updatedAt: Date.now() - 5_000, messageCount: 3, tokenCount: 0, sizeBytes: 186_060,
 });
 
+/**
+ * The input listener is attached by an effect, after the first frame: under load, keys typed in
+ * between are lost (seen three times in full-suite runs). Type a probe until the picker shows it,
+ * then clear it with Esc (Esc on a non-empty query clears it, it does not cancel).
+ */
+const ready = async (screen: ReturnType<typeof render>) => {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    screen.stdin.write('z');
+    try {
+      await vi.waitFor(() => expect(screen.lastFrame()).toContain('Type to Search'), { timeout: 150 });
+      break;
+    } catch {}
+  }
+  screen.stdin.write('\x1b');
+  await vi.waitFor(() => expect(screen.lastFrame()).toContain('⌕ Search…'));
+};
+
 describe('/resume session picker (Claude Code 2.1.281 layout)', () => {
   it('shows the framed search, the project and two-line sessions', () => {
     const screen = render(<ThemeProvider theme={loadTheme('dark')}><SessionPicker sessions={[session('a', 'Reply with ok', 'HEAD')]} onSelect={() => {}} onCancel={() => {}} /></ThemeProvider>);
@@ -27,7 +44,7 @@ describe('/resume session picker (Claude Code 2.1.281 layout)', () => {
     const onSelect = vi.fn();
     const screen = render(<ThemeProvider theme={loadTheme('dark')}><SessionPicker branch="main" sessions={[session('a', 'Alpha task', 'main'), session('b', 'Beta task', 'dev')]} onSelect={onSelect} onCancel={onCancel} /></ThemeProvider>);
     const keys = async (...sequences: string[]) => { for (const s of sequences) { screen.stdin.write(s); await new Promise((r) => setTimeout(r, 30)); } };
-    await new Promise((r) => setImmediate(r));
+    await ready(screen);
     await keys('beta');
     await vi.waitFor(() => {
       expect(screen.lastFrame()).toContain('Type to Search · Enter to select · Esc to clear');
@@ -59,7 +76,7 @@ describe('/resume session picker (Claude Code 2.1.281 layout)', () => {
     const other = { ...session('z', 'Elsewhere', 'main'), workspaceDir: '/srv/other-repo' };
     const screen = render(<ThemeProvider theme={loadTheme('dark')}><SessionPicker sessions={[session('a', 'Alpha task', 'main')]} allSessions={() => [other, session('a', 'Alpha task', 'main')]} onRename={onRename} onSelect={onSelect} onCancel={() => {}} /></ThemeProvider>);
     const keys = async (...sequences: string[]) => { for (const s of sequences) { screen.stdin.write(s); await new Promise((r) => setTimeout(r, 30)); } };
-    await new Promise((r) => setImmediate(r));
+    await ready(screen);
     expect(screen.lastFrame()).toContain('Ctrl+A to show all projects');
     expect(screen.lastFrame()).toContain('Space to preview');
     await keys('\x01');
@@ -94,7 +111,7 @@ describe('/resume session picker (Claude Code 2.1.281 layout)', () => {
     const onDelete = vi.fn(() => true);
     const screen = render(<ThemeProvider theme={loadTheme('dark')}><SessionPicker sessions={[session('a', 'Alpha task', 'main'), session('b', 'Beta task', 'main')]} onDelete={onDelete} onSelect={() => {}} onCancel={() => {}} /></ThemeProvider>);
     const keys = async (...sequences: string[]) => { for (const s of sequences) { screen.stdin.write(s); await new Promise((r) => setTimeout(r, 30)); } };
-    await new Promise((r) => setImmediate(r));
+    await ready(screen);
     expect(screen.lastFrame()).toContain('Ctrl+Del to delete');
     await keys('\x1b[3;5~'); // Ctrl+Delete
     await vi.waitFor(() => {
