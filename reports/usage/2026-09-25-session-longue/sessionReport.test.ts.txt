@@ -1,0 +1,200 @@
+import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { analyzeSession, formatReport } from '../scripts/session-report.mjs';
+import type { SessionData } from '../src/session/store.js';
+
+describe('session report script', () => {
+  it('analyzes session data correctly and prints formatted report', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-session-report-test-'));
+    const sessionFilePath = path.join(tmpDir, 'test-session.json');
+
+    const fixture: SessionData = {
+      meta: {
+        id: 'test-session',
+        workspaceDir: '/tmp/test-workspace',
+        model: 'gemini-3.6-flash',
+        createdAt: 1000,
+        updatedAt: 2000,
+        messageCount: 3,
+        tokenCount: 500,
+      },
+      messages: [
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'Hello, please read file and run command',
+          kind: 'normal',
+          timestamp: 1010,
+        },
+        {
+          id: 'm2',
+          role: 'assistant',
+          content: 'Sure, reading file now.',
+          parts: [
+            {
+              type: 'tool',
+              id: 'tc1',
+              toolCall: {
+                id: 'tc1',
+                name: 'read_file',
+                args: { file_path: 'foo.txt' },
+                status: 'completed',
+                result: 'file content',
+              },
+            },
+            {
+              type: 'tool',
+              id: 'tc2',
+              toolCall: {
+                id: 'tc2',
+                name: 'execute_bash',
+                args: { command: 'npm test' },
+                status: 'failed',
+                error: 'Command exited with code 1',
+              },
+            },
+            {
+              type: 'tool',
+              id: 'tc3',
+              toolCall: {
+                id: 'tc3',
+                name: 'read_file',
+                args: { file_path: 'bar.txt' },
+                status: 'completed',
+                result: 'bar content',
+              },
+            },
+          ],
+          timestamp: 1020,
+        },
+        {
+          id: 'm3',
+          role: 'user',
+          content: 'Please fix the test',
+          kind: 'normal',
+          timestamp: 1030,
+        },
+        {
+          id: 'm4',
+          role: 'assistant',
+          content: 'Fixed.',
+          parts: [
+            {
+              type: 'tool',
+              id: 'tc4',
+              toolCall: {
+                id: 'tc4',
+                name: 'edit_file',
+                args: { file_path: 'foo.txt' },
+                status: 'completed',
+              },
+            },
+          ],
+          timestamp: 1040,
+        },
+      ],
+      history: [
+        {
+          role: 'user',
+          parts: [{ text: 'Hello, please read file and run command' }],
+        },
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'tc1',
+                name: 'read_file',
+                args: { file_path: 'foo.txt' },
+              },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'tc1',
+                name: 'read_file',
+                response: {
+                  output:
+                    '[Cleared from context to save space: the output of read_file (200 lines, 8000 characters). Read the file again if you need it.]',
+                },
+              },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'tc2',
+                name: 'execute_bash',
+                response: {
+                  output: 'Error: Command exited with code 1',
+                },
+              },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'tc3',
+                name: 'read_file',
+                response: {
+                  output:
+                    '[Cleared from context to save space: the output of read_file (150 lines, 5000 characters).]',
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    fs.writeFileSync(sessionFilePath, JSON.stringify(fixture, null, 2), 'utf8');
+
+    // Test programmatic analysis
+    const analysis = analyzeSession(fixture);
+    expect(analysis.userPrompts).toBe(2);
+    expect(analysis.assistantMessages).toBe(2);
+    expect(analysis.toolCalls).toEqual({
+      read_file: 2,
+      execute_bash: 1,
+      edit_file: 1,
+    });
+    expect(analysis.failedToolCalls).toBe(1);
+    expect(analysis.clearedCount).toBe(2);
+
+    // Test formatted output
+    const reportText = formatReport(analysis, sessionFilePath);
+    expect(reportText).toContain('User prompts: 2');
+    expect(reportText).toContain('Assistant messages: 2');
+    expect(reportText).toContain('Failed tool calls: 1');
+    expect(reportText).toContain('Cleared tool responses in history: 2');
+    expect(reportText).toContain('read_file: 2');
+    expect(reportText).toContain('execute_bash: 1');
+    expect(reportText).toContain('edit_file: 1');
+
+    // Test CLI invocation
+    const cliOutput = execFileSync('node', ['scripts/session-report.mjs', sessionFilePath], {
+      encoding: 'utf8',
+    });
+    expect(cliOutput).toContain('User prompts: 2');
+    expect(cliOutput).toContain('Assistant messages: 2');
+    expect(cliOutput).toContain('Failed tool calls: 1');
+    expect(cliOutput).toContain('Cleared tool responses in history: 2');
+    expect(cliOutput).toContain('read_file: 2');
+
+    // Clean up temp file
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+});

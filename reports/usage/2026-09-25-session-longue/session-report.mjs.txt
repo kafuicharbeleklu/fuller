@@ -1,0 +1,108 @@
+#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Analyzes a Fuller session object and returns statistics.
+ * @param {import('../src/session/store.js').SessionData} data
+ */
+export function analyzeSession(data) {
+  const messages = Array.isArray(data?.messages) ? data.messages : [];
+  const history = Array.isArray(data?.history) ? data.history : [];
+
+  let userPrompts = 0;
+  let assistantMessages = 0;
+  /** @type {Record<string, number>} */
+  const toolCalls = {};
+  let failedToolCalls = 0;
+
+  for (const m of messages) {
+    if (m.role === 'user') {
+      userPrompts++;
+    } else if (m.role === 'assistant') {
+      assistantMessages++;
+    }
+
+    if (Array.isArray(m.parts)) {
+      for (const p of m.parts) {
+        if (p && p.type === 'tool' && p.toolCall) {
+          const name = p.toolCall.name || 'unknown';
+          toolCalls[name] = (toolCalls[name] || 0) + 1;
+          if (p.toolCall.status === 'failed' || p.toolCall.status === 'rejected' || Boolean(p.toolCall.error)) {
+            failedToolCalls++;
+          }
+        }
+      }
+    }
+  }
+
+  let clearedCount = 0;
+  for (const item of history) {
+    if (Array.isArray(item?.parts)) {
+      for (const part of item.parts) {
+        if (part?.functionResponse) {
+          const output = part.functionResponse.response?.output;
+          if (typeof output === 'string' && output.startsWith('[Cleared from context')) {
+            clearedCount++;
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    userPrompts,
+    assistantMessages,
+    toolCalls,
+    failedToolCalls,
+    clearedCount,
+  };
+}
+
+/**
+ * Formats the session analysis into a human-readable text report.
+ * @param {ReturnType<typeof analyzeSession>} analysis
+ * @param {string} [sessionPath]
+ */
+export function formatReport(analysis, sessionPath = '') {
+  const lines = [];
+  if (sessionPath) {
+    lines.push(`Session report for ${sessionPath}:`);
+  } else {
+    lines.push(`Session report:`);
+  }
+  lines.push(`  User prompts: ${analysis.userPrompts}`);
+  lines.push(`  Assistant messages: ${analysis.assistantMessages}`);
+  lines.push(`  Failed tool calls: ${analysis.failedToolCalls}`);
+  lines.push(`  Cleared tool responses in history: ${analysis.clearedCount}`);
+  lines.push(`  Tool calls per tool name:`);
+  const names = Object.keys(analysis.toolCalls);
+  if (names.length === 0) {
+    lines.push(`    (none)`);
+  } else {
+    for (const name of names) {
+      lines.push(`    ${name}: ${analysis.toolCalls[name]}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+// Check if run directly
+const currentFile = fileURLToPath(import.meta.url);
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(currentFile)) {
+  const sessionPath = process.argv[2];
+  if (!sessionPath) {
+    console.error('Usage: node scripts/session-report.mjs <path-to-session-file>');
+    process.exit(1);
+  }
+  try {
+    const raw = fs.readFileSync(sessionPath, 'utf8');
+    const data = JSON.parse(raw);
+    const analysis = analyzeSession(data);
+    console.log(formatReport(analysis, sessionPath));
+  } catch (err) {
+    console.error(`Error reading session file ${sessionPath}: ${err.message}`);
+    process.exit(1);
+  }
+}

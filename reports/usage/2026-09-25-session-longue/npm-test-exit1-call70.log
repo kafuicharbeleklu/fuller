@@ -1,0 +1,52 @@
+
+> fuller-code@0.3.0 test
+> vitest run
+
+
+ RUN  v5.0.1 /tmp/claude-1000/-home-administrator-Desktop-gemini-code/cc297cf2-389c-42fa-9bed-3992c597c865/scratchpad/long/repo
+
+[?25h[?25h ❯ tests/sessionPicker.test.tsx (6 tests | 1 failed) 1135ms
+   ❯ /resume session picker (Claude Code 2.1.281 layout) (5)
+     × filters by typing, clears the filter with Esc, then cancels, and filters by branch with ctrl+b 183ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/sessionPicker.test.tsx > /resume session picker (Claude Code 2.1.281 layout) > filters by typing, clears the filter with Esc, then cancels, and filters by branch with ctrl+b
+AssertionError: expected '\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔…' to contain 'Type to Search · Enter to select · Es…'
+
+- Expected
++ Received
+
+- Type to Search · Enter to select · Esc to clear
++
++ ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
++    Resume session
++    ╭─────────────────────────────────────────────────────────────────────────────────────────────╮
++    │ ⌕ Search…                                                                                   │
++    ╰─────────────────────────────────────────────────────────────────────────────────────────────╯
++      demo-project
++    ❯ Alpha task
++      5 seconds ago · main · 181.7KB
++      Beta task
++      5 seconds ago · dev · 181.7KB
++      Ctrl+B to only show current branch · Space to preview · Type to search · Esc to cancel
+
+ ❯ tests/sessionPicker.test.tsx:32:32
+     30|     await new Promise((r) => setImmediate(r));
+     31|     await keys('beta');
+     32|     expect(screen.lastFrame()).toContain('Type to Search · Enter to se…
+       |                                ^
+     33|     expect(screen.lastFrame()).not.toContain('Alpha task');
+     34|     await keys('\x1b');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 64 passed (65)
+      Tests  1 failed | 482 passed (483)
+   Start at  11:25:00
+   Duration  62.45s (tests 46%, import 44%, transform 9%, worker 1%)
+
+    Isolate  65 workers spawned · ~939ms startup each (spawn + environment, per file)
+             at least ~11.27s faster with isolate: false — reuses workers across files instead of one per file
+
