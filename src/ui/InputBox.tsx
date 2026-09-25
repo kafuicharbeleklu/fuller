@@ -9,7 +9,7 @@ import { useRawInput, type KeyEvent } from './useRawInput.js';
 import { previousGrapheme, nextGrapheme, previousWord, nextWord, previousWhitespaceWord, sanitizePrompt } from './textInput.js';
 import type { ScrollAction } from './FullscreenTranscript.js';
 import { editPromptExternally } from './externalEditor.js';
-import { keyString, loadKeybindings } from './keybindings.js';
+import { keyString, currentKeybindings, chordPrefixes, type KeyAction } from './keybindings.js';
 import { getFileIndex, fuzzyFilter } from '../utils/fileIndex.js';
 import { readClipboardImage, attachmentFromFile, type ImageAttachment } from '../utils/imageClipboard.js';
 import type { SlashCommand } from './commands.js';
@@ -136,7 +136,8 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const stash = useRef<{ text: string; cursor: number; pastes: Map<number, string>; images: ImageAttachment[]; bashMode: boolean } | null>(null);
   const [stashed, setStashed] = useState(false);
   const remember = (deleted: string) => { killRing.current = deleted; if (deleted) setKilled(true); };
-  const keybindings = useMemo(loadKeybindings, []);
+  /** A key that starts a bound chord, waiting for the second key (3 s, as Claude Code). */
+  const pendingUserChord = useRef<{ key: string; at: number } | null>(null);
 
   const { text, cursor } = ed.current;
   const empty = text.length === 0;
@@ -491,6 +492,25 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
     return true;
   };
 
+  const toggleStash = () => {
+      // Claude Code: stash a non-empty prompt, restore the stash on an empty one.
+      if (ed.current.text) {
+        // The input mode goes with it: a stashed `!` command comes back as a shell command (Claude Code 2.1.280).
+        stash.current = { ...ed.current, pastes: new Map(pastes.current), images: [...images.current], bashMode };
+        resetEditor();
+        setBashMode(false);
+        setStashed(true);
+      } else if (stash.current) {
+        const saved = stash.current;
+        stash.current = null;
+        set(saved.text, saved.cursor);
+        pastes.current = new Map(saved.pastes);
+        images.current = [...saved.images];
+        setBashMode(saved.bashMode);
+        setStashed(false);
+      }
+  };
+
   // ------------------------------------------------------------ key handling
   const handle = (e: KeyEvent) => {
     if (e.name === 'mouse') {
@@ -500,18 +520,42 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
       if (e.mouse?.button === 0 && e.mouse.release) onMouseRelease?.(e.mouse.x, e.mouse.y);
       return;
     }
-    const key = keyString(e);
+    // User bindings (~/.fuller/keybindings.json or ~/.claude/keybindings.json, reloaded when they change).
+    const keybindings = currentKeybindings();
+    const single = keyString(e);
+    let key = single;
+    const pending = pendingUserChord.current;
+    pendingUserChord.current = null;
+    if (pending && Date.now() - pending.at < 3000) {
+      const chord = `${pending.key} ${single}`;
+      if (Object.prototype.hasOwnProperty.call(keybindings, chord)) key = chord;
+      // Not a bound chord: Ctrl+X goes on to the built-in chords; any other prefix key is dropped.
+      else if (pending.key === 'ctrl+x') sendChord.current = true;
+    }
+    if (key === single && chordPrefixes(keybindings).has(single) && !Object.prototype.hasOwnProperty.call(keybindings, single)) {
+      pendingUserChord.current = { key: single, at: Date.now() };
+      return;
+    }
     if (Object.prototype.hasOwnProperty.call(keybindings, key)) {
-      const action = keybindings[key];
+      const action: KeyAction | null = keybindings[key];
       if (action === null) return;
-      if (action === 'transcript') { onToggleVerbose(); return; }
-      if (action === 'diff') { onOpenDiff?.(); return; }
-      if (action === 'externalEditor') { openEditor(); return; }
-      if (action === 'tasks') { onToggleTodos?.(); return; }
-      if (action === 'redraw') { onClearScreen(); return; }
-      if (action === 'historySearch') { startSearch(); return; }
-      if (action === 'undo') { undoOnce(); return; }
-      if (action === 'cycleMode') { onCycleMode(); return; }
+      if (key.includes(' ')) sendChord.current = false;
+      switch (action) {
+        case 'transcript': onToggleVerbose(); return;
+        case 'diff': onOpenDiff?.(); return;
+        case 'externalEditor': openEditor(); return;
+        case 'tasks': onToggleTodos?.(); return;
+        case 'redraw': onClearScreen(); return;
+        case 'historySearch': startSearch(); return;
+        case 'undo': undoOnce(); return;
+        case 'cycleMode': onCycleMode(); return;
+        case 'stash': toggleStash(); return;
+        case 'imagePaste': void pasteImage(); return;
+        case 'modelPicker': onSwitchModel?.(); return;
+        case 'sendNow': submit(true); return;
+        case 'killAgents': onStopAgents?.(); return;
+        case 'cycleDiffBase': onCycleDiffBase?.(); return;
+      }
     }
     if (e.name === 'paste') { insertPaste(e.text); return; }
     if (lastPaste.current) { lastPaste.current = null; setPasteHint(false); }
@@ -604,25 +648,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
           return;
         case '_': undoOnce(); return;
         case 'z': if (onSuspend) onSuspend(); else undoOnce(); return;
-        case 's': {
-          // Claude Code: stash a non-empty prompt, restore the stash on an empty one.
-          if (ed.current.text) {
-            // The input mode goes with it: a stashed `!` command comes back as a shell command (Claude Code 2.1.280).
-            stash.current = { ...ed.current, pastes: new Map(pastes.current), images: [...images.current], bashMode };
-            resetEditor();
-            setBashMode(false);
-            setStashed(true);
-          } else if (stash.current) {
-            const saved = stash.current;
-            stash.current = null;
-            set(saved.text, saved.cursor);
-            pastes.current = new Map(saved.pastes);
-            images.current = [...saved.images];
-            setBashMode(saved.bashMode);
-            setStashed(false);
-          }
-          return;
-        }
+        case 's': toggleStash(); return;
         case 'a': ed.current.cursor = lineBounds(ed.current.text, ed.current.cursor).start; bump(); return;
         case 'e': ed.current.cursor = lineBounds(ed.current.text, ed.current.cursor).end; bump(); return;
         case 'b': if (onBackground?.()) return; ed.current.cursor = prevCp(ed.current.text, ed.current.cursor); bump(); return;

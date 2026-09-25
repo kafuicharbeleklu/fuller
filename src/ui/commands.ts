@@ -17,6 +17,7 @@ import type { CommandEntry, ConfigItem, InfoRow, ListItem, SettingsTab } from '.
 import { completeDirectory } from './InfoDialogs.js';
 import type { Denial } from './PermissionsDialog.js';
 import type { ContextData } from './ContextView.js';
+import { keybindingsFile, loadKeybindingsFull } from './keybindings.js';
 import type { ThinkingLevelSetting } from '../agent/thinking.js';
 import { contextLabel } from './ModelPicker.js';
 import { modelLabel } from './modelLabel.js';
@@ -415,9 +416,17 @@ export const COMMANDS: SlashCommand[] = [
     name: '/keybindings',
     description: 'Open your keyboard shortcuts file',
     run: (ctx) => {
-      const file = path.join(userConfigDir(), 'keybindings.json');
-      ctx.editFile(file, '{\n  "bindings": {\n    "ctrl+g": "externalEditor"\n  }\n}\n');
-      ctx.addSystem(`Opened ${file} · actions: transcript, diff, externalEditor, tasks, redraw, historySearch, undo, cycleMode`);
+      // Claude Code's format, so the same file works in both tools for the actions Fuller supports.
+      const existing = keybindingsFile();
+      const file = existing ?? path.join(userConfigDir(), 'keybindings.json');
+      ctx.editFile(file, JSON.stringify({
+        $schema: 'https://www.schemastore.org/claude-code-keybindings.json',
+        bindings: [{ context: 'Chat', bindings: { 'ctrl+g': 'chat:externalEditor' } }],
+      }, null, 2) + '\n');
+      const { warnings } = loadKeybindingsFull();
+      ctx.addSystem(`Opened ${file} · changes apply without a restart · Claude Code format (contexts Global, Chat, History, DiffPanel; chords like "ctrl+k ctrl+s")`
+        + ` · actions: app:toggleTranscript, app:toggleReplTab, app:toggleTodos, app:redraw, app:cycleDiffBase, history:search, chat:externalEditor, chat:undo, chat:cycleMode, chat:stash, chat:imagePaste, chat:modelPicker, chat:sendNow, chat:killAgents`
+        + (warnings.length ? `\n${warnings.map((w) => `⚠ ${w}`).join('\n')}` : ''));
     },
   },
   {

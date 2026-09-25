@@ -6,7 +6,8 @@ import { PermissionPrompt } from '../src/ui/PermissionPrompt.js';
 import { nextWord, previousWord } from '../src/ui/textInput.js';
 import type { PendingConfirmation } from '../src/agent/types.js';
 
-vi.mock('../src/ui/keybindings.js', async (original) => ({ ...await original<typeof import('../src/ui/keybindings.js')>(), loadKeybindings: () => ({}) }));
+// No user file: the prompt's built-in keys only (the loader has its own tests, tests/keybindings.test.ts).
+vi.mock('../src/ui/keybindings.js', async (original) => ({ ...await original<typeof import('../src/ui/keybindings.js')>(), loadKeybindings: () => ({}), currentKeybindings: () => ({}) }));
 afterEach(cleanup);
 const settle = () => new Promise((resolve) => setTimeout(resolve, 35));
 async function input(extra: Partial<InputBoxProps> = {}) {
