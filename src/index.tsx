@@ -6,6 +6,9 @@ import { App } from './ui/App.js';
 import path from 'node:path';
 import { getConfig, loadEnvFiles, DEFAULT_MODEL } from './config.js';
 import { isTrusted, trustFolder } from './trust.js';
+import { loadMcpConfig } from './mcp/config.js';
+import { mcpApproval, pendingServers, saveMcpApproval, type McpApproval } from './mcp/approval.js';
+import { McpApprovalDialog } from './ui/McpApprovalDialog.js';
 import { TrustDialog } from './ui/TrustDialog.js';
 import { ThemeProvider, loadTheme } from './ui/theme.js';
 import { getLatestSession, loadSession } from './session/store.js';
@@ -23,6 +26,18 @@ function askTrust(folder: string): Promise<boolean> {
     const app = render(
       <ThemeProvider theme={loadTheme()}>
         <TrustDialog folder={folder} onDecide={(trusted) => { app.clear(); app.unmount(); resolve(trusted); }} />
+      </ThemeProvider>,
+      { exitOnCtrlC: false, patchConsole: false },
+    );
+  });
+}
+
+/** The question about a project's new MCP servers, alone on screen; resolves with the answer. */
+function askMcpApproval(names: string[]): Promise<McpApproval> {
+  return new Promise((resolve) => {
+    const app = render(
+      <ThemeProvider theme={loadTheme()}>
+        <McpApprovalDialog names={names} onDone={(answer) => { app.clear(); app.unmount(); resolve(answer); }} />
       </ThemeProvider>,
       { exitOnCtrlC: false, patchConsole: false },
     );
@@ -80,6 +95,14 @@ program
       trustFolder(workspaceDir);
     }
     loadEnvFiles(workspaceDir, trusted || !interactive);
+
+    // Then, as Claude Code, one question about the project's new MCP servers, before any starts.
+    const pendingMcp = pendingServers(loadMcpConfig(workspaceDir), mcpApproval(workspaceDir)).map((e) => e.name);
+    if (pendingMcp.length && interactive && process.stdin.isTTY && process.stdout.isTTY) {
+      saveMcpApproval(workspaceDir, await askMcpApproval(pendingMcp));
+    } else if (pendingMcp.length && options.print) {
+      process.stderr.write(`Not starting project MCP server${pendingMcp.length === 1 ? '' : 's'} ${pendingMcp.join(', ')}: start ${APP_NAME} in this folder once to approve ${pendingMcp.length === 1 ? 'it' : 'them'}.\n`);
+    }
 
     const config = getConfig({
       apiKey: options.key,

@@ -42,7 +42,8 @@ export interface InputBoxProps {
   onToggleHelp: () => void;
   onToggleTodos?: () => void;
   onOpenDiff?: () => void;
-  onScrollTranscript?: (action: ScrollAction) => void;
+  /** x, y: the mouse position for wheel scrolls. */
+  onScrollTranscript?: (action: ScrollAction, x?: number, y?: number) => void;
   onDoubleEscape: () => void;
   onPopQueue: () => string | undefined;
   onTakeQueue?: (empty: boolean) => { text: string; attachments: ImageAttachment[]; bash: boolean } | undefined;
@@ -474,8 +475,8 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   // ------------------------------------------------------------ key handling
   const handle = (e: KeyEvent) => {
     if (e.name === 'mouse') {
-      if (e.mouse?.button === 64) onScrollTranscript?.('lineUp');
-      if (e.mouse?.button === 65) onScrollTranscript?.('lineDown');
+      if (e.mouse?.button === 64) onScrollTranscript?.('lineUp', e.mouse.x, e.mouse.y);
+      if (e.mouse?.button === 65) onScrollTranscript?.('lineDown', e.mouse.x, e.mouse.y);
       if (e.mouse?.button === 0 && !e.mouse.release) onMouseClick?.(e.mouse.x, e.mouse.y);
       return;
     }

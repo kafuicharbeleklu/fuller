@@ -59,43 +59,53 @@ export function parseUnifiedDiff(diff: string): ParsedDiff {
  * diff colour, the text in the normal colour, and the row background drawn
  * across the whole available width.
  */
-export const DiffView: React.FC<{ diff: string; maxLines?: number; showFile?: boolean; language?: string; width?: number; background?: string }> = ({ diff, maxLines = 40, showFile = false, language, width, background }) => {
-  const theme = useTheme();
-  const { stdout } = useStdout();
-  const rowWidth = Math.max(10, width ?? (stdout?.columns ?? 80));
-  const highlightLines = language !== undefined && theme.syntaxHighlighting !== false;
+export type DiffRowLine = DiffLine | { type: 'sep' };
+
+/** A diff as display rows, one per line (a "…" row between hunks), for views that place rows themselves. */
+export function diffRows(diff: string, maxLines = 2000): { rows: DiffRowLine[]; hidden: number; numberWidth: number; parsed: ParsedDiff } {
   const parsed = parseUnifiedDiff(diff);
-  const all: Array<DiffLine | { type: 'sep' }> = [];
+  const all: DiffRowLine[] = [];
   parsed.hunks.forEach((h, i) => {
     if (i > 0) all.push({ type: 'sep' });
     all.push(...h.lines);
   });
-  const shown = all.slice(0, maxLines);
-  const hidden = all.length - shown.length;
   const numberWidth = String(Math.max(...parsed.hunks.flatMap((h) => h.lines.map((l) => Math.max(l.oldNo ?? 0, l.newNo ?? 0))), 1)).length;
+  return { rows: all.slice(0, maxLines), hidden: Math.max(0, all.length - maxLines), numberWidth, parsed };
+}
+
+/** One diff row: line number, sign, text, on the add/remove background. */
+export const DiffRow: React.FC<{ line: DiffRowLine; numberWidth: number; width: number; background?: string; language?: string }> = ({ line: l, numberWidth, width: rowWidth, background, language }) => {
+  const theme = useTheme();
+  if (l.type === 'sep') return <Text color={theme.subtle} backgroundColor={background}>{`${' '.repeat(numberWidth + 1)}…`.padEnd(background ? rowWidth : 0)}</Text>;
+  const highlightLines = language !== undefined && theme.syntaxHighlighting !== false;
+  // Removed lines keep their old number; added and context lines show the new file's, as Claude Code does.
+  const no = String((l.type === 'del' ? l.oldNo : l.newNo) ?? '').padStart(numberWidth, ' ');
+  const sign = l.type === 'add' ? '+' : l.type === 'del' ? '-' : ' ';
+  const color = l.type === 'add' ? theme.diffAdded : l.type === 'del' ? theme.diffRemoved : theme.subtle;
+  const bg = l.type === 'add' ? theme.diffAddedBg : l.type === 'del' ? theme.diffRemovedBg : background;
+  const text = l.text.replace(/\t/g, '  ');
+  const prefix = ` ${no} ${sign}`;
+  const pad = Math.max(0, rowWidth - stringWidth(prefix) - stringWidth(text));
+  return (
+    <Text backgroundColor={bg} wrap="truncate-end">
+      <Text color={color}>{prefix}</Text>
+      <Text color={l.type === 'ctx' ? undefined : theme.text} dimColor={l.type === 'ctx'}>{highlightLines ? highlightCode(text, language) : text}</Text>
+      {bg ? ' '.repeat(pad) : ''}
+    </Text>
+  );
+};
+
+export const DiffView: React.FC<{ diff: string; maxLines?: number; showFile?: boolean; language?: string; width?: number; background?: string }> = ({ diff, maxLines = 40, showFile = false, language, width, background }) => {
+  const theme = useTheme();
+  const { stdout } = useStdout();
+  const rowWidth = Math.max(10, width ?? (stdout?.columns ?? 80));
+  const { rows, hidden, numberWidth, parsed } = diffRows(diff, maxLines);
   return (
     <Box flexDirection="column">
       {showFile && parsed.file ? (
         <Text bold>{parsed.file} <Text color={theme.subtle}>(+{parsed.additions} −{parsed.removals})</Text></Text>
       ) : null}
-      {shown.map((l, i) => {
-        if (l.type === 'sep') return <Text key={i} color={theme.subtle} backgroundColor={background}>{`${' '.repeat(numberWidth + 1)}…`.padEnd(background ? rowWidth : 0)}</Text>;
-        // Removed lines keep their old number; added and context lines show the new file's, as Claude Code does.
-        const no = String((l.type === 'del' ? l.oldNo : l.newNo) ?? '').padStart(numberWidth, ' ');
-        const sign = l.type === 'add' ? '+' : l.type === 'del' ? '-' : ' ';
-        const color = l.type === 'add' ? theme.diffAdded : l.type === 'del' ? theme.diffRemoved : theme.subtle;
-        const bg = l.type === 'add' ? theme.diffAddedBg : l.type === 'del' ? theme.diffRemovedBg : background;
-        const text = l.text.replace(/\t/g, '  ');
-        const prefix = ` ${no} ${sign}`;
-        const pad = Math.max(0, rowWidth - stringWidth(prefix) - stringWidth(text));
-        return (
-          <Text key={i} backgroundColor={bg} wrap="truncate-end">
-            <Text color={color}>{prefix}</Text>
-            <Text color={l.type === 'ctx' ? undefined : theme.text} dimColor={l.type === 'ctx'}>{highlightLines ? highlightCode(text, language) : text}</Text>
-            {bg ? ' '.repeat(pad) : ''}
-          </Text>
-        );
-      })}
+      {rows.map((l, i) => <DiffRow key={i} line={l} numberWidth={numberWidth} width={rowWidth} background={background} language={language} />)}
       {hidden > 0 ? <Text color={theme.subtle}>… +{hidden} lines{maxLines >= 2000 ? '' : ' (ctrl+o to expand)'}</Text> : null}
     </Box>
   );

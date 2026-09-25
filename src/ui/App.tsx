@@ -37,7 +37,8 @@ import { editPromptExternally } from './externalEditor.js';
 import { FullscreenTranscript, useTranscriptRows, type ScrollAction } from './FullscreenTranscript.js';
 import { transcriptLines } from './viewerText.js';
 import { readGitDiff, readFileDiffs, type FileDiff } from './gitDiff.js';
-import { DiffPanel, diffPanelHits } from './DiffPanel.js';
+import { saveUserSetting } from '../config.js';
+import { DiffPanel, diffPanelClick, maxPanelScroll, type DiffPanelState } from './DiffPanel.js';
 import { toolLabel, toolArgSummary } from '../tools/registry.js';
 import { TodoPanel } from './TodoPanel.js';
 import { useStatusLine } from './useStatusLine.js';
@@ -61,6 +62,8 @@ import { CYCLE_MODES } from '../agent/types.js';
 
 /** Claude Code opens /diff beside the conversation from 110 columns. */
 const DIFF_PANEL_MIN_COLUMNS = 110;
+/** Claude Code opens the panel on its own at the first edit from this width, until /diff has been used. */
+const DIFF_PANEL_AUTO_COLUMNS = 144;
 /** Ink's columns are one short of the terminal; the panel takes 45 % of the terminal, the conversation the rest. */
 function diffPanelLayout(inkColumns: number): { left: number; panel: number } {
   const columns = inkColumns + 1;
@@ -160,33 +163,82 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   }, [fullscreen, screen, modelPickerOpen, rewindOpen, viewer]);
 
   // /diff: at 110 columns and more in fullscreen, Claude Code's panel beside the conversation.
-  const [diffPanel, setDiffPanel] = useState<{ files: FileDiff[]; others: FileDiff[]; showOthers: boolean; loading?: boolean } | null>(null);
-  const loadDiffPanel = useCallback((showOthers = false) => {
-    const all = readFileDiffs(config.workspaceDir) ?? [];
+  const [diffPanel, setDiffPanel] = useState<DiffPanelState | null>(null);
+  /** Null outside a git repository. */
+  const loadDiffPanel = useCallback((showOthers = false, scroll = 0): DiffPanelState | null => {
+    const all = readFileDiffs(config.workspaceDir);
+    if (!all) return null;
     const edited = new Set(agentRef.current?.sessionEditedFiles() ?? []);
-    return { files: all.filter((f) => edited.has(f.file)), others: all.filter((f) => !edited.has(f.file)), showOthers };
+    return { files: all.filter((f) => edited.has(f.file)), others: all.filter((f) => !edited.has(f.file)), showOthers, scroll };
   }, [config.workspaceDir]);
+  // Claude Code remembers the panel across sessions: opened with /diff, it opens on its own at 110
+  // columns; closed, it stays closed until /diff again; never used, it opens on its own from 144.
+  const setDiffPreference = useCallback((value: 'opened' | 'closed') => {
+    config.settings.diffPanel = value;
+    try { saveUserSetting(['diffPanel'], value); } catch {}
+  }, [config]);
   const openDiffViewer = useCallback(() => {
     const columns = (stdout?.columns ?? 80) + 1;
-    if (fullscreen && columns >= DIFF_PANEL_MIN_COLUMNS) {
+    // Claude Code 2.1.282 only has the panel: narrower, it says how wide the terminal must be.
+    if (fullscreen && columns < DIFF_PANEL_MIN_COLUMNS) {
+      agentRef.current?.addCommandMessage('/diff');
+      addSystem(`Resize your terminal to at least ${DIFF_PANEL_MIN_COLUMNS} columns to show the diff panel`, 'notice');
+      return;
+    }
+    if (fullscreen && (diffPanelRef.current || readFileDiffs(config.workspaceDir))) {
       agentRef.current?.addCommandMessage('/diff');
       addSystem(diffPanelRef.current ? 'Diff panel hidden' : 'Diff panel shown', 'notice');
-      if (diffPanelRef.current) { setDiffPanel(null); return; }
+      if (diffPanelRef.current) { setDiffPanel(null); setDiffPreference('closed'); return; }
+      setDiffPreference('opened');
       // Reading every change can take a moment in a big tree: open the panel first.
       setDiffPanel({ files: [], others: [], showOthers: false, loading: true });
       setTimeout(() => { if (diffPanelRef.current) setDiffPanel(loadDiffPanel()); }, 0);
       return;
     }
+    // Classic renderer, or no git repository for the panel: the viewer.
     setDiffLines(readGitDiff(config.workspaceDir));
     setViewer((v) => (v === 'diff' ? null : 'diff'));
-  }, [config.workspaceDir, fullscreen, stdout, loadDiffPanel]);
+  }, [config.workspaceDir, fullscreen, stdout, loadDiffPanel, setDiffPreference]);
   const diffPanelRef = useRef(diffPanel);
   diffPanelRef.current = diffPanel;
-  // The panel follows the agent's edits: refresh it when a turn ends.
+  // The panel follows the agent's work: refreshed after each edit or shell command, and at the end of
+  // a turn; the first edit opens it in a wide enough terminal (Claude Code's diff panel).
+  const diffRefresh = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The panel's height, known once the layout is computed below. */
+  const diffPanelHeight = useRef(24);
+  const refreshDiffPanel = useCallback(() => {
+    if (diffRefresh.current) clearTimeout(diffRefresh.current);
+    diffRefresh.current = setTimeout(() => {
+      diffRefresh.current = null;
+      const current = diffPanelRef.current;
+      if (current) setDiffPanel(loadDiffPanel(current.showOthers, current.scroll) ?? current);
+    }, 100);
+  }, [loadDiffPanel]);
+  const onToolDone = useCallback((name: string) => {
+    if (!fullscreen) return;
+    if (diffPanelRef.current) {
+      if (['edit_file', 'write_file', 'execute_bash', 'agent'].includes(name)) refreshDiffPanel();
+      return;
+    }
+    if (name !== 'edit_file' && name !== 'write_file') return;
+    const preference = config.settings.diffPanel ?? 'auto';
+    const columns = (stdout?.columns ?? 80) + 1;
+    if (preference === 'closed' || columns < (preference === 'opened' ? DIFF_PANEL_MIN_COLUMNS : DIFF_PANEL_AUTO_COLUMNS)) return;
+    const next = loadDiffPanel();
+    if (next) setDiffPanel(next);
+  }, [fullscreen, config, stdout, loadDiffPanel, refreshDiffPanel]);
+  const onToolDoneRef = useRef(onToolDone);
+  onToolDoneRef.current = onToolDone;
   useEffect(() => {
-    if (status === 'idle' && diffPanelRef.current) setDiffPanel(loadDiffPanel(diffPanelRef.current.showOthers));
-  }, [status, loadDiffPanel]);
-
+    if (status === 'idle' && diffPanelRef.current) refreshDiffPanel();
+  }, [status, refreshDiffPanel]);
+  const scrollDiffPanel = useCallback((delta: number) => {
+    const current = diffPanelRef.current;
+    if (!current) return;
+    const { panel } = diffPanelLayout(stdout?.columns ?? 80);
+    const max = maxPanelScroll(current, panel, diffPanelHeight.current);
+    setDiffPanel({ ...current, scroll: Math.max(0, Math.min(max, (current.scroll ?? 0) + delta)) });
+  }, [stdout]);
 
 
   const bannerProps: BannerProps = useMemo(() => ({
@@ -235,7 +287,10 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
         statusRef.current = s;
         setStatus(s);
       },
-      onCommit: (item) => setItems((prev) => [...prev, item]),
+      onCommit: (item) => {
+        setItems((prev) => [...prev, item]);
+        if (item.kind === 'tool' && item.toolCall.status === 'completed') onToolDoneRef.current(item.toolCall.name);
+      },
       onTranscriptReset: (next) => { setItems([{ key: 'banner', kind: 'banner' }, ...next]); redraw(!fullscreen); },
       onLive: setLive,
       onRequestConfirmation: setConfirmation,
@@ -529,6 +584,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const pickerOpen = modelPickerOpen || themePickerOpen || rewindOpen || resumeOpen || infoDialog !== null;
   const pickerTranscriptHeight = rows < 14 ? 0 : Math.max(2, rows - 18);
   const transcriptHeight = pickerOpen ? pickerTranscriptHeight : confirmation ? Math.max(2, rows - (rows < 20 ? 14 : 17)) : Math.max(4, rows - 9 - (showHelp ? SHORTCUTS_HELP_EXTRA_ROWS : 0) - (inputState.menuOpen ? SUGGESTION_LINES - 1 : 0));
+  diffPanelHeight.current = measuredTranscriptHeight ?? transcriptHeight;
   // The conversation takes whatever height is left once the prompt, spinner and dialogs are laid out.
   useEffect(() => {
     if (!fullscreen || !transcriptBox.current) return;
@@ -606,7 +662,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
               <Box flexDirection="column" width={diffPanel ? diffPanelLayout(stdout?.columns ?? 80).left : undefined} flexGrow={diffPanel ? 0 : 1}>
                 {(!pickerOpen || pickerTranscriptHeight > 0) && (!confirmation || rows >= 16) ? <FullscreenTranscript lines={fullscreenLines} height={measuredTranscriptHeight ?? transcriptHeight} scrollRequest={scrollRequest} width={diffPanel ? diffPanelLayout(stdout?.columns ?? 80).left : undefined} /> : null}
               </Box>
-              {diffPanel ? <DiffPanel files={diffPanel.files} others={diffPanel.others} showOthers={diffPanel.showOthers} loading={diffPanel.loading} width={diffPanelLayout(stdout?.columns ?? 80).panel} height={measuredTranscriptHeight ?? transcriptHeight} /> : null}
+              {diffPanel ? <DiffPanel files={diffPanel.files} others={diffPanel.others} showOthers={diffPanel.showOthers} loading={diffPanel.loading} scroll={diffPanel.scroll} width={diffPanelLayout(stdout?.columns ?? 80).panel} height={measuredTranscriptHeight ?? transcriptHeight} /> : null}
             </Box>
           </Box>
         ) : null}
@@ -754,7 +810,14 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onToggleHelp={onToggleHelp}
             onToggleTodos={onToggleTodos}
             onOpenDiff={openDiffViewer}
-            onScrollTranscript={fullscreen ? (direction) => setScrollRequest((value) => ({ id: value.id + 1, direction })) : undefined}
+            onScrollTranscript={fullscreen ? (direction, x) => {
+              // The wheel over the diff panel scrolls the panel.
+              if (diffPanel && x !== undefined && x - 1 >= diffPanelLayout(stdout?.columns ?? 80).left && (direction === 'lineUp' || direction === 'lineDown')) {
+                scrollDiffPanel(direction === 'lineUp' ? -3 : 3);
+                return;
+              }
+              setScrollRequest((value) => ({ id: value.id + 1, direction }));
+            } : undefined}
             onDoubleEscape={onDoubleEscape}
             onPopQueue={onPopQueue}
             onStateChange={onInputState}
@@ -764,11 +827,12 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onMouseClick={diffPanel ? (x, y) => {
               const { left, panel } = diffPanelLayout(stdout?.columns ?? 80);
               const col = x - 1 - left;
-              const row = y - 1;
-              const hits = diffPanelHits(measuredTranscriptHeight ?? transcriptHeight, panel);
               if (col < 0) return;
-              if (row === hits.closeRow && col >= hits.closeCol - 1) { setDiffPanel(null); addSystem('Diff panel hidden', 'notice'); }
-              else if (row === hits.showRow && diffPanel.others.length) setDiffPanel(loadDiffPanel(!diffPanel.showOthers));
+              const action = diffPanelClick(diffPanel, panel, measuredTranscriptHeight ?? transcriptHeight, y - 1, col);
+              if (!action) return;
+              if ('close' in action) { setDiffPanel(null); setDiffPreference('closed'); addSystem('Diff panel hidden', 'notice'); }
+              else if ('toggle' in action) setDiffPanel(loadDiffPanel(!diffPanel.showOthers) ?? diffPanel);
+              else setDiffPanel({ ...diffPanel, scroll: action.scroll });
             } : undefined}
             commandUsage={commandUsage}
           />

@@ -22,6 +22,7 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import { CONFIG_DIR_NAME } from '../branding.js';
 import { McpManager, type McpServerStatus } from '../mcp/manager.js';
 import { loadMcpConfig } from '../mcp/config.js';
+import { isApproved, mcpApproval } from '../mcp/approval.js';
 import { loadSubagents, type SubagentDefinition } from './subagents.js';
 import { runSubagent } from './subagent.js';
 import { WorkTracker } from './taskState.js';
@@ -68,9 +69,11 @@ const AUTO_MODE_TIMEOUT_MS = 30_000;
 
 const PARALLEL_READ_TOOLS = new Set(['read_file', 'outline_file', 'list_directory', 'search_files', 'glob']);
 
+/** The MCP servers allowed to start: the user's own, and the project servers the user enabled. */
 function safeLoadMcp(cwd: string) {
   try {
-    return loadMcpConfig(cwd);
+    const approval = mcpApproval(cwd);
+    return loadMcpConfig(cwd).filter((entry) => isApproved(entry, approval));
   } catch {
     return [];
   }

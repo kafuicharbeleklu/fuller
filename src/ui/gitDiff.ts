@@ -23,6 +23,8 @@ export interface FileDiff {
   diff: string;
   additions: number;
   removals: number;
+  /** Not in git yet: Claude Code shows "New file not yet staged" instead of line counts. */
+  untracked?: boolean;
 }
 
 /** Untracked files larger than this are listed without their content. */
@@ -69,7 +71,9 @@ export function readFileDiffs(cwd: string): FileDiff[] | null {
   }
   for (const file of run(['ls-files', '--others', '--exclude-standard']).stdout.split('\n').filter(Boolean)) {
     const diff = newFileDiff(cwd, file);
-    out.push({ file, diff, ...countChanges(diff) });
+    out.push({ file, diff, ...countChanges(diff), untracked: true });
   }
-  return out;
+  // Claude Code lists the files by path, whatever the case (".env", "a.txt", "README.md").
+  const key = (f: FileDiff) => f.file.toLowerCase();
+  return out.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
 }

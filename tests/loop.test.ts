@@ -856,6 +856,9 @@ describe('AgentLoop', () => {
     it('exposes MCP tools, asks for permission and calls the server', async () => {
       const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'mcp-echo.mjs');
       fs.writeFileSync(path.join(cwd, '.mcp.json'), JSON.stringify({ mcpServers: { echo: { command: process.execPath, args: [fixture] } } }));
+      // A project server starts only once the user enabled it ("Use this MCP server").
+      const { saveMcpApproval } = await import('../src/mcp/approval.js');
+      saveMcpApproval(cwd, { enabled: ['echo'], disabled: [] });
       script = [{ functionCalls: [{ name: 'mcp__echo__echo', args: { text: 'salut' } }] }, { text: 'done' }];
       let asked: any = null;
       const { cb, items } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) { asked = c; c.onDecide({ kind: 'yes' }); } } });
@@ -869,6 +872,20 @@ describe('AgentLoop', () => {
       expect(calls[1].responses[0].output).toBe('echo: salut');
       await loop.flush();
     }, 30000);
+  });
+
+  it('does not start a project MCP server the user has not enabled', async () => {
+    const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'mcp-echo.mjs');
+    fs.writeFileSync(path.join(cwd, '.mcp.json'), JSON.stringify({ mcpServers: { echo: { command: process.execPath, args: [fixture] } } }));
+    const { saveMcpApproval } = await import('../src/mcp/approval.js');
+    const { cb } = makeCallbacks();
+    const unanswered = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+    await unanswered.mcpReady();
+    expect(unanswered.mcpStatuses()).toEqual([]);
+    saveMcpApproval(cwd, { enabled: [], disabled: ['echo'] });
+    const refused = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+    await refused.mcpReady();
+    expect(refused.mcpStatuses()).toEqual([]);
   });
 
   describe('subagents', () => {

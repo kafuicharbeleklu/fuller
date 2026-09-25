@@ -121,3 +121,22 @@ Signalé par une session de l'utilisateur : à « crée un fichier HTML sur mon 
 - **Sortie** : après `/exit`, Fuller se termine explicitement une fois la session enregistrée (`process.exit(0)` après le résumé), au lieu d'attendre que Node n'ait plus rien en cours. Une sortie restait parfois bloquée plus de 20 s dans `tui-auth-capture.py`, sans cause identifiée. Mesuré ensuite : 0,1 à 0,3 s.
 - **Non fait** : la question par serveur MCP de Claude Code. Pour l'instant, approuver le dossier lance tous ses serveurs MCP.
 - **Vérifications** : typage, tests unitaires (dont `tests/trust.test.tsx`), essais en PTY (question, refus sans rien lancer, approbation puis hook et MCP, pas de question au lancement suivant). Les suites PTY complètes (fumée, authentification) étaient instables pendant la mise au point : la charge moyenne atteignait 10,8 sur 8 cœurs à cause d'autres sessions (Playwright, vite). Relancées une fois la machine calme : voir le commit.
+
+## 12. Mise à jour — question par serveur MCP, panneau /diff fidèle et ouverture automatique
+
+- **Serveurs MCP d'un projet** (capturé dans Claude Code 2.1.282) :
+  - Un serveur : « New MCP server found in this project: <nom> », puis Use this MCP server / Use this and all future MCP servers in this project / ❯ Continue without using this MCP server.
+  - Plusieurs : « N new MCP servers found in this project / Select any you wish to enable. », cases [✔] cochées au départ, Espace ou Entrée sur un serveur pour cocher ou décocher, « Enable selected » pour valider, Échap pour tout refuser.
+  - Réponses gardées dans `~/.fuller/mcp-approvals.json`, hors du dépôt : un projet ne peut pas livrer ses propres approbations. Code : `src/mcp/approval.ts`, `src/ui/McpApprovalDialog.tsx`, `src/index.tsx`, filtrage dans `src/agent/loop.ts` (`safeLoadMcp`).
+- **Panneau /diff** : capturé dans Claude Code 2.1.282 et comparé à sa documentation officielle (`code.claude.com/docs/en/interactive-mode#diff-panel`).
+  - **Ouverture automatique**, telle que la documentation la décrit : « The panel also opens on its own once Claude starts editing files, if your terminal is at least 144 columns wide. After you've opened it yourself with /diff, later sessions open it as soon as Claude edits a file in any terminal wide enough to fit it. Close the panel and it stays closed, in this session and later ones, until you run /diff again. » Implémentée avec le réglage utilisateur `diffPanel` : `auto`, `opened` ou `closed`.
+  - **Rafraîchissement** après chaque modification, commande shell ou sous-agent, et en fin de tour.
+  - **Défilement** à la molette au-dessus du panneau ; un clic sur un fichier saute à son diff. `src/ui/DiffPanel.tsx` décrit le panneau comme une liste de lignes (`panelRows`), ce qui donne défilement et zones de clic.
+  - **Changements antérieurs à la session** (« (show) ») : même disposition que Claude Code, dont les fichiers non suivis marqués « (untracked) » avec « New file not yet staged. Run `git add :/…` to see line counts. », et l'ordre des chemins.
+  - **Sous 110 colonnes** en plein écran : « Resize your terminal to at least 110 columns to show the diff panel ». Hors dépôt Git ou en mode classique : la visionneuse.
+- **Pas encore fait** (décrit par la documentation, non capturé) :
+  - `Ctrl+X B` pour changer la référence de comparaison (cette session, changements non commités, depuis la branche par défaut) ;
+  - le regroupement des fichiers de test et générés ;
+  - la sélection de lignes à la souris envoyée au prompt ;
+  - la visionneuse du mode classique à la manière de Claude Code (vue « Current » et vues par tour, liste, Entrée pour ouvrir un fichier).
+- **Vérifications** : 463 tests, dont `tests/mcpApproval.test.tsx`, `tests/diffPanel.test.tsx` et `tests/diffPanelAuto.test.tsx` (la vraie App, 144, 110 et fermé). Essais en PTY pour la question MCP : refus puis rien au lancement suivant, approbation qui démarre le serveur. La suite de fumée PTY échouait sur un redimensionnement, la charge étant à 12 sur 8 cœurs à cause d'autres sessions.
