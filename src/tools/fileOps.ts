@@ -29,9 +29,9 @@ export async function readFile(
 ): Promise<ReadResult> {
   const fullPath = assertReadable(filePath, ctx.cwd, ctx.extraDirs);
   const stat = await fs.stat(fullPath);
-  if (stat.isDirectory()) throw new Error(`"${filePath}" est un répertoire — utilisez list_directory.`);
+  if (stat.isDirectory()) throw new Error(`"${filePath}" is a directory: use list_directory.`);
   if (stat.size > LIMITS.readBytes) {
-    throw new Error(`Fichier trop volumineux (${formatBytes(stat.size)}). Lisez-le par plages avec offset/limit ou avec execute_bash (head/sed).`);
+    throw new Error(`File too large (${formatBytes(stat.size)}). Read it in ranges with offset/limit, or with execute_bash (head/sed).`);
   }
   const buf = await fs.readFile(fullPath);
   if (isProbablyBinary(buf)) {
@@ -133,16 +133,16 @@ export async function previewEdit(
   try {
     raw = await fs.readFile(fullPath, 'utf8');
   } catch {
-    throw new Error(`Fichier introuvable : ${filePath}. Utilisez write_file pour créer un nouveau fichier.`);
+    throw new Error(`File not found: ${filePath}. Use write_file to create a new file.`);
   }
-  if (typeof target !== 'string' || target.length === 0) throw new Error('target_content ne doit pas être vide.');
+  if (typeof target !== 'string' || target.length === 0) throw new Error('target_content must not be empty.');
   if (target === replacement) throw new Error('target_content et replacement_content sont identiques.');
   const occurrences = raw.split(target).length - 1;
   if (occurrences === 0) {
-    throw new Error(`Le bloc cible est introuvable dans ${filePath}. Relisez le fichier avec read_file et copiez le texte exact (espaces et indentation compris).`);
+    throw new Error(`target_content was not found in ${filePath}. Read the file again with read_file and copy the exact text, spaces and indentation included.`);
   }
   if (occurrences > 1 && !replaceAll) {
-    throw new Error(`Le bloc cible apparaît ${occurrences} fois dans ${filePath}. Ajoutez du contexte pour le rendre unique, ou passez replace_all=true.`);
+    throw new Error(`target_content appears ${occurrences} times in ${filePath}. Add surrounding context to make it unique, or pass replace_all=true.`);
   }
   const updated = replaceAll ? raw.split(target).join(replacement) : raw.replace(target, () => replacement);
   const rel = displayPath(fullPath, ctx.cwd);

@@ -88,3 +88,14 @@ Comparée à une capture de Claude Code 2.1.282 (commande locale, sans appel au 
 - Code : `src/ui/InfoDialogs.tsx` (`SettingsDialog`). Tests : `tests/infoDialogs.test.tsx`.
 - `tests/terminalLifecycle.test.tsx` attend maintenant que la sortie d'Ink se stabilise au lieu d'un délai fixe de 80 ms, qui échouait parfois quand toute la suite tournait en parallèle.
 - Non repris : le contenu de l'onglet Usage de Claude Code (sections Session, barres d'utilisation), qui dépend de son abonnement.
+
+## 9. Mise à jour — fichiers hors du projet, messages en anglais
+
+Signalé par une session de l'utilisateur : à « crée un fichier HTML sur mon Bureau », `list_directory ~/Desktop` recevait un refus sec, en français. Le modèle posait alors des questions, puis écrivait le fichier avec `cat > ~/Desktop/index.html` : ni diff, ni retour arrière.
+
+- **Maintenant** : un outil de fichier (lecture, plan, liste, recherche, écriture, édition) qui sort du projet et des dossiers ajoutés **demande la permission**, dans tous les modes, « accept edits » compris. Choix : Yes (cet appel) ; « Yes, allow reading from <dossier>/ during this session » ou « allow all edits in » (le dossier est ajouté jusqu'à la fin de la session, prompt système rechargé à la fin du tour) ; No. Les fichiers sensibles restent refusés sans question ; un lien symbolique est présenté par son vrai dossier. Code : `src/permissions/rules.ts` (`outsideDirectory`), `src/tools/paths.ts` (`outsidePath`), `src/agent/loop.ts` (`addDirectory`), `src/agent/subagent.ts`. Le prompt système dit d'utiliser les outils de fichiers plutôt que le shell.
+- **Règles** : `Read(//chemin/absolu/**)` et `Read(~/…)` fonctionnent (syntaxe de Claude Code). Avant, seuls les chemins relatifs au projet correspondaient.
+- **Messages** : erreurs d'outils, motifs de danger et chemins refusés passés en anglais (« Access denied », « target_content was not found », « Dangerous command: recursive rm »…).
+- **Non vérifié** : les libellés exacts de Claude Code pour ce cas. Son quota hebdomadaire était épuisé et une capture demandait un tour du modèle ; les textes choisis sont plausibles, sans preuve.
+- Le panneau `/diff` (« No changes this session ») visible dans la session n'était pas un défaut : l'utilisateur l'avait ouvert.
+- `tests/sessionPicker.test.tsx` échoue encore de temps en temps quand toute la suite tourne en parallèle, puis passe seul (déjà signalé par Codex).

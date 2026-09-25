@@ -54,7 +54,7 @@ export async function listDirectory(
     try {
       items = await fs.readdir(current, { withFileTypes: true });
     } catch (err: any) {
-      throw new Error(`Impossible de lister ${dirPath}: ${err.message}`);
+      throw new Error(`Cannot list ${dirPath}: ${err.message}`);
     }
     items.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
     for (const item of items) {
@@ -165,7 +165,7 @@ async function searchWithRipgrep(rg: string, query: string, root: string, cwd: s
       options.signal?.removeEventListener('abort', onAbort);
       if (buffer) handle(buffer);
       if (options.signal?.aborted) { reject(new Error('Interrupted')); return; }
-      if (code === 2 && matches.length === 0 && /regex parse error|error parsing/i.test(stderr)) { reject(new Error(`Expression régulière invalide : ${stderr.trim().split('\n')[0]}`)); return; }
+      if (code === 2 && matches.length === 0 && /regex parse error|error parsing/i.test(stderr)) { reject(new Error(`Invalid regular expression: ${stderr.trim().split('\n')[0]}`)); return; }
       resolve({ matches, filesScanned: files.size, truncated, backend: 'ripgrep' });
     });
   });
@@ -177,7 +177,7 @@ export async function searchFiles(
   cwd: string,
   options: SearchOptions = {}
 ): Promise<SearchResult> {
-  if (!query) throw new Error('query est requis.');
+  if (!query) throw new Error('query is required.');
   const root = resolveInWorkspace(options.path || '.', cwd, options.extraDirs);
   const maxResults = Math.min(options.maxResults ?? LIMITS.searchResults, 1000);
   const rg = await findRipgrep();
@@ -194,7 +194,7 @@ export async function searchFiles(
   try {
     re = options.regex ? new RegExp(query, flags) : new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
   } catch (err: any) {
-    throw new Error(`Expression régulière invalide : ${err.message}`);
+    throw new Error(`Invalid regular expression: ${err.message}`);
   }
   const ig = await loadIgnore(cwd);
   const files = await fg(options.glob || '**/*', {
@@ -231,7 +231,7 @@ export async function searchFiles(
 }
 
 export async function globFiles(pattern: string, cwd: string, extraDirs: string[] = [], base?: string): Promise<{ files: string[]; truncated: boolean }> {
-  if (!pattern) throw new Error('pattern est requis.');
+  if (!pattern) throw new Error('pattern is required.');
   const root = resolveInWorkspace(base || '.', cwd, extraDirs);
   const ig = await loadIgnore(cwd);
   const entries = await fg(pattern, {

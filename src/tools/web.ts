@@ -32,7 +32,7 @@ export async function webFetch(
     throw new Error(`URL invalide : ${url}`);
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error(`Protocole non autorisé : ${parsed.protocol}`);
+    throw new Error(`Protocol not allowed: ${parsed.protocol}`);
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 20_000);
@@ -50,8 +50,8 @@ export async function webFetch(
     const truncated = text.length > LIMITS.webChars;
     return { content: truncated ? text.slice(0, LIMITS.webChars) + '\n… [truncated]' : text, statusCode: res.status, contentType, truncated };
   } catch (err: any) {
-    if (controller.signal.aborted) throw new Error(options.signal?.aborted ? 'Interrupted' : `Timeout en récupérant ${url}`);
-    throw new Error(`Échec de récupération de ${url}: ${err.message || String(err)}`);
+    if (controller.signal.aborted) throw new Error(options.signal?.aborted ? 'Interrupted' : `Timed out fetching ${url}`);
+    throw new Error(`Could not fetch ${url}: ${err.message || String(err)}`);
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', onAbort);

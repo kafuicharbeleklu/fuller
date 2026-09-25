@@ -53,7 +53,7 @@ Le modèle par défaut vient de `-m`, puis de `GEMINI_MODEL`, puis de `"model"` 
 - **Écran d'accueil** : bannière Fuller compacte (modèle, dossier, fichier de consignes chargé), zone de saisie en bas du terminal et mode de permission indiqué sous le prompt.
 - **Transcript style Claude Code** : `⏺` pour les réponses, `⏺ Bash(npm test)` + `⎿` pour les outils, repli `… +N lines (ctrl+o to expand)`, Markdown rendu (titres, listes, tableaux, code coloré), diffs réels avec numéros de ligne.
 - **Permissions** : classification des commandes bash (lecture / édition / exécution / danger) par analyse des segments (`&&`, `|`, `$(…)`, redirections), prompt à 3 options (`Yes` / `Yes, and don't ask again for …` / `No`, Tab pour ajouter un commentaire), règles persistées `Tool(spec)` dans `.fuller/settings.local.json`, modes `default → acceptEdits → plan → auto` (Shift+Tab ; `bypassPermissions` n'entre dans le cycle que si la session a démarré dans ce mode). En mode auto, un appel au modèle décide à la place de l'utilisateur selon des règles intégrées et les règles de `/permissions` → Auto mode ; les refus apparaissent dans Recently denied.
-- **Sécurité des outils** : confinement des chemins au workspace (symlinks résolus), refus des fichiers sensibles (`.env`, clés, `.git/`), aucune injection shell (`fetch` natif, `fast-glob`), troncature des sorties envoyées au modèle.
+- **Sécurité des outils** : hors du workspace et des dossiers ajoutés, chaque lecture, recherche ou écriture demande la permission, mode « accept edits » compris. On répond Oui (cet appel seulement), « Yes, allow reading from <dossier>/ during this session » (ou « allow all edits in » pour une écriture), ou Non. Les liens symboliques sont résolus : on autorise le vrai dossier. Les fichiers sensibles (`.env`, clés, `.git/`) restent refusés sans question. Aucune injection shell (`fetch` natif, `fast-glob`), troncature des sorties envoyées au modèle.
 - **Sessions réelles** : historique Gemini restauré (`--continue`, `--resume`), `/compact [focus]` qui réduit vraiment le contexte, auto-compaction à 85 %, jauge « Context left until auto-compact ».
 - **Mémoire projet** : `FULLER.md` (ou `AGENTS.md`, `GEMINI.md`, `CLAUDE.md`) à la racine et dans les dossiers parents, `~/.fuller/FULLER.md`, `FULLER.local.md`, imports `@chemin`.
 - **Saisie** : édition readline (Ctrl+A/E/K/U/W/Y, Alt+B/F, Ctrl+_ undo), collage replié en `[Pasted text #N +L lines]`, `@fichier` avec complétion floue, `!commande` shell, `/` avec menu, historique persistant + Ctrl+R, `\⏎` multi-ligne.
@@ -183,6 +183,8 @@ Google compte les quotas **par projet et par modèle** (requêtes et tokens par 
   "maxTurns": 50
 }
 ```
+
+Les chemins des règles `Read(...)` et `Edit(...)` sont relatifs au projet ; comme dans Claude Code, `//chemin` part de la racine du système et `~/chemin` du dossier personnel (par exemple `"deny": ["Read(~/.config/**)"]`).
 
 - Status line personnalisée (même JSON que Claude Code sur l'entrée standard : `model.id`, `workspace.current_dir`, `context_window.used_percentage`, `cost.total_tokens`, `permission_mode`…) :
 

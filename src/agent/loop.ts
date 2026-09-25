@@ -32,6 +32,7 @@ import type { ModelUsage } from './keyPool.js';
 import { quotaMessage, formatDuration } from './quotaText.js';
 import { saveUserSetting } from '../config.js';
 import { FileTracker } from '../tools/fileTracker.js';
+import { displayPath } from '../tools/paths.js';
 import { autoModePrompt, parseVerdict, type AutoVerdict } from '../permissions/autoMode.js';
 import { findImagePaths, attachmentFromFile, readAttachmentBase64, type ImageAttachment } from '../utils/imageClipboard.js';
 import type { Part } from '@google/genai';
@@ -575,6 +576,15 @@ export class AgentLoop {
   }
 
   /** Rebuild the system prompt and tools (e.g. learned memory turned on or off). */
+  /** A directory allowed "during this session" from a permission prompt: part of the workspace until Fuller exits. */
+  public addDirectory(dir: string) {
+    if (!this.config.additionalDirectories.includes(dir)) this.config.additionalDirectories.push(dir);
+    // The system prompt lists the added directories.
+    this.reloadInstructions();
+    this.callbacks.onNotice({ level: 'info', text: `Added ${displayPath(dir, this.config.workspaceDir)} to the workspace for this session` });
+    setTimeout(() => this.callbacks.onNotice(null), 4000);
+  }
+
   /**
    * Rebuild the system prompt (memory notes, instructions). During a turn the chat is not
    * rebuilt under a streaming reply, which would lose it: it happens when the turn ends.
@@ -984,10 +994,11 @@ export class AgentLoop {
     const settings = this.turnAllow.length
       ? { ...this.config.settings, permissions: { ...this.config.settings.permissions, allow: [...(this.config.settings.permissions?.allow ?? []), ...this.turnAllow] } }
       : this.config.settings;
-    const evaluation = evaluatePermission(name, args, this.config.workspaceDir, this.config.permissionMode, settings);
+    const evaluation = evaluatePermission(name, args, this.config.workspaceDir, this.config.permissionMode, settings, this.config.additionalDirectories);
     const ctx = {
       cwd: this.config.workspaceDir,
-      extraDirs: this.config.additionalDirectories,
+      // Outside the workspace: that directory is opened for this call only, once allowed (nothing runs before).
+      extraDirs: evaluation.outsideDir ? [...this.config.additionalDirectories, evaluation.outsideDir] : this.config.additionalDirectories,
       checkpointManager: this.checkpointManager,
       signal,
       bashTimeoutMs: this.config.bashTimeoutMs,
@@ -1054,7 +1065,8 @@ export class AgentLoop {
       if (decision.kind === 'yes') approvalComment = decision.feedback;
       if (decision.kind === 'always') {
         const option = evaluation.options.find((o) => o.value === 'always');
-        if (option?.switchMode) this.setPermissionMode(option.switchMode);
+        if (option?.addDirectory) this.addDirectory(option.addDirectory);
+        else if (option?.switchMode) this.setPermissionMode(option.switchMode);
         else if (decision.rule) {
           const rules = decision.rules?.length ? decision.rules : [decision.rule];
           let file = '';

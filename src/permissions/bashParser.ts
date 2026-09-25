@@ -276,17 +276,17 @@ function classifySegment(seg: CommandSegment, cwd: string, pipelineToShell: bool
 
   if (wrappers.includes('exec')) escalate('exec', 'exec');
 
-  if (DANGER_PROGRAMS.has(program)) return { risk: 'danger', reason: `${program} (privilèges / système)` };
+  if (DANGER_PROGRAMS.has(program)) return { risk: 'danger', reason: `${program} (privileges / system)` };
 
   if (program === 'rm') {
     const recursive = hasFlag(args, '-r', '-R', '--recursive');
     const targets = pathArgs(args);
     const outside = targets.some((t) => !isInsideWorkspace(t, cwd));
     const rootish = targets.some((t) => /^(\/|~|\.\.|\/\*|\*)$/.test(t.trim()) || t.startsWith('/') || t.startsWith('~'));
-    if (rootish || (recursive && outside)) return { risk: 'danger', reason: 'rm sur un chemin hors du projet ou racine' };
-    if (recursive) return { risk: 'exec', reason: 'rm récursif' };
-    if (outside) return { risk: 'exec', reason: 'rm hors du projet' };
-    return { risk: 'edit', reason: 'rm dans le projet' };
+    if (rootish || (recursive && outside)) return { risk: 'danger', reason: 'rm outside the project or on the root' };
+    if (recursive) return { risk: 'exec', reason: 'recursive rm' };
+    if (outside) return { risk: 'exec', reason: 'rm outside the project' };
+    return { risk: 'edit', reason: 'rm inside the project' };
   }
 
   if (program === 'git') {
@@ -296,7 +296,7 @@ function classifySegment(seg: CommandSegment, cwd: string, pipelineToShell: bool
     if (sub === 'reset' && rest.includes('--hard')) return { risk: 'danger', reason: 'git reset --hard' };
     if (sub === 'clean' && hasFlag(rest, '-f', '-x', '-d', '--force')) return { risk: 'danger', reason: 'git clean -f' };
     if (sub === 'branch' && hasFlag(rest, '-D')) return { risk: 'danger', reason: 'git branch -D' };
-    if ((sub === 'checkout' || sub === 'restore') && (rest.includes('.') || rest.includes('--') )) return { risk: 'danger', reason: `git ${sub} écrase des modifications locales` };
+    if ((sub === 'checkout' || sub === 'restore') && (rest.includes('.') || rest.includes('--') )) return { risk: 'danger', reason: `git ${sub} overwrites local changes` };
     if (sub === 'stash' && (rest.includes('drop') || rest.includes('clear'))) return { risk: 'danger', reason: 'git stash drop/clear' };
     if (GIT_READ.has(sub)) return { risk: 'read', reason: '' };
     if (sub === 'branch' && !rest.some((a) => !a.startsWith('-') ) && !hasFlag(rest, '-d', '-m', '-M')) return { risk: 'read', reason: '' };
@@ -309,14 +309,14 @@ function classifySegment(seg: CommandSegment, cwd: string, pipelineToShell: bool
   }
 
   if (program === 'find') {
-    if (hasFlag(args, '-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprint', '-fprintf', '-fls')) return { risk: 'exec', reason: 'find avec action' };
+    if (hasFlag(args, '-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprint', '-fprintf', '-fls')) return { risk: 'exec', reason: 'find with an action' };
     return { risk: redirects.length ? 'edit' : 'read', reason: '' };
   }
 
   if (program === 'sed' || program === 'perl') {
     if (hasFlag(args, '-i', '--in-place') || args.some((a) => /^-i/.test(a))) {
       const outside = pathArgs(args).some((t) => !/^s[/|#,]/.test(t) && !isInsideWorkspace(t, cwd));
-      return { risk: outside ? 'exec' : 'edit', reason: 'édition en place' };
+      return { risk: outside ? 'exec' : 'edit', reason: 'in-place edit' };
     }
     if (program === 'perl' && (args.includes('-e') || args.includes('-E'))) return { risk: 'exec', reason: 'perl -e' };
     return { risk: redirects.length ? 'edit' : 'read', reason: '' };
@@ -324,49 +324,49 @@ function classifySegment(seg: CommandSegment, cwd: string, pipelineToShell: bool
 
   if (program === 'awk' || program === 'gawk') {
     const script = args.join(' ');
-    if (/system\s*\(|>\s*"|\|\s*"/.test(script)) return { risk: 'exec', reason: 'awk avec effet de bord' };
+    if (/system\s*\(|>\s*"|\|\s*"/.test(script)) return { risk: 'exec', reason: 'awk with side effects' };
     return { risk: redirects.length ? 'edit' : 'read', reason: '' };
   }
 
   if (program === 'chmod' || program === 'chown' || program === 'chgrp') {
-    if (hasFlag(args, '-R', '--recursive') || args.includes('777')) return { risk: 'danger', reason: `${program} récursif / 777` };
+    if (hasFlag(args, '-R', '--recursive') || args.includes('777')) return { risk: 'danger', reason: `recursive ${program} / 777` };
     return { risk: 'exec', reason: program };
   }
 
   if (program === 'kill' || program === 'killall' || program === 'pkill') {
-    if (args.includes('-1') || args.includes('-9') && args.includes('-1')) return { risk: 'danger', reason: 'kill de tous les processus' };
+    if (args.includes('-1') || args.includes('-9') && args.includes('-1')) return { risk: 'danger', reason: 'kills every process' };
     return { risk: 'exec', reason: program };
   }
 
   if (SHELLS.has(program)) {
-    if (pipelineToShell) return { risk: 'danger', reason: 'contenu distant exécuté par un shell' };
+    if (pipelineToShell) return { risk: 'danger', reason: 'remote content run by a shell' };
     return { risk: 'exec', reason: `${program} -c` };
   }
 
   if (program === 'eval' || program === 'source' || program === '.') return { risk: 'exec', reason: program };
 
   if (program === 'curl' || program === 'wget') {
-    if (pipelineToShell) return { risk: 'danger', reason: 'téléchargement exécuté par un shell' };
+    if (pipelineToShell) return { risk: 'danger', reason: 'download run by a shell' };
     const writes = program === 'curl' ? hasFlag(args, '-o', '-O', '--output', '--remote-name') : !args.includes('-O-') && !hasFlag(args, '-qO-');
-    return { risk: writes || redirects.length ? 'exec' : 'exec', reason: 'accès réseau' };
+    return { risk: writes || redirects.length ? 'exec' : 'exec', reason: 'network access' };
   }
 
   if (EDIT_PROGRAMS.has(program)) {
     const targets = pathArgs(args);
     const outside = targets.some((t) => !isInsideWorkspace(t, cwd));
-    return { risk: outside ? 'exec' : 'edit', reason: outside ? `${program} hors du projet` : '' };
+    return { risk: outside ? 'exec' : 'edit', reason: outside ? `${program} outside the project` : '' };
   }
 
   if (READ_ONLY.has(program)) {
     if (program === 'echo' || program === 'printf' || program === 'cat' || program === 'tee') {
       if (redirects.some((r) => r.op !== '<' && r.target !== '/dev/null' && !r.target.startsWith('&'))) {
         const target = redirects.find((r) => r.op !== '<')!.target;
-        return { risk: isInsideWorkspace(target, cwd) ? 'edit' : 'exec', reason: 'redirection vers un fichier' };
+        return { risk: isInsideWorkspace(target, cwd) ? 'edit' : 'exec', reason: 'redirect to a file' };
       }
     }
     if (redirects.some((r) => (r.op === '>' || r.op === '>>' || r.op === '>|') && !r.target.startsWith('&') && r.target !== '/dev/null')) {
       const target = redirects.find((r) => r.op.startsWith('>'))!.target;
-      return { risk: isInsideWorkspace(target, cwd) ? 'edit' : 'exec', reason: 'redirection vers un fichier' };
+      return { risk: isInsideWorkspace(target, cwd) ? 'edit' : 'exec', reason: 'redirect to a file' };
     }
     return { risk, reason };
   }
@@ -419,9 +419,9 @@ export function suggestPrefix(command: string): string {
 
 export function describeRisk(risk: RiskLevel): string {
   switch (risk) {
-    case 'read': return 'lecture seule';
-    case 'edit': return 'modification de fichiers du projet';
-    case 'exec': return 'exécution';
-    case 'danger': return 'DANGEREUX';
+    case 'read': return 'read-only';
+    case 'edit': return 'edits project files';
+    case 'exec': return 'runs a program';
+    case 'danger': return 'DANGEROUS';
   }
 }

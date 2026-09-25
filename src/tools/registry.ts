@@ -310,7 +310,7 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
   switch (name) {
     case 'execute_bash': {
       const command = String(args.command ?? '');
-      if (!command.trim()) throw new Error('command est requis.');
+      if (!command.trim()) throw new Error('command is required.');
       const desktop = desktopAuthentication(command);
       if (desktop) throw new Error(`${desktop}. Run the command with plain sudo instead: Fuller asks for the password in the terminal.`);
       const timeoutMs = Math.min(Number(args.timeout) || ctx.bashTimeoutMs, 600_000);

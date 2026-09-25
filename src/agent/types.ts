@@ -94,6 +94,8 @@ export interface PermissionOption {
   rules?: string[];
   /** Switch the permission mode when chosen (e.g. acceptEdits). */
   switchMode?: PermissionMode;
+  /** Add this directory to the workspace for the session when chosen. */
+  addDirectory?: string;
 }
 
 export interface PendingConfirmation {

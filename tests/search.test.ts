@@ -38,6 +38,6 @@ describe('search_files', () => {
   });
 
   it('rejects invalid regular expressions', async () => {
-    await expect(searchFiles('(', cwd, { regex: true })).rejects.toThrow(/invalide/);
+    await expect(searchFiles('(', cwd, { regex: true })).rejects.toThrow(/Invalid regular expression/);
   });
 });

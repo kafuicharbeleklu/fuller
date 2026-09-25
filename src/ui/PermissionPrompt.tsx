@@ -95,6 +95,9 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
     : toolCall.name === 'edit_file' ? 'Edit file'
     : toolCall.name === 'write_file' ? 'Write file'
     : toolCall.name === 'web_fetch' ? 'Fetch'
+    : toolCall.name === 'read_file' || toolCall.name === 'outline_file' ? 'Read file'
+    : toolCall.name === 'list_directory' ? 'List directory'
+    : toolCall.name === 'search_files' || toolCall.name === 'glob' ? 'Search'
     : toolCall.name === 'exit_plan_mode' ? 'Ready to code?' : 'Tool use';
   const gap = !compact ? <Text> </Text> : null;
   const fileDiff = (toolCall.name === 'edit_file' || toolCall.name === 'write_file') && toolCall.diff ? toolCall.diff : undefined;
@@ -194,6 +197,10 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
       );
     }
     if (name === 'web_fetch') return <Text color={theme.text}>{String(args.url ?? '')}</Text>;
+    if (name === 'read_file' || name === 'outline_file') return <Text color={theme.text}>{String(args.file_path ?? '')}</Text>;
+    if (name === 'list_directory') return <Text color={theme.text}>{String(args.dir_path ?? '.')}</Text>;
+    if (name === 'search_files') return <Text color={theme.text}>{`"${String(args.query ?? '')}" in ${String(args.path ?? '.')}`}</Text>;
+    if (name === 'glob') return <Text color={theme.text}>{`${String(args.pattern ?? '')} in ${String(args.path ?? '.')}`}</Text>;
     return <Text color={theme.subtle}>{JSON.stringify(args).slice(0, 400)}</Text>;
   }
 };

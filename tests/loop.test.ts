@@ -418,12 +418,83 @@ describe('AgentLoop', () => {
     expect(items.filter((i) => i.kind === 'user').map((i) => i.message.content)).toEqual(['one', 'two']);
   });
 
-  it('confines file access to the workspace', async () => {
-    script = [{ functionCalls: [{ name: 'read_file', args: { file_path: '/etc/passwd' } }] }, { text: 'ok' }];
-    const { cb } = makeCallbacks();
-    const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
-    await loop.handleUserInput('leak');
-    expect(calls[1].responses[0].output).toMatch(/Accès refusé/);
+  describe('files outside the workspace', () => {
+    let outside: string;
+    beforeEach(() => {
+      outside = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-outside-'));
+      fs.writeFileSync(path.join(outside, 'a.txt'), 'OUTSIDE_A\n');
+      fs.writeFileSync(path.join(outside, 'b.txt'), 'OUTSIDE_B\n');
+    });
+    const answer = (decision: any, asked: any[]) => makeCallbacks({ onRequestConfirmation: (c) => { if (c) { asked.push(c); c.onDecide(decision); } } });
+
+    it('asks before reading there, and reads nothing on No', async () => {
+      script = [{ functionCalls: [{ name: 'read_file', args: { file_path: path.join(outside, 'a.txt') } }] }, { text: 'ok' }];
+      const asked: any[] = [];
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), answer({ kind: 'no', feedback: 'not that' }, asked).cb);
+      await loop.handleUserInput('read it');
+      expect(asked).toHaveLength(1);
+      expect(asked[0].title).toBe(`Do you want to read ${path.join(outside, 'a.txt')}?`);
+      expect(asked[0].note).toBe('Outside the working directory');
+      expect(asked[0].options.map((o: any) => o.label)).toEqual(['Yes', `Yes, allow reading from ${outside}/ during this session`, 'No']);
+      expect(calls[1].responses[0].output).toContain('declined');
+      expect(calls[1].responses[0].output).not.toContain('OUTSIDE_A');
+    });
+
+    it('reads there once on Yes, then asks again', async () => {
+      script = [
+        { functionCalls: [{ name: 'read_file', args: { file_path: path.join(outside, 'a.txt') } }] },
+        { functionCalls: [{ name: 'read_file', args: { file_path: path.join(outside, 'b.txt') } }] },
+        { text: 'ok' },
+      ];
+      const asked: any[] = [];
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      const loop = new AgentLoop(config, answer({ kind: 'yes' }, asked).cb);
+      await loop.handleUserInput('read both');
+      expect(asked).toHaveLength(2);
+      expect(calls[1].responses[0].output).toContain('OUTSIDE_A');
+      expect(calls[2].responses[0].output).toContain('OUTSIDE_B');
+      expect(config.additionalDirectories).not.toContain(outside);
+    });
+
+    it('opens the folder for the session with "allow … during this session"', async () => {
+      script = [
+        { functionCalls: [{ name: 'list_directory', args: { dir_path: outside } }] },
+        { functionCalls: [{ name: 'read_file', args: { file_path: path.join(outside, 'b.txt') } }] },
+        { text: 'ok' },
+      ];
+      const asked: any[] = [];
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      const loop = new AgentLoop(config, answer({ kind: 'always', rule: '' }, asked).cb);
+      await loop.handleUserInput('look there');
+      expect(asked).toHaveLength(1);
+      expect(asked[0].title).toBe(`Do you want to list ${outside}?`);
+      expect(config.additionalDirectories).toContain(outside);
+      expect(calls[1].responses[0].output).toContain('a.txt');
+      expect(calls[2].responses[0].output).toContain('OUTSIDE_B');
+    });
+
+    it('asks before writing there even in accept-edits mode, and writes only once allowed', async () => {
+      const target = path.join(outside, 'index.html');
+      script = [{ functionCalls: [{ name: 'write_file', args: { file_path: target, content: '<h1>hi</h1>' } }] }, { text: 'ok' }];
+      const asked: any[] = [];
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'acceptEdits' }), answer({ kind: 'yes' }, asked).cb);
+      await loop.handleUserInput('write it');
+      expect(asked).toHaveLength(1);
+      expect(asked[0].options[1].label).toBe(`Yes, allow all edits in ${outside}/ during this session`);
+      expect(fs.readFileSync(target, 'utf8')).toBe('<h1>hi</h1>');
+    });
+
+    it('still refuses sensitive files there, without asking', async () => {
+      fs.mkdirSync(path.join(outside, '.ssh'));
+      fs.writeFileSync(path.join(outside, '.ssh', 'id_rsa'), 'PRIVATE');
+      script = [{ functionCalls: [{ name: 'read_file', args: { file_path: path.join(outside, '.ssh', 'id_rsa') } }] }, { text: 'ok' }];
+      const asked: any[] = [];
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), answer({ kind: 'yes' }, asked).cb);
+      await loop.handleUserInput('read the key');
+      expect(asked).toHaveLength(0);
+      expect(calls[1].responses[0].output).toMatch(/Access denied/);
+      expect(calls[1].responses[0].output).not.toContain('PRIVATE');
+    });
   });
 
   it('tracks the task list written with todo_write and persists it in the session', async () => {

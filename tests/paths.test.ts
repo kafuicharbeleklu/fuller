@@ -37,6 +37,6 @@ describe('sensitive files', () => {
   });
   it('refuses to read them', () => {
     fs.writeFileSync(path.join(cwd, '.env'), 'KEY=1');
-    expect(() => assertReadable('.env', cwd)).toThrow(/sensible/);
+    expect(() => assertReadable('.env', cwd)).toThrow(/sensitive file/);
   });
 });

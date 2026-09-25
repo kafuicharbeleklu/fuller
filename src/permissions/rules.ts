@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { PermissionMode, PermissionOption } from '../agent/types.js';
 import type { Settings } from '../config.js';
+import { displayPath, outsidePath } from '../tools/paths.js';
 import { classifyCommand, parseSegment, splitCommand, suggestPrefix, type RiskLevel } from './bashParser.js';
 
 export interface PermissionRule {
@@ -87,6 +88,13 @@ export function ruleMatches(rule: PermissionRule, t: RuleTarget): boolean {
     }
     return t.target === spec;
   }
+  // Claude Code's path specifiers: //path from the filesystem root, ~/path from the home directory.
+  if (spec.startsWith('//') || spec.startsWith('~/')) {
+    const home = process.env.HOME || '';
+    const absolute = path.resolve(t.cwd, t.target.startsWith('~/') ? path.join(home, t.target.slice(2)) : t.target).split(path.sep).join('/');
+    const pattern = spec.startsWith('//') ? spec.slice(1) : path.join(home, spec.slice(2)).split(path.sep).join('/');
+    return globToRegExp(pattern).test(absolute);
+  }
   const rel = path.isAbsolute(t.target) ? path.relative(t.cwd, t.target) : t.target;
   const normalized = rel.split(path.sep).join('/');
   const cleanSpec = spec.replace(/^\.\//, '');
@@ -106,6 +114,35 @@ export interface Evaluation {
   danger?: string;
   /** Shown above the question, e.g. "This command requires approval" for a sudo command. */
   note?: string;
+  /** A file tool reaching outside the workspace: the directory to open for this call once allowed. */
+  outsideDir?: string;
+}
+
+const FILE_PATH_TOOLS = new Set(['read_file', 'outline_file', 'write_file', 'edit_file']);
+const DIRECTORY_TOOLS: Record<string, string> = { list_directory: 'dir_path', search_files: 'path', glob: 'path' };
+
+/**
+ * The directory a file tool would reach outside the workspace and the added directories, or
+ * undefined. Claude Code asks before reading or editing there; Fuller used to refuse, and the
+ * model then worked around it with shell commands the user could not follow.
+ */
+export function outsideDirectory(name: string, args: Record<string, any>, cwd: string, extraDirs: string[] = []): string | undefined {
+  if (FILE_PATH_TOOLS.has(name)) {
+    const file = outsidePath(args.file_path, cwd, extraDirs);
+    return file ? path.dirname(file) : undefined;
+  }
+  const key = DIRECTORY_TOOLS[name];
+  return key ? outsidePath(args[key] ?? '.', cwd, extraDirs) : undefined;
+}
+
+function outsideOptions(name: string, dir: string, cwd: string): PermissionOption[] {
+  const where = `${displayPath(dir, cwd)}/`;
+  const writes = name === 'write_file' || name === 'edit_file';
+  return [
+    { value: 'yes', label: 'Yes' },
+    { value: 'always', label: writes ? `Yes, allow all edits in ${where} during this session` : `Yes, allow reading from ${where} during this session`, addDirectory: dir },
+    { value: 'no', label: 'No' },
+  ];
 }
 
 export function toolTarget(name: string, args: Record<string, any>): string {
@@ -133,9 +170,9 @@ export function baseRisk(name: string, args: Record<string, any>, cwd: string): 
     case 'write_file': case 'edit_file':
       return { risk: 'edit', reason: '' };
     case 'web_fetch':
-      return { risk: 'exec', reason: 'accès réseau' };
+      return { risk: 'exec', reason: 'network access' };
     default:
-      return { risk: 'exec', reason: name.startsWith('mcp__') ? 'outil MCP' : 'outil inconnu' };
+      return { risk: 'exec', reason: name.startsWith('mcp__') ? 'MCP tool' : 'unknown tool' };
   }
 }
 
@@ -145,7 +182,8 @@ export function evaluatePermission(
   cwd: string,
   mode: PermissionMode,
   settings: Settings,
-  _projectName = path.basename(cwd)
+  /** Directories added to the workspace (--add-dir, /add-dir, this session's approvals). */
+  extraDirs: string[] = []
 ): Evaluation {
   const displayName = TOOL_DISPLAY[name] ?? name;
   const target = toolTarget(name, args);
@@ -159,13 +197,15 @@ export function evaluatePermission(
   const privileged = name === 'execute_bash' && risk === 'danger' && privilegedCommand(target, cwd);
   const options = buildOptions(name, args, cwd, risk, allowRules, privileged);
   const title = buildTitle(name, args);
-  const danger = risk === 'danger' && !privileged ? `Commande dangereuse : ${reason}` : undefined;
-  const note = privileged ? 'This command requires approval' : undefined;
+  const danger = risk === 'danger' && !privileged ? `Dangerous command: ${reason}` : undefined;
+  const outside = outsideDirectory(name, args, cwd, extraDirs);
+  const note = privileged ? 'This command requires approval' : outside ? 'Outside the working directory' : undefined;
   base.note = note;
+  base.outsideDir = outside;
 
   // Deny rules apply when the whole command or any subcommand matches, as in Claude Code.
   const denied = denyRules.find((r) => ruleMatches(r, ruleTarget) || (name === 'execute_bash' && bashSubcommands(target).some((sub) => ruleMatches(r, { ...ruleTarget, target: sub }))));
-  if (denied) return { ...base, decision: 'deny', matchedRule: denied.raw, options, title, danger, reason: `règle deny ${denied.raw}` };
+  if (denied) return { ...base, decision: 'deny', matchedRule: denied.raw, options, title, danger, reason: `deny rule ${denied.raw}` };
 
   // Ask rules win over allow rules and permissive modes (Claude Code: "always ask for confirmation").
   const askRules = (settings.permissions?.ask ?? []).map(parseRule).filter((r): r is PermissionRule => !!r);
@@ -182,11 +222,21 @@ export function evaluatePermission(
   if (allowed && (risk !== 'danger' || (privileged && allowed.spec === target.trim()))) return { ...base, decision: 'allow', matchedRule: allowed.raw, options, title, danger };
 
   if (mode === 'bypassPermissions') return { ...base, decision: 'allow', options, title, danger };
+  // Outside the workspace: ask first, reads included and whatever the mode (accept edits covers the project only).
+  if (outside) return { ...base, decision: 'ask', options: outsideOptions(name, outside, cwd), title: outsideTitle(name, args, cwd) ?? title, danger };
   if (risk === 'read') return { ...base, decision: 'allow', options, title, danger };
   // Auto mode lets workspace edits through like accept edits; the classifier judges the rest.
   if ((mode === 'acceptEdits' || mode === 'auto') && risk === 'edit') return { ...base, decision: 'allow', options, title, danger };
 
   return { ...base, decision: 'ask', options, title, danger };
+}
+
+function outsideTitle(name: string, args: Record<string, any>, cwd: string): string | undefined {
+  const show = (p: unknown) => displayPath(path.resolve(cwd, String(p ?? '.')), cwd);
+  if (name === 'read_file' || name === 'outline_file') return `Do you want to read ${show(args.file_path)}?`;
+  if (name === 'list_directory') return `Do you want to list ${show(args.dir_path)}?`;
+  if (name === 'search_files' || name === 'glob') return `Do you want to search ${show(args.path)}?`;
+  return undefined;
 }
 
 function buildTitle(name: string, args: Record<string, any>): string {

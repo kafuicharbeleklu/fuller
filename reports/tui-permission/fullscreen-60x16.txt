@@ -1,14 +1,14 @@
-  ██╔═══╝  Gemini 3.6 Flash · Gemini API
-  █████╗   /tmp/fuller-permission-e8hkox85
   ██╔══╝ 
   ██║    
   ╚═╝    
+
+  /model <name> switches models and keeps the conversation.
 
 
 ❯ please ask permission                                    
 
   Ran 1 shell command
-                                       ◌ minimal · /effort
+                                        ◐ medium · /effort
 ───────────────────────────────────────────────────────────
 ❯  
 ───────────────────────────────────────────────────────────

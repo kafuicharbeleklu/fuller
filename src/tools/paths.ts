@@ -37,19 +37,40 @@ function isInside(target: string, root: string): boolean {
  * for the existing part of the path so that a link cannot escape the sandbox.
  */
 export function resolveInWorkspace(p: string, cwd: string, extraDirs: string[] = []): string {
-  if (typeof p !== 'string' || p.length === 0) throw new PathAccessError('Chemin vide.');
-  if (p.includes('\0')) throw new PathAccessError('Chemin invalide.');
-  const expanded = p.startsWith('~/') ? path.join(process.env.HOME || '', p.slice(2)) : p;
-  const resolved = path.resolve(cwd, expanded);
-  const roots = [cwd, ...extraDirs].map((r) => safeRealpath(r));
-  const real = safeRealpath(resolved);
-  const ok = roots.some((r) => isInside(real, r));
-  if (!ok) {
+  if (typeof p !== 'string' || p.length === 0) throw new PathAccessError('Empty path.');
+  if (p.includes('\0')) throw new PathAccessError('Invalid path.');
+  const resolved = expandPath(p, cwd);
+  if (!insideRoots(resolved, cwd, extraDirs)) {
     throw new PathAccessError(
-      `Accès refusé : "${p}" est en dehors du répertoire de travail (${cwd}). Utilisez --add-dir pour autoriser d'autres dossiers.`
+      `Access denied: "${p}" is outside the working directory (${cwd}) and the directories added with /add-dir.`
     );
   }
   return resolved;
+}
+
+function expandPath(p: string, cwd: string): string {
+  const expanded = p === '~' ? process.env.HOME || '' : p.startsWith('~/') ? path.join(process.env.HOME || '', p.slice(2)) : p;
+  return path.resolve(cwd, expanded);
+}
+
+function insideRoots(resolved: string, cwd: string, extraDirs: string[]): boolean {
+  const real = safeRealpath(resolved);
+  return [cwd, ...extraDirs].map((r) => safeRealpath(r)).some((r) => isInside(real, r));
+}
+
+/**
+ * The absolute path when `p` lies outside the workspace and its added directories (symlinks
+ * resolved, like resolveInWorkspace), so the user can be asked; undefined inside, and for a
+ * sensitive file, which stays refused whatever the answer.
+ */
+export function outsidePath(p: unknown, cwd: string, extraDirs: string[] = []): string | undefined {
+  if (typeof p !== 'string' || !p || p.includes('\0')) return undefined;
+  const resolved = expandPath(p, cwd);
+  if (insideRoots(resolved, cwd, extraDirs)) return undefined;
+  // The real location: a link inside the project that points elsewhere is asked about as that place.
+  const real = safeRealpath(resolved);
+  if (isSensitivePath(resolved) || isSensitivePath(real)) return undefined;
+  return real;
 }
 
 /** realpath of the deepest existing ancestor, joined with the remaining segments. */
@@ -73,7 +94,7 @@ export function safeRealpath(p: string): string {
 export function assertReadable(p: string, cwd: string, extraDirs: string[] = []): string {
   const resolved = resolveInWorkspace(p, cwd, extraDirs);
   if (isSensitivePath(path.relative(cwd, resolved)) || isSensitivePath(resolved)) {
-    throw new PathAccessError(`Lecture refusée : "${p}" est un fichier sensible (secrets, clés, .git).`);
+    throw new PathAccessError(`Read refused: "${p}" is a sensitive file (secrets, keys, .git).`);
   }
   return resolved;
 }
@@ -81,7 +102,7 @@ export function assertReadable(p: string, cwd: string, extraDirs: string[] = [])
 export function assertWritable(p: string, cwd: string, extraDirs: string[] = []): string {
   const resolved = resolveInWorkspace(p, cwd, extraDirs);
   if (isSensitivePath(path.relative(cwd, resolved)) || isSensitivePath(resolved)) {
-    throw new PathAccessError(`Écriture refusée : "${p}" est un fichier sensible (secrets, clés, .git).`);
+    throw new PathAccessError(`Write refused: "${p}" is a sensitive file (secrets, keys, .git).`);
   }
   return resolved;
 }

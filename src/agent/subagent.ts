@@ -94,7 +94,7 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
         progress(`✗ ${label} — not allowed`);
         continue;
       }
-      const evaluation = evaluatePermission(call.name, call.args, config.workspaceDir, config.permissionMode, config.settings);
+      const evaluation = evaluatePermission(call.name, call.args, config.workspaceDir, config.permissionMode, config.settings, config.additionalDirectories);
       if (evaluation.decision === 'deny') {
         responses.push({ id: call.id, name: call.name, output: `Error: denied (${evaluation.reason}).` });
         progress(`✗ ${label} — denied`);
@@ -105,6 +105,9 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
         progress(`? ${label} — waiting for permission`);
         const decision = await params.askPermission(state, evaluation);
         if (decision.kind === 'yes') approvalComment = decision.feedback;
+        // "During this session": the parent shares this list, so the directory stays open for it too.
+        const addDirectory = decision.kind === 'always' ? evaluation.options.find((o) => o.value === 'always')?.addDirectory : undefined;
+        if (addDirectory && !config.additionalDirectories.includes(addDirectory)) config.additionalDirectories.push(addDirectory);
         if (decision.kind === 'no') {
           responses.push({ id: call.id, name: call.name, output: `Error: the user declined this tool call.${decision.feedback ? ` They said: "${decision.feedback}".` : ''}` });
           progress(`✗ ${label} — rejected by user`);
@@ -115,7 +118,7 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
         const out = await dispatchTool(call.name, call.args, {
           runInTerminal: params.runInTerminal,
           cwd: config.workspaceDir,
-          extraDirs: config.additionalDirectories,
+          extraDirs: evaluation.outsideDir ? [...config.additionalDirectories, evaluation.outsideDir] : config.additionalDirectories,
           checkpointManager: params.checkpointManager,
           signal,
           bashTimeoutMs: config.bashTimeoutMs,
