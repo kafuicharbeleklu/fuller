@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { render } from 'ink-testing-library';
-import { DiffPanel, diffPanelClick, panelRows } from '../src/ui/DiffPanel.js';
+import { DiffPanel, diffPanelClick, panelRows, panelSelection } from '../src/ui/DiffPanel.js';
 import { ThemeProvider, loadTheme } from '../src/ui/theme.js';
 
 const plain = (frame: string) => frame.split('\n').map((line) => line.replace(/\x1b\[[0-9;]*m/g, ''));
@@ -126,6 +126,20 @@ describe('/diff panel (Claude Code 2.1.281, 110 columns and more)', () => {
     const session = render(<ThemeProvider theme={loadTheme('dark')}><DiffPanel files={[file]} others={[]} showOthers={false} base="session" width={57} height={16} /></ThemeProvider>);
     expect(plain(session.lastFrame() || '')[1]).not.toContain('·');
     session.unmount();
+  });
+  it('turns a mouse press and release over diff lines into the selected lines of one file', () => {
+    const state = { files: [{ file: 'demo.txt', diff, additions: 3, removals: 1 }, { file: 'other.txt', diff, additions: 3, removals: 1 }], others: [], showOthers: false };
+    const { rows } = panelRows(state, 57);
+    const first = rows.findIndex((r) => r.kind === 'diff');
+    // Body rows start at panel row 2: rows[first] is on panel row first + 2.
+    const picked = panelSelection(state, 57, 40, first + 2, first + 4);
+    expect(picked).toEqual({ file: 'demo.txt', lines: [' line one', '-line two', '+line 2 changed'] });
+    // Released on the same row: one line.
+    expect(panelSelection(state, 57, 40, first + 3, first + 3)).toEqual({ file: 'demo.txt', lines: ['-line two'] });
+    // Across two files, or over the list: nothing.
+    const second = rows.findIndex((r, i) => r.kind === 'diff' && i > first + 6);
+    expect(panelSelection(state, 57, 40, first + 2, second + 2)).toBeNull();
+    expect(panelSelection(state, 57, 40, 3, 4)).toBeNull();
   });
 });
 

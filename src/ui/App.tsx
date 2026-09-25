@@ -39,7 +39,7 @@ import { transcriptLines } from './viewerText.js';
 import { readFileDiffs, isTestOrGenerated, nextDiffBase, defaultBranch, type FileDiff, type DiffBase } from './gitDiff.js';
 import { DiffViewer, turnViews, type DiffViewerData } from './DiffViewer.js';
 import { saveUserSetting, saveProjectLocalSetting } from '../config.js';
-import { DiffPanel, diffPanelClick, maxPanelScroll, type DiffPanelState } from './DiffPanel.js';
+import { DiffPanel, diffPanelClick, maxPanelScroll, panelSelection, type DiffPanelState, type PanelSelection } from './DiffPanel.js';
 import { toolLabel, toolArgSummary } from '../tools/registry.js';
 import { TodoPanel } from './TodoPanel.js';
 import { useStatusLine } from './useStatusLine.js';
@@ -244,6 +244,24 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
     setDiffPanel({ ...current, base, loading: true });
     setTimeout(() => { const now = diffPanelRef.current; if (now) setDiffPanel(loadDiffPanel(now.showOthers, 0, now.showSkipped, base) ?? now); }, 0);
   }, [config, loadDiffPanel]);
+  // Lines selected with the mouse in the panel go with the next prompt (Claude Code): the input shows
+  // "[N lines selected] " until it is sent; delete that token to send without them.
+  const [lineSelection, setLineSelection] = useState<PanelSelection | null>(null);
+  const [injected, setInjected] = useState<{ id: number; text: string } | undefined>(undefined);
+  const pressRow = useRef<number | null>(null);
+  const selectionToken = (count: number) => `[${count} line${count === 1 ? '' : 's'} selected] `;
+  const onPanelRelease = useCallback((x: number, y: number) => {
+    const current = diffPanelRef.current;
+    const from = pressRow.current;
+    pressRow.current = null;
+    if (!current || from === null) return;
+    const { left, panel } = diffPanelLayout(stdout?.columns ?? 80);
+    if (x - 1 < left) return;
+    const picked = panelSelection(current, panel, diffPanelHeight.current, from, y - 1);
+    if (!picked) return;
+    setLineSelection(picked);
+    setInjected({ id: Date.now(), text: selectionToken(picked.lines.length) });
+  }, [stdout]);
   const onToolDone = useCallback((name: string) => {
     if (!fullscreen) return;
     if (diffPanelRef.current) {
@@ -515,8 +533,18 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
 
   const onSubmit = useCallback((text: string, attachments: ImageAttachment[] = []) => {
     appendPromptHistory(config.workspaceDir, text);
-    void agentRef.current?.handleUserInput(text, 'normal', attachments.length ? { attachments } : {});
+    const options: { attachments?: ImageAttachment[]; prompt?: string } = attachments.length ? { attachments } : {};
+    const selection = lineSelectionRef.current;
+    if (selection) {
+      const token = selectionToken(selection.lines.length).trim();
+      // The token was deleted from the input: the prompt goes without the lines (Claude Code).
+      if (text.includes(token)) options.prompt = `${text.replace(token, '').trim()}\n\nSelected lines from ${selection.file} (diff panel):\n\`\`\`diff\n${selection.lines.join('\n')}\n\`\`\``;
+      setLineSelection(null);
+    }
+    void agentRef.current?.handleUserInput(text, 'normal', options);
   }, [config.workspaceDir]);
+  const lineSelectionRef = useRef<PanelSelection | null>(null);
+  lineSelectionRef.current = lineSelection;
 
   const onSendNow = useCallback((text: string, attachments: ImageAttachment[]) => {
     if (text.trim()) appendPromptHistory(config.workspaceDir, text);
@@ -856,12 +884,15 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onSwitchModel={() => setModelPickerOpen(true)}
             onSuspend={onSuspend}
             onAgents={() => setAgentsOpen(true)}
+            onMouseRelease={diffPanel ? onPanelRelease : undefined}
+            injected={injected}
             onMouseClick={diffPanel ? (x, y) => {
               const { left, panel } = diffPanelLayout(stdout?.columns ?? 80);
               const col = x - 1 - left;
               if (col < 0) return;
               const action = diffPanelClick(diffPanel, panel, measuredTranscriptHeight ?? transcriptHeight, y - 1, col);
-              if (!action) return;
+              // A press on a diff line may start a selection, ended by the release (onPanelRelease).
+              if (!action) { pressRow.current = y - 1; return; }
               if ('close' in action) { setDiffPanel(null); setDiffPreference('closed'); addSystem('Diff panel hidden', 'notice'); }
               else if ('toggle' in action) setDiffPanel(loadDiffPanel(!diffPanel.showOthers, 0, diffPanel.showSkipped, diffPanel.base) ?? diffPanel);
               else if ('toggleSkipped' in action) setDiffPanel({ ...diffPanel, showSkipped: !diffPanel.showSkipped });

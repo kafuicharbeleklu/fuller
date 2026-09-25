@@ -77,6 +77,19 @@ describe('prompt parity', () => {
     expect(screen.lastFrame()).toContain('b');
   });
 
+  it('puts an injected token in the draft once, lets Backspace delete it, and reports mouse releases', async () => {
+    const onMouseRelease = vi.fn();
+    const screen = await input({ onMouseRelease, injected: { id: 1, text: '[3 lines selected] ' } });
+    await settle();
+    expect(screen.lastFrame()).toContain('[3 lines selected]');
+    await screen.keys('why?', '\x7f\x7f\x7f\x7f');
+    await screen.keys('\x7f');
+    expect(screen.lastFrame()).toContain('[3 lines selected]');
+    expect(screen.lastFrame()).not.toContain('[3 lines selected] ');
+    await screen.keys('\x1b[<0;12;7m');
+    expect(onMouseRelease).toHaveBeenCalledWith(12, 7);
+  });
+
   it('takes the queue ahead of a draft on its first line', async () => {
     const take = vi.fn(() => ({ text: 'one\ntwo', attachments: [], bash: false }));
     const screen = await input({ queue: ['one', 'two'], onTakeQueue: take });

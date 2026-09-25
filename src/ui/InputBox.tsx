@@ -58,6 +58,10 @@ export interface InputBoxProps {
   onAgents?: () => void;
   /** A left click (1-based terminal cell), e.g. on the /diff panel. */
   onMouseClick?: (x: number, y: number) => void;
+  /** The left button released at (x, y): the end of a selection in the diff panel. */
+  onMouseRelease?: (x: number, y: number) => void;
+  /** Text the app puts into the draft at the cursor (a new `id` each time), e.g. the diff panel's "[3 lines selected] ". */
+  injected?: { id: number; text: string };
   /** Slash command usage, for the menu order. */
   commandUsage?: CommandUsage;
   onStateChange?: (state: { empty: boolean; bashMode: boolean; menuOpen: boolean; hint?: string; multiline?: boolean; killed?: boolean; stashed?: boolean; searching?: boolean }) => void;
@@ -83,7 +87,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const {
     isActive, busy, queue, history: initialHistory, allHistory = initialHistory, sessionHistory = [], fullscreen = false, cwd, commands, showHelp, compactEmpty = false, placeholder,
     onSubmit, onCommand, onBash, onInterrupt, onExit, onCycleMode, onClearScreen,
-    onToggleVerbose, onToggleHelp, onToggleTodos, onOpenDiff, onCycleDiffBase, onScrollTranscript, onDoubleEscape, onPopQueue, onStateChange, onSwitchModel, onSuspend, onAgents, onMouseClick, commandUsage = {}, onSendNow, onBackground, onTakeQueue,
+    onToggleVerbose, onToggleHelp, onToggleTodos, onOpenDiff, onCycleDiffBase, onScrollTranscript, onDoubleEscape, onPopQueue, onStateChange, onSwitchModel, onSuspend, onAgents, onMouseClick, onMouseRelease, injected, commandUsage = {}, onSendNow, onBackground, onTakeQueue,
   } = props;
 
   const ed = useRef<EditorState>({ text: '', cursor: 0 });
@@ -195,6 +199,12 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
     set(t.slice(0, c) + s + t.slice(c), c + s.length);
     historyIndex.current = -1;
   };
+  const injectedId = useRef(0);
+  useEffect(() => {
+    if (!injected || injected.id === injectedId.current) return;
+    injectedId.current = injected.id;
+    if (!ed.current.text.includes(injected.text)) insert(injected.text);
+  }, [injected]);
   const prevCp = previousGrapheme;
   const nextCp = nextGrapheme;
   const backspace = () => {
@@ -480,6 +490,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
       if (e.mouse?.button === 64) onScrollTranscript?.('lineUp', e.mouse.x, e.mouse.y);
       if (e.mouse?.button === 65) onScrollTranscript?.('lineDown', e.mouse.x, e.mouse.y);
       if (e.mouse?.button === 0 && !e.mouse.release) onMouseClick?.(e.mouse.x, e.mouse.y);
+      if (e.mouse?.button === 0 && e.mouse.release) onMouseRelease?.(e.mouse.x, e.mouse.y);
       return;
     }
     const key = keyString(e);

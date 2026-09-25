@@ -57,7 +57,7 @@ type Row =
   | { kind: 'rule' }
   | { kind: 'title'; text: string }
   | { kind: 'note'; text: string }
-  | { kind: 'diff'; line: DiffRowLine; numberWidth: number }
+  | { kind: 'diff'; line: DiffRowLine; numberWidth: number; file: string }
   | { kind: 'more'; hidden: number };
 
 /**
@@ -82,7 +82,7 @@ export function panelRows(state: DiffPanelState, width: number): { rows: Row[]; 
         for (const text of wrapAnsi(`Run \`git add :/${f.file}\` to see line counts.`, inner, { hard: true }).split('\n')) rows.push({ kind: 'note', text });
       } else {
         const { rows: lines, hidden, numberWidth } = diffRows(f.diff);
-        for (const line of lines) rows.push({ kind: 'diff', line, numberWidth });
+        for (const line of lines) rows.push({ kind: 'diff', line, numberWidth, file: f.file });
         if (hidden) rows.push({ kind: 'more', hidden });
       }
     });
@@ -220,3 +220,21 @@ export const DiffPanel: React.FC<Props> = (props) => {
     </Box>
   );
 };
+
+/** The diff lines between two panel rows (a mouse press and its release), when both are in one file's diff. */
+export interface PanelSelection {
+  file: string;
+  /** The selected lines as they read in the diff: "+", "-" or " " then the text. */
+  lines: string[];
+}
+
+export function panelSelection(state: DiffPanelState, width: number, height: number, pressRow: number, releaseRow: number): PanelSelection | null {
+  const { rows } = panelRows(state, width);
+  const index = (row: number) => (state.scroll ?? 0) + row - TOP;
+  const [from, to] = [index(pressRow), index(releaseRow)].sort((a, b) => a - b);
+  if (pressRow < TOP || releaseRow < TOP || pressRow >= height - BOTTOM || releaseRow >= height - BOTTOM || from < 0 || to >= rows.length) return null;
+  const picked = rows.slice(from, to + 1).filter((r): r is Extract<Row, { kind: 'diff' }> => r.kind === 'diff');
+  if (!picked.length || picked.some((r) => r.file !== picked[0].file)) return null;
+  const lines = picked.flatMap((r) => (r.line.type === 'sep' ? [] : [`${r.line.type === 'add' ? '+' : r.line.type === 'del' ? '-' : ' '}${r.line.text}`]));
+  return lines.length ? { file: picked[0].file, lines } : null;
+}
