@@ -1,0 +1,43 @@
+{
+  "summary": {
+    "model": "gemini-3.6-flash",
+    "date": "2026-09-25T10:54:34.940Z",
+    "passed": 2,
+    "runs": 2,
+    "apiErrors": 0,
+    "rate": 1,
+    "tokens": 88956,
+    "promptTokens": 86408,
+    "cachedTokens": 0,
+    "durationMs": 59654,
+    "toolCalls": 18
+  },
+  "rows": [
+    {
+      "task": "add-cli-flag",
+      "run": 1,
+      "pass": true,
+      "status": "pass",
+      "durationMs": 26319,
+      "tokens": 47505,
+      "promptTokens": 45840,
+      "cachedTokens": 0,
+      "toolCalls": 10,
+      "checks": [],
+      "modelUsed": "gemini-3.6-flash"
+    },
+    {
+      "task": "fix-off-by-one",
+      "run": 1,
+      "pass": true,
+      "status": "pass",
+      "durationMs": 33335,
+      "tokens": 41451,
+      "promptTokens": 40568,
+      "cachedTokens": 0,
+      "toolCalls": 8,
+      "checks": [],
+      "modelUsed": "gemini-3.6-flash"
+    }
+  ]
+}

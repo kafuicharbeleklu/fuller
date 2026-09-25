@@ -52,17 +52,20 @@ describe('picker overlays', () => {
     screen.stdin.write('\x1b[H');
     await vi.waitFor(() => expect(screen.lastFrame()).toContain('❯ 1. Gemini 3.8 Flash'));
     screen.stdin.write('s');
-    expect(onSelect).toHaveBeenCalledWith(models[0], 'session', 'medium');
+    // Flash thinks at its highest level by default (quality over speed).
+    expect(onSelect).toHaveBeenCalledWith(models[0], 'session', 'high');
     screen.stdin.write('\r');
-    expect(onSelect).toHaveBeenLastCalledWith(models[0], 'default', 'medium');
+    expect(onSelect).toHaveBeenLastCalledWith(models[0], 'default', 'high');
     screen.unmount();
   });
 
   it('adjusts supported Gemini thinking levels with Left and Right', async () => {
     const onSelect = vi.fn();
     const screen = render(wrap(<ModelPicker apiKey="test" current="gemini-3.8-flash" onSelect={onSelect} onCancel={() => {}} />));
-    await vi.waitFor(() => expect(screen.lastFrame()).toContain('◐ Medium effort (default) ←/→ to adjust'));
+    await vi.waitFor(() => expect(screen.lastFrame()).toContain('● High effort (default) ←/→ to adjust'));
     await new Promise((resolve) => setImmediate(resolve));
+    screen.stdin.write('\x1b[D');
+    await vi.waitFor(() => expect(screen.lastFrame()).toContain('◐ Medium effort ←/→ to adjust'));
     screen.stdin.write('\x1b[D');
     await vi.waitFor(() => expect(screen.lastFrame()).toContain('○ Low effort ←/→ to adjust'));
     screen.stdin.write('\r');
@@ -72,9 +75,11 @@ describe('picker overlays', () => {
 
   it('wraps effort levels around like Claude Code and keeps the level across models', async () => {
     const onSelect = vi.fn();
-    const screen = render(wrap(<ModelPicker apiKey="test" current="gemini-3.8-flash" thinkingLevel="high" onSelect={onSelect} onCancel={() => {}} />));
-    await vi.waitFor(() => expect(screen.lastFrame()).toContain('● High effort ←/→ to adjust'));
+    const screen = render(wrap(<ModelPicker apiKey="test" current="gemini-3.8-flash" thinkingLevel="medium" onSelect={onSelect} onCancel={() => {}} />));
+    await vi.waitFor(() => expect(screen.lastFrame()).toContain('◐ Medium effort ←/→ to adjust'));
     await new Promise((resolve) => setImmediate(resolve));
+    screen.stdin.write('\x1b[C');
+    await vi.waitFor(() => expect(screen.lastFrame()).toContain('● High effort (default)'));
     screen.stdin.write('\x1b[C');
     await vi.waitFor(() => expect(screen.lastFrame()).toContain('○ Low effort'));
     screen.stdin.write('\x1b[D');

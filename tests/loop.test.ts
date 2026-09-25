@@ -21,6 +21,7 @@ vi.mock('../src/agent/gemini.js', () => {
     refresh() { refreshes++; }
     getHistory() { return []; }
     repairHistory() { calls.push({ kind: 'repair' }); }
+    pruneHistory() { return { pruned: 0, chars: 0 }; }
     resetWithSummary() {}
     switchModel() {}
     chainMinWindow() { return 1_048_576; }

@@ -24,7 +24,7 @@ let loaded: TS | null | undefined;
  * the project's code from a read-only tool (a hostile repository could ship its own
  * node_modules/typescript). Without it, the pattern outline below is used.
  */
-function loadTypeScript(): TS | null {
+export function loadTypeScript(): TS | null {
   if (loaded !== undefined) return loaded;
   try { loaded = createRequire(import.meta.url)('typescript') as TS; } catch { loaded = null; }
   return loaded;

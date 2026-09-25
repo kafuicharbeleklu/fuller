@@ -67,6 +67,8 @@ export async function runHeadless(config: AppConfig, prompt: string, format: Out
       total_tokens: agent.usage.cumulativeTokens, api_calls: agent.usage.apiCalls, turns: agent.usage.turns,
       // Prompt tokens sent, and the part served by Gemini's implicit cache.
       prompt_tokens: agent.usage.cumulativePromptTokens ?? 0, cached_tokens: agent.usage.cumulativeCachedTokens ?? 0,
+      // Old tool outputs cleared from the conversation (context pruning), and their weight in characters.
+      pruned_outputs: agent.usage.prunedOutputs ?? 0, pruned_chars: agent.usage.prunedChars ?? 0,
     },
     duration_ms: Date.now() - started,
     is_error: errored,

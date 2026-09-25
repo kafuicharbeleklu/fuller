@@ -806,6 +806,7 @@ export class AgentLoop {
         }
         message = [{ text: enriched }, ...imageParts];
       }
+      this.pruneContext();
       let turn = await this.session.sendUserMessage(message, streamOptions);
       for (;;) {
         batcher.flush();
@@ -900,6 +901,7 @@ export class AgentLoop {
         if (signal.aborted) throw new Error('Interrupted');
         this.callbacks.onStatusChange('thinking');
         // Stopping: the model answers in text, it may not call tools again.
+        this.pruneContext();
         turn = await this.session.sendToolResponses(responses, stopping ? { ...streamOptions, noTools: true } : streamOptions);
       }
       assistant.content = assistant.parts!.filter((p) => p.type === 'text').map((p: any) => p.content).join('\n\n');
@@ -968,6 +970,20 @@ export class AgentLoop {
       return;
     }
     this.processQueue();
+  }
+
+  /**
+   * Old long tool outputs leave the conversation before the next request (see contextPruning.ts);
+   * they are kept on disk under the session's outputs. `/config` → "Clear old tool output".
+   */
+  private pruneContext(): void {
+    if (this.config.settings.contextPruning === false) return;
+    const saveDir = path.join(sessionsDir(this.config.workspaceDir), 'outputs', this.sessionId, 'context');
+    const result = this.session.pruneHistory({ saveDir });
+    if (result.pruned === 0) return;
+    this.usage.prunedOutputs = (this.usage.prunedOutputs ?? 0) + result.pruned;
+    this.usage.prunedChars = (this.usage.prunedChars ?? 0) + result.chars;
+    this.callbacks.onUsage(this.usage);
   }
 
   private async executeCall(
@@ -1215,6 +1231,7 @@ export class AgentLoop {
         background: this.background,
         runInTerminal: this.callbacks.runInTerminal,
         messageId,
+        contextDir: path.join(sessionsDir(this.config.workspaceDir), 'outputs', this.sessionId, 'context', state.id),
       });
       const summary = `Done · ${result.toolCount} tool use${result.toolCount === 1 ? '' : 's'} · ${result.turns} turn${result.turns === 1 ? '' : 's'} · ${result.tokens.toLocaleString('en-US')} tokens`;
       update({ status: 'completed', result: result.text, summary, endTime: Date.now() });
@@ -1463,6 +1480,7 @@ export class AgentLoop {
       checkpointManager: this.checkpointManager,
       background: this.background,
       runInTerminal: this.callbacks.runInTerminal,
+      contextDir: path.join(sessionsDir(this.config.workspaceDir), 'outputs', this.sessionId, 'context', id),
     }).then((result) => {
       settle({ status: 'completed', report: result.text });
       if (!fork) return;

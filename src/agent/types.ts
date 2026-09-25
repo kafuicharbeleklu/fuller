@@ -121,6 +121,9 @@ export interface UsageInfo {
   /** Prompt tokens sent over the session, and how many of them Gemini's cache served. */
   cumulativePromptTokens?: number;
   cumulativeCachedTokens?: number;
+  /** Old tool outputs cleared from the conversation this session, and the characters they weighed. */
+  prunedOutputs?: number;
+  prunedChars?: number;
 }
 
 export type TranscriptItem =

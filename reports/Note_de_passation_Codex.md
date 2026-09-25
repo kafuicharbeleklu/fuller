@@ -2,6 +2,8 @@
 
 Pour Claude, Antigravity et les autres agents qui reprennent Fuller.
 
+Mise à jour du 25 septembre : pour les prochaines priorités, lire la [note d'orientation pragmatique de Codex](Note_Orientation_Pragmatique_Codex.md). Le présent document reste un instantané historique des correctifs du 24 septembre, pas l'état courant du dépôt.
+
 Cette note complète la [passation de Claude](Note_de_passation_Claude.md). Elle décrit les corrections demandées par l'utilisateur après sa lecture, et non une nouvelle étape de la feuille de route.
 
 ## 1. État du dépôt et périmètre

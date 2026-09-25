@@ -87,3 +87,26 @@ Voir [Comparaison_trois_recherches_Claude.md](Comparaison_trois_recherches_Claud
 ## Ordre conseillé
 
 Étape 0, puis 1 → 2 → 3, en mesurant après chaque lot. Les éléments 1, 2, 6, 8 et 10 sont ceux qui ont les gains mesurés les plus nets pour l'effort.
+
+## État au 25/09 — orientation et lots 3 et 4 (partie centrale)
+
+**Constat qui a décidé de l'ordre** : Fuller n'avait presque jamais servi pour de vrai (66 prompts distincts dans `~/.fuller/history.jsonl`, presque tous hors code ; plus grosse session : 8 messages ; aucune note apprise ; aucun rappel du lot 2 déclenché en réel). Le banc de 8 tâches passe à 100 % et un passage épuise le quota gratuit du jour : il ne peut pas départager deux versions. Décision : ne plus conditionner chaque lot à une mesure impossible ; construire ce que les trois recherches recommandent, garder le banc comme test de fumée (8/8), et tirer les prochaines tâches de l'usage réel de Fuller sur Fuller. Ne pas remplacer le moteur (proposition de comparaison avec Gemini CLI via ACP ou le Claude Agent SDK) : tout le reste de Fuller est branché sur la boucle actuelle. Geler les heuristiques de `taskState.ts` tant qu'un vrai faux « terminé » ne justifie pas une retouche.
+
+**Livré** :
+
+| Mesure | Code | Comportement |
+|---|---|---|
+| 6 — Masquage récupérable des vieilles sorties d'outils | `src/agent/contextPruning.ts`, `GeminiAgentSession.pruneHistory`, `AgentLoop.pruneContext` (avant chaque requête), sous-agents aussi | Les 3 derniers lots de résultats restent intacts ; au-delà, dès que les sorties anciennes de plus de 1 500 caractères pèsent 40 000 caractères, elles sont toutes remplacées d'un coup par un marqueur (appel d'origine, nombre de lignes, première ligne, chemin de la sortie sauvegardée pour les commandes). Un seul changement de préfixe, donc le cache implicite tient. Appels, identifiants et signatures de réflexion inchangés. `/stats` → « Cleared tool output », `/config` → « Clear old tool output », `pruned_outputs` et `pruned_chars` dans le JSON de `-p`. |
+| 11 — Contrôle syntaxique après édition | `src/tools/syntaxCheck.ts`, `write_file` et `edit_file` dans `src/tools/registry.ts` | JSON (`JSON.parse`, JSONC pour `tsconfig*`, `jsconfig*`, `.vscode/`, `*.jsonc`, `devcontainer.json`), JS/TS (analyseur TypeScript de Fuller, jamais celui du projet), Python (`ast.parse` dans un `python3`, 5 s). Première erreur avec sa ligne, dans le résultat de l'outil ; fichier écrit tel quel, pas de restauration. |
+| 8 — Erreurs d'édition utiles | `src/tools/fileOps.ts` (`previewEdit`) | Correspondance ligne à ligne sans indentation ni espaces de fin, appliquée seulement si unique, remplacement ré-indenté comme le fichier ; sinon lignes candidates (celles qui ressemblent à la première ligne cible) ; refus des remplacements à trous (« ... rest of the code ») ; messages en anglais. Pas de correspondance floue. |
+| Réflexion | `src/agent/thinking.ts` | Flash 3.5 à 3.8 : `high` par défaut (qualité avant vitesse, choix de l'équipe). Un réglage `thinkingLevel` déjà enregistré dans `~/.fuller/settings.json` garde sa valeur : relancer `/model` ou `/effort` pour passer à `high`. |
+
+**Vérifications** : `npm run typecheck`, 480 tests (dont `tests/contextPruning.test.ts`, `tests/syntaxCheck.test.ts`, `tests/fileOps.test.ts`), `npm run build`, `--baseline` 8/8, `--verify-solutions` 8/8, `tui-smoke.py` 11/11.
+
+**En réel** (Gemini 3.8 Flash, `-p`, six `read_file` successifs sur les plus gros fichiers de Fuller) : 7 appels, 350 634 tokens de prompt dont **192 102 servis par le cache (55 %)**, 1 sortie effacée (`loop.ts`, 85 042 caractères) avant la cinquième requête ; réponse finale correcte. Banc : `add-cli-flag` et `fix-off-by-one` réussis sur Gemini 3.6 Flash avec le nouveau harnais (`evals/results/2026-09-25-10-53-gemini-3.6-flash.json`). Le « cache 0 % » du 24/09 était une mesure vraie sur les tâches courtes du banc (moins de 4 096 tokens par appel) ; la généralisation « le cache ne marche pas » était fausse : sur une vraie session, il fonctionne dès le deuxième appel. Non mesuré : l'effet sur le taux de réussite (il faut des sessions réelles longues).
+
+**Décision qui reste à prendre** : un seul projet Google facturé (Tier 1) à la place des 21 clés gratuites (6 déjà refusées). Un passage du banc coûte bien moins d'un euro ; cela supprime l'ordonnanceur de clés comme moyen de contourner les quotas, le risque de 403 et le blocage de la mesure.
+
+**Après la revue croisée dans `chat/` (25/09, 11:10 UTC)** : sortie de commande effacée seulement si archivée (sinon gardée ; plus d'invitation à relancer un effet de bord), `contextDir` pour les sous-agents, contrôle de syntaxe différentiel (erreur préexistante non reprochée). Accords à trois : moteur conservé, `taskState.ts` gelé, pas de nouveau mécanisme sans échec réel, gains d'autres produits présentés comme hypothèses.
+
+**Session longue réelle (25/09, K003 dans `chat/`)** : masquage validé sur 70 appels (20 effacements, aucune erreur d'API liée, reprise `--continue` correcte). Deux défauts trouvés et corrigés, tous deux dus au découpage `[functionCall]`/`[text]` de l'historique curé du SDK : `sanitizeHistory()` (appel orphelin possible après interruption) et `findCall()` du masquage. Décision ouverte : `maxTurns` = 50 est trop bas pour une tâche réelle (70 appels ici).

@@ -187,6 +187,11 @@ function configItems(ctx: CommandContext): ConfigItem[] {
       onChange: (value) => { ctx.config.settings.verifyWork = value === 'true'; saveUserSetting(['verifyWork'], value === 'true'); },
     },
     {
+      label: 'Clear old tool output', value: bool(ctx.config.settings.contextPruning !== false), options: ['true', 'false'],
+      description: 'Long tool outputs from earlier rounds leave the conversation sent to the model (they stay on disk); fewer tokens, steadier attention',
+      onChange: (value) => { ctx.config.settings.contextPruning = value === 'true'; saveUserSetting(['contextPruning'], value === 'true'); },
+    },
+    {
       label: 'Review changes', value: ctx.config.settings.reviewChanges ?? 'risky', options: ['risky', 'always', 'off'],
       description: 'A second agent reads the changes before the model concludes: large changes only, every change, or never',
       onChange: (value) => { ctx.config.settings.reviewChanges = value as 'risky' | 'always' | 'off'; saveUserSetting(['reviewChanges'], value); },
@@ -245,6 +250,8 @@ function settingsRows(ctx: CommandContext): { status: InfoRow[]; usage: InfoRow[
       { label: 'API calls', value: `${u.apiCalls} · ${u.turns} tool turns` },
       // Gemini's implicit cache: share of the prompt tokens it served (a stable prompt start raises it).
       { label: 'Cached prompt', value: u.cumulativePromptTokens ? `${Math.round(((u.cumulativeCachedTokens ?? 0) / u.cumulativePromptTokens) * 100)}% · ${(u.cumulativeCachedTokens ?? 0).toLocaleString('en-US')} of ${u.cumulativePromptTokens.toLocaleString('en-US')} tokens` : undefined, placeholder: 'no request yet' },
+      // Old tool outputs cleared from the conversation (context pruning), roughly in tokens.
+      { label: 'Cleared tool output', value: u.prunedOutputs ? `${u.prunedOutputs} output${u.prunedOutputs === 1 ? '' : 's'} · ~${Math.round((u.prunedChars ?? 0) / 4).toLocaleString('en-US')} tokens` : undefined, placeholder: 'nothing yet' },
       { label: 'Total duration', value: fmtDuration(Date.now() - ctx.startedAt) },
       { label: 'Pricing', value: `https://ai.google.dev/pricing (${ctx.config.model})` },
     ],

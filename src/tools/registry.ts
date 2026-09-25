@@ -4,6 +4,7 @@ import { desktopAuthentication, needsNativeTerminal, type RunInTerminal } from '
 import { readFile, writeFile, editFile, previewEdit, previewWrite } from './fileOps.js';
 import { listDirectory, searchFiles, globFiles, formatSearchOutput } from './search.js';
 import { outlineFile } from './outline.js';
+import { checkSyntax, syntaxWarning } from './syntaxCheck.js';
 import { webFetch } from './web.js';
 import { resolveInWorkspace } from './paths.js';
 import type { FileTracker } from './fileTracker.js';
@@ -286,6 +287,19 @@ function guardWrite(filePath: unknown, ctx: ToolContext): string {
   return full;
 }
 
+/**
+ * Differential syntax check: only an error the edit introduced is reported. An error that was
+ * already there (same message) before the edit is the model's or the user's business, not
+ * a consequence of this call (Codex, C001).
+ */
+async function newSyntaxWarning(file: string, previous: string, current: string): Promise<string> {
+  const after = await checkSyntax(file, current);
+  if (!after) return '';
+  const before = previous ? await checkSyntax(file, previous) : null;
+  if (before && before.message === after.message) return '';
+  return syntaxWarning(after);
+}
+
 /** Compute a preview (diff) before asking for permission, without side effects. */
 export async function previewTool(name: string, args: Record<string, any>, ctx: ToolContext): Promise<{ diff?: string; error?: string }> {
   try {
@@ -379,16 +393,20 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
 
     case 'write_file': {
       const full = guardWrite(args.file_path, ctx);
-      const r = await writeFile(args.file_path, String(args.content ?? ''), fileCtx);
+      const content = String(args.content ?? '');
+      const r = await writeFile(args.file_path, content, fileCtx);
       ctx.fileTracker?.record(full);
-      return { output: `${r.summary} (${formatBytes(r.bytesWritten)}).`, summary: r.summary, diff: r.diff };
+      // The file is written as asked; a syntax error is reported right away, not rolled back.
+      const warning = await newSyntaxWarning(full, r.previous, content);
+      return { output: `${r.summary} (${formatBytes(r.bytesWritten)}).${warning}`, summary: warning ? `${r.summary} · syntax error` : r.summary, diff: r.diff };
     }
 
     case 'edit_file': {
       const full = guardWrite(args.file_path, ctx);
       const r = await editFile(args.file_path, args.target_content, args.replacement_content, fileCtx, !!args.replace_all);
       ctx.fileTracker?.record(full);
-      return { output: r.message, summary: r.summary, diff: r.diff };
+      const warning = await newSyntaxWarning(full, r.previous, r.updated);
+      return { output: `${r.message}${warning}`, summary: warning ? `${r.summary} · syntax error` : r.summary, diff: r.diff };
     }
 
     case 'list_directory': {

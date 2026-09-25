@@ -8,6 +8,7 @@ import type { AppConfig } from '../config.js';
 import type { SkillDefinition } from '../skills/loader.js';
 import type { SubagentDefinition } from './subagents.js';
 import { effectiveThinkingLevel, supportedThinkingLevels, type ThinkingLevelSetting } from './thinking.js';
+import { pruneToolOutputs, type PruneOptions } from './contextPruning.js';
 
 export interface FunctionCallInfo {
   id?: string;
@@ -341,6 +342,20 @@ export class GeminiAgentSession {
     this.initChat(history);
   }
 
+  /**
+   * Clear old long tool outputs from the conversation (see contextPruning.ts). Never under a
+   * reply in flight: the history read now would miss that exchange. Nothing is sent to the API.
+   */
+  public pruneHistory(options: PruneOptions = {}): { pruned: number; chars: number } {
+    if (this.streaming > 0) return { pruned: 0, chars: 0 };
+    const result = pruneToolOutputs(this.getHistory(), options);
+    if (result.pruned > 0) {
+      this.initChat(result.history);
+      this.lastPromptTokens = 0;
+    }
+    return { pruned: result.pruned, chars: result.chars };
+  }
+
   /** Drop trailing model function calls that never received a response (after an interruption). */
   public repairHistory() {
     this.initChat(sanitizeHistory(this.getHistory()));
@@ -549,16 +564,34 @@ export function adaptHistoryForModel(history: Content[], model: string): Content
   return history;
 }
 
-/** Make sure a stored history is acceptable for chats.create (starts with a user turn, no dangling calls). */
+/** Index where the run of model contents ending at `end` (exclusive) starts. */
+function modelGroupStart(history: Content[], end: number): number {
+  let start = end;
+  while (start > 0 && history[start - 1].role === 'model') start--;
+  return start;
+}
+
+/**
+ * Make sure a stored history is acceptable for chats.create (starts with a user turn, no
+ * dangling calls). The SDK's curated history can split one model turn into several contents
+ * (the calls, then the text): a trailing model group is judged as a whole, and the calls a
+ * response answers are looked for in the whole group before it (real session, 25/09/2026:
+ * the single-content version left a call unanswered after an interruption).
+ */
 export function sanitizeHistory(history: Content[]): Content[] {
   const cleaned = history.filter((c) => c && (c.role === 'user' || c.role === 'model') && Array.isArray(c.parts) && c.parts.length > 0);
   while (cleaned.length && cleaned[0].role !== 'user') cleaned.shift();
   while (cleaned.length) {
     const last = cleaned[cleaned.length - 1];
-    if (last.role === 'model' && last.parts?.some((p) => p.functionCall)) { cleaned.pop(); continue; }
+    if (last.role === 'model') {
+      // A trailing model group with a call has no response: the whole group goes.
+      const start = modelGroupStart(cleaned, cleaned.length - 1);
+      if (cleaned.slice(start).some((c) => c.parts?.some((p) => p.functionCall))) { cleaned.splice(start); continue; }
+      break;
+    }
     if (last.role === 'user' && last.parts?.some((p) => p.functionResponse)) {
-      const previous = cleaned[cleaned.length - 2];
-      const calls = previous?.role === 'model' ? (previous.parts ?? []).flatMap((p) => p.functionCall ? [p.functionCall] : []) : [];
+      const start = modelGroupStart(cleaned, cleaned.length - 1);
+      const calls = cleaned.slice(start, cleaned.length - 1).flatMap((c) => (c.parts ?? []).flatMap((p) => p.functionCall ? [p.functionCall] : []));
       const responses = (last.parts ?? []).flatMap((p) => p.functionResponse ? [p.functionResponse] : []);
       // Keep complete tool exchanges, including their opaque thought signatures.
       // Match each response once: two same-name calls still need two distinct responses.

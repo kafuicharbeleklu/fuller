@@ -140,3 +140,74 @@ Signalé par une session de l'utilisateur : à « crée un fichier HTML sur mon 
   - la sélection de lignes à la souris envoyée au prompt ;
   - la visionneuse du mode classique à la manière de Claude Code (vue « Current » et vues par tour, liste, Entrée pour ouvrir un fichier).
 - **Vérifications** : 463 tests, dont `tests/mcpApproval.test.tsx`, `tests/diffPanel.test.tsx` et `tests/diffPanelAuto.test.tsx` (la vraie App, 144, 110 et fermé). Essais en PTY pour la question MCP : refus puis rien au lancement suivant, approbation qui démarre le serveur. La suite de fumée PTY échouait sur un redimensionnement, la charge étant à 12 sur 8 cœurs à cause d'autres sessions.
+
+## 13. Mise à jour du 25/09 — orientation « droit au but » et lots 3-4 (partie centrale)
+
+Pour Codex, Antigravity et les autres agents. Changements dans l'arbre de travail au-dessus de `6f78c5d`, **non commités** au moment d'écrire (l'utilisateur décide du commit). Le détail et les mesures sont dans la section « État au 25/09 » de [plan-efficacite-agent.md](plan-efficacite-agent.md).
+
+### A. Ce que l'utilisateur a demandé, et la lecture que j'en fais
+
+L'utilisateur a rappelé l'objectif (améliorer le fonctionnement, l'efficacité, l'apprentissage et le raisonnement de l'agent) et demandé qu'on signale franchement toute route sans issue, comme Gemini l'avait fait en recommandant React à la place de Python/Rich. Ce que j'ai constaté avant de répondre :
+
+- **Fuller n'a presque jamais servi pour de vrai** : 66 prompts distincts dans `~/.fuller/history.jsonl`, presque tous hors code (« hello », « install vscode », « mon VPN est actif ? ») ; plus grosse session : 8 messages ; aucun `MEMORY.md` appris n'existe ; aucun rappel du lot 2 déclenché en réel. Toute l'ingénierie « efficacité » a été construite d'après des lectures, pas d'après des échecs observés.
+- Le banc (8 tâches faciles, 100 % de réussite, un passage épuise le quota gratuit du jour) **ne peut pas départager deux versions**. En faire la porte de chaque lot mène à des notes « pas encore mesuré » sans fin.
+- Les trois notes d'orientation (Claude, Codex, Antigravity) sont d'accord sur le fond. Un tour de recherche ou de comparaison de plus ne produit que des désaccords d'ordre.
+
+Décisions prises avec l'utilisateur, à respecter par les agents suivants :
+
+1. **Construire d'abord, mesurer sur l'usage réel.** Le banc reste un test de fumée (`--baseline` 8/8, `--verify-solutions` 8/8, et un ou deux passages réels quand le quota le permet). Les prochaines tâches du banc viennent de vrais échecs de Fuller utilisé sur Fuller lui-même, pas de la littérature.
+2. **Ne pas remplacer le moteur.** La comparaison avec Gemini CLI via ACP ou le Claude Agent SDK ([Note_Orientation_Pragmatique_Codex.md](Note_Orientation_Pragmatique_Codex.md), §2) est écartée : permissions, mode plan, hooks, MCP, sous-agents, sessions, panneau /diff, tout est branché sur `src/agent/loop.ts`. Ce serait un troisième départ à zéro.
+3. **Geler les heuristiques de `src/agent/taskState.ts`** (reconnaissance des contrôles, `checkStatus`, `passedAt`). Trois agents l'ont déjà rapiécé ; en réel il n'a jamais rien déclenché. On n'y touche qu'à partir d'un vrai faux « terminé » observé. La règle 4 du prompt système fait le vrai travail.
+4. **Ne pas étendre l'ordonnanceur de clés gratuites.** La recommandation est un seul projet Google facturé (Tier 1) ; c'est la décision de l'utilisateur, pas encore prise. Ne pas ajouter de clés ni de logique de contournement.
+5. **Pas de nouveau mécanisme** (mémoire vectorielle, essaims d'agents, correspondance floue, méta-réflexion) tant qu'un échec réel ne le justifie pas.
+
+### B. Ce qui est livré
+
+| Mesure du plan | Fichiers | Comportement |
+|---|---|---|
+| 6 — Masquage récupérable des vieilles sorties d'outils | `src/agent/contextPruning.ts` (fonction pure `pruneToolOutputs`), `GeminiAgentSession.pruneHistory` (`src/agent/gemini.ts`), `AgentLoop.pruneContext` appelé avant chaque `sendUserMessage` et `sendToolResponses` (`src/agent/loop.ts`), même chose dans `src/agent/subagent.ts` | Les 3 derniers lots de résultats d'outils restent intacts. Au-delà, dès que les sorties anciennes de plus de 1 500 caractères pèsent ensemble 40 000 caractères, **toutes** sont remplacées d'un coup par un marqueur `[Cleared from context to save space: the output of read_file(src/x.ts) (N lines, N characters). …]` suivi de la première ligne. Un seul changement de préfixe à la fois, pour que le cache implicite tienne. Les sorties de commandes sont écrites dans `~/.fuller/projects/<projet>/outputs/<session>/context/ctx-<tour>-<part>.txt` (mode 600) ; pour `read_file` et `outline_file`, le marqueur dit de relire le fichier. Les parties `functionCall`, les identifiants et les `thoughtSignature` ne sont pas touchés ; seul `response.output` change. Jamais sous un flux en cours (`streaming > 0` → rien). Compteurs `usage.prunedOutputs` / `prunedChars` (`/stats` → « Cleared tool output », `pruned_outputs` / `pruned_chars` dans le JSON de `-p`). Réglage `contextPruning` (défaut `true`, `/config` → « Clear old tool output »). |
+| 11 — Contrôle syntaxique après édition | `src/tools/syntaxCheck.ts`, cas `write_file` et `edit_file` de `src/tools/registry.ts` ; `editFile` renvoie maintenant `updated` | JSON par `JSON.parse` ; JSON à commentaires accepté **seulement** pour `tsconfig*.json`, `jsconfig*.json`, `.vscode/*.json`, `*.jsonc`, `devcontainer.json` (un `package.json` avec virgule finale est bien signalé) ; JS/TS/TSX par `ts.transpileModule` avec le TypeScript **de Fuller** (`loadTypeScript()` exporté par `src/tools/outline.ts`, jamais celui du projet) ; Python par `ast.parse` dans un `python3` séparé (5 s, absent → pas de verdict). Première erreur de catégorie Error, avec ligne et colonne, ajoutée au résultat : `Warning: the file now has a syntax error at line 42, column 3: …. Fix it before moving on.` ; le résumé de la ligne d'outil reçoit ` · syntax error`. Le fichier est écrit tel quel, pas de restauration. Les erreurs de typage ne sont pas regardées. |
+| 8 — Erreurs d'édition utiles | `src/tools/fileOps.ts` (`previewEdit`, `hasPlaceholder`, `looseMatches`, `candidateLines`, `reindent`) | Ordre : texte exact ; sinon correspondance ligne à ligne avec `trim()` sur chaque ligne, appliquée **seulement si unique** et sans `replace_all`, remplacement ré-indenté (le préfixe d'indentation de la première ligne cible est remplacé par celui du fichier) ; plusieurs correspondances lâches → erreur qui nomme les lignes ; aucune → erreur qui liste jusqu'à 5 lignes ressemblant à la première ligne cible. Un `replacement_content` contenant une ligne de remplissage (`// ... rest of the code`, `# ... existing code ...`, regex `PLACEHOLDER_LINE`) est refusé avant toute écriture. Messages en anglais (l'ancien « sont identiques » corrigé). Pas de correspondance floue, décision maintenue. |
+| Réflexion | `src/agent/thinking.ts` | `defaultThinkingLevel` : Flash 3.5 à 3.8 → `high` (était `medium`). Flash-Lite reste `minimal`. Un `thinkingLevel` déjà enregistré dans `~/.fuller/settings.json` (celui de l'utilisateur vaut `medium`) garde sa valeur : `/model` ou `/effort` pour changer. |
+| Prompt système | `src/agent/systemPrompt.ts`, règle 6 | Dit au modèle que les vieilles sorties sont effacées (relire, ne pas deviner) et qu'une erreur de syntaxe signalée après une édition se corrige tout de suite. |
+| Documentation | `README.md` (section « Mémoire, garde-fous et banc d'essai »), `reports/plan-efficacite-agent.md` (« État au 25/09 ») | |
+
+Tests ajoutés : `tests/contextPruning.test.ts` (fonction pure, appels parallèles, réponses sans identifiant, session réelle hors ligne, seuil), `tests/syntaxCheck.test.ts`, `tests/fileOps.test.ts` (dont le retour de syntaxe via `dispatchTool`). Adaptés au nouveau défaut `high` : `tests/overlays.test.tsx`, `scripts/tui-smoke.py` (le sélecteur de modèle : ← depuis high donne medium ; `/model gemini-3.8-flash` enregistre `high`). Le faux `GeminiAgentSession` de `tests/loop.test.ts` a une méthode `pruneHistory` vide : à garder si vous ajoutez des méthodes à la session.
+
+### C. Vérifications faites
+
+- `npm run typecheck`, `npm test` (64 fichiers, **480 tests**), `npm run build`.
+- `node scripts/eval.mjs --baseline` 8/8 et `--verify-solutions` 8/8 (gratuits).
+- `python3 scripts/tui-smoke.py` 11/11 (après les deux ajustements du script).
+- **Banc réel**, Gemini 3.6 Flash, `--only add-cli-flag,fix-off-by-one` : 2/2, 88 956 tokens, 18 appels d'outils, `evals/results/2026-09-25-10-53-gemini-3.6-flash.json` (fichier non commité).
+- **Session réelle** (`fuller --model gemini-3.8-flash -p …`, six `read_file` successifs sur `loop.ts`, `gemini.ts`, `App.tsx`, `InputBox.tsx`, `commands.ts`, `registry.ts`) : 7 appels, 350 634 tokens de prompt dont **192 102 servis par le cache (55 %)**, **1 sortie effacée** (`loop.ts`, 85 042 caractères) avant la cinquième requête, réponse finale correcte. Un premier essai sur 3.6 Flash s'est arrêté sur 503 (surcharge) après 2 appels : en `-p`, la politique `ask` ne peut pas demander, donc le tour s'arrête ; ce n'est pas un défaut du masquage.
+- `--check-keys` du matin : 15 clés répondent, 6 en 403 « denied ».
+
+Le **« cache 0 % » du 24/09 est faux en usage réel** : il venait des tâches courtes du banc (moins de 4 096 tokens par appel). Sur une vraie session, le cache implicite fonctionne dès le deuxième appel. Ne plus chercher à « réparer » le cache.
+
+### D. Ce qui n'est pas vérifié — à ne pas présenter comme acquis
+
+- **L'effet sur le taux de réussite** des quatre mesures n'est pas mesuré : le banc ne le peut pas, il faut des sessions réelles longues. Les gains cités (+29 % / −84 % chez Anthropic, 20 % → 6 % chez Gemini CLI) restent ceux des autres produits.
+- Les seuils (3 lots gardés, 1 500 et 40 000 caractères, première ligne gardée) sont des choix raisonnables, pas des valeurs mesurées sur Fuller.
+- Sur la session réelle, seule la première sortie a été effacée : les rounds 2 et 3 (`gemini.ts`, `App.tsx`) pesaient moins de 40 000 caractères ensemble au moment du dernier appel. C'est le comportement voulu (peu de changements de préfixe), pas un oubli.
+- La ré-indentation d'un remplacement lâche n'a été vue que dans les tests unitaires ; le contrôle Python seulement avec `python3` présent (le test passe sans verdict si `python3` manque).
+- Le masquage dans les sous-agents (`subagent.ts`) n'écrit rien sur disque (pas de `saveDir`) : le marqueur dit de relancer l'appel. Non observé en réel.
+
+### E. Suite conseillée
+
+1. **Utiliser Fuller sur Fuller** pour de vrai (sessions longues, modifications multi-fichiers). Chaque échec observé devient une tâche dans `evals/tasks/` avec sa `solution.patch`. C'est le seul banc qui compte.
+2. Après quelques sessions réelles, lire `/stats` (cache, sorties effacées) et les marqueurs `[Cleared from context …]` dans `~/.fuller/projects/…` : si le modèle relit trop souvent ce qui a été effacé, monter `keepRounds` ; s'il ne relit jamais, baisser `triggerChars`.
+3. Reste du lot 3 non fait : résumé structuré à la compaction et notes de mémoire avec provenance. Reste du lot 4 : carte du dépôt. À ne faire qu'après un échec réel qui les justifie.
+4. Ne pas relancer un cycle de rapports croisés : les trois notes d'orientation existent et concordent ; la prochaine note utile est un compte rendu d'usage réel.
+
+**Correctifs après la revue de Codex (C001, `chat/`)**, 11:10 UTC : une sortie de commande, de sous-agent ou d'outil MCP n'est effacée du contexte que si elle est archivée sur disque ; sans archive elle reste (plus jamais « Run it again »). Les sous-agents reçoivent un `contextDir` (`outputs/<session>/context/<id d'appel>/`). Le contrôle de syntaxe est différentiel : une erreur déjà présente avant l'édition, au même message, n'est pas reprochée à l'édition (`newSyntaxWarning`, `src/tools/registry.ts`). 482 tests. Les échanges entre agents sont dans `chat/` (convention de Codex, un fichier par message, heure UTC).
+
+## 14. Session longue réelle (25/09, 11:16–11:58 UTC) — deux défauts corrigés
+
+Compte rendu complet : `chat/2026-09-25_120500_claude_compte_rendu_session_longue.md` (K003) ; pièces dans `reports/usage/2026-09-25-session-longue/`. Copie isolée, Gemini 3.8 Flash `high`, tâche réelle (script de statistiques de session + test), Ctrl+C à 75 s, « Continue », `--continue`. Résultat vérifié : fichiers écrits, typecheck propre, test 1/1, réponse de mémoire exacte après reprise. 70 appels d'outils, 1,93 M tokens, 20 sorties effacées (82 310 caractères), aucun 400.
+
+- **Défaut 1, corrigé** : l'historique curé du SDK découpe un tour du modèle en `[functionCall]` puis `[text]` ; `sanitizeHistory()` ne regardait que le contenu précédent et laissait un appel sans réponse quand l'interruption tombait entre le texte et la réponse (reproduit hors ligne sur l'historique réel). Groupe de contenus `model` jugé en bloc (`modelGroupStart`, `src/agent/gemini.ts`). Test : `tests/geminiRobustness.test.ts`.
+- **Défaut 2, corrigé** : `findCall()` du masquage, même cause ; marqueurs sans nom d'appel, lectures archivées pour rien. `src/agent/contextPruning.ts`, test dans `tests/contextPruning.test.ts`.
+- **À décider (utilisateur)** : `maxTurns` = 50 atteint sur une tâche légitime de 70 appels ; Claude Code n'a pas de plafond.
+- **Non mesuré** : le cache implicite sur cette session (pilote à corriger : onglet Usage de `/status`).
+- Vérifications : typage, 484 tests, build, `dist/` reconstruit.

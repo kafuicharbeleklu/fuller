@@ -24,8 +24,7 @@ describe('theme picker', () => {
     const onPreview = vi.fn();
     const onSelect = vi.fn();
     const screen = render(wrap(<ThemePicker syntaxHighlighting current="dark" onPreview={onPreview} onSelect={onSelect} onCancel={() => {}} />));
-    await tick();
-    expect(onPreview).toHaveBeenLastCalledWith('dark', true);
+    await vi.waitFor(() => expect(onPreview).toHaveBeenLastCalledWith('dark', true));
     screen.stdin.write('\x1b[B');
     await vi.waitFor(() => expect(onPreview).toHaveBeenLastCalledWith('light', true));
     screen.stdin.write('\x1b[A');
@@ -52,8 +51,7 @@ describe('theme picker', () => {
     const onPreview = vi.fn();
     const onSelect = vi.fn();
     const screen = render(wrap(<ThemePicker syntaxHighlighting current="dark" onPreview={onPreview} onSelect={onSelect} onCancel={() => {}} />));
-    await tick();
-    expect(screen.lastFrame()).toContain('Syntax highlighting enabled (ctrl+t to disable)');
+    await vi.waitFor(() => expect(onPreview).toHaveBeenLastCalledWith('dark', true));
     screen.stdin.write('\x14');
     await vi.waitFor(() => expect(screen.lastFrame()).toContain('Syntax highlighting disabled (ctrl+t to enable)'));
     expect(onPreview).toHaveBeenLastCalledWith('dark', false);

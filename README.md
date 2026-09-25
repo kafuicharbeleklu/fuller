@@ -146,6 +146,14 @@ Les raccourcis simples peuvent être redéfinis dans `~/.fuller/keybindings.json
 
 **Absence de progrès.** Le même appel d'outil répété 4 fois sans qu'aucun fichier change, ou la même erreur 3 fois : Fuller demande au modèle de prendre du recul. Si cela recommence, il arrête le tour et le modèle explique, sans outils, ce qu'il a tenté et ce qui le bloque.
 
+**Vieilles sorties d'outils effacées du contexte.** Un fichier lu au tour 2 ou un journal de tests du tour 5 était renvoyé au modèle à chaque requête suivante, pour rien. Fuller garde intacts les trois derniers lots de résultats d'outils ; au-delà, dès que les longues sorties anciennes pèsent 40 000 caractères, il les remplace d'un coup par un marqueur (« [Cleared from context …] », avec l'appel d'origine et la première ligne) et garde les sorties de commandes sur disque dans `~/.fuller/projects/<projet>/outputs/<session>/context/`. Le modèle relit le fichier ou la sortie sauvegardée s'il en a encore besoin. Les appels, leurs identifiants et les signatures de réflexion ne bougent pas. `/stats` → « Cleared tool output » ; `/config` → « Clear old tool output » le désactive.
+
+**Contrôle de syntaxe après chaque édition.** Après `write_file` ou `edit_file`, Fuller analyse le fichier (JSON avec `JSON.parse`, JSON à commentaires pour `tsconfig` et `.vscode/`, JavaScript et TypeScript avec son propre analyseur TypeScript, Python avec `ast.parse`) et signale la première erreur de syntaxe dans le résultat de l'outil, avec sa ligne. Le fichier est écrit tel que demandé, jamais restauré ; le modèle corrige au tour suivant au lieu de le découvrir au prochain build. Les erreurs de typage restent l'affaire du `typecheck` du projet.
+
+**Erreurs d'édition utiles.** Quand le texte cible d'`edit_file` n'est pas dans le fichier, Fuller cherche d'abord une correspondance ligne à ligne en ignorant l'indentation et les espaces de fin ; s'il y en a exactement une, il l'applique et ré-indente le remplacement comme le fichier. Sinon, l'erreur nomme les lignes qui ressemblent à la première ligne cible, pour une relecture ciblée avec `read_file`. Un remplacement contenant une ligne de remplissage (« // ... rest of the code ») est refusé au lieu d'être écrit tel quel. Pas de correspondance floue : elle peut modifier la mauvaise fonction.
+
+**Réflexion.** Les modèles Flash réfléchissent au niveau `high` par défaut (qualité avant vitesse) ; `/effort` ou `/model` change ce réglage.
+
 **Vérifier après chaque modification.** Un hook `PostToolUse` renvoie sa sortie au modèle, qui corrige de lui-même. Exemple pour un projet TypeScript, dans `.fuller/settings.json` :
 
 ```json

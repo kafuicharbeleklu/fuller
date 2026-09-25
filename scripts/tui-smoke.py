@@ -201,7 +201,8 @@ def model_picker_scenario(mode: str) -> None:
                 assert b"\x1b[?1000h\x1b[?1006h" in opened, "classic picker did not enable mouse wheel tracking"
             os.write(fd, b"\x1b[D")
             changed = capture(fd, 0.3)
-            assert b"Low effort" in changed, "Left did not adjust the model picker effort"
+            # Flash thinks at "high" by default: one Left goes to medium.
+            assert b"Medium effort" in changed, "Left did not adjust the model picker effort"
             resize(fd, 12, 40)
             shrunk = capture(fd, 0.5)
             resize(fd, 28, 100)
@@ -218,7 +219,7 @@ def model_picker_scenario(mode: str) -> None:
             switched = capture(fd, 0.6)
             saved = json.loads((config_dir / "settings.json").read_text())
             assert saved["model"] == "gemini-3.8-flash", "direct /model did not save the default"
-            assert saved["thinkingLevel"] == "medium", "direct /model saved the wrong default effort"
+            assert saved["thinkingLevel"] == "high", "direct /model saved the wrong default effort"
             assert b"default for new sessions" in switched, "direct model switch feedback was missing"
             assert b"Error:" not in opened + changed + shrunk + grown + closed + switched
             print(f"PASS {mode} /model picker at 18 rows, effort, resize, Escape and default persistence")

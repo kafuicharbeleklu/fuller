@@ -54,6 +54,8 @@ export interface Settings {
   replyAfterShell?: boolean;
   /** Before the model concludes, ask it to check its changes, finish its task list or explain a failed check (default true). */
   verifyWork?: boolean;
+  /** Clear old long tool outputs from the conversation sent to the model, keeping them on disk (default true). */
+  contextPruning?: boolean;
   /** The /diff panel as Claude Code remembers it: opened with /diff (opens on its own at 110 columns), or closed (stays closed). */
   diffPanel?: 'auto' | 'opened' | 'closed';
   /** A second agent reviews the turn's changes before the model concludes: large changes only (default), every change, or never. */

@@ -16,8 +16,12 @@ export function supportedThinkingLevels(model: string): ThinkingLevelSetting[] {
   return [];
 }
 
+/**
+ * Quality over speed (the team's choice, 25/09/2026): Flash thinks at its highest level unless
+ * the user picks another with /effort. Flash-Lite stays minimal: it is the quick, cheap model.
+ */
 export function defaultThinkingLevel(model: string): ThinkingLevelSetting | undefined {
-  if (/^gemini-3\.(8|7|6|5)-flash$/.test(model)) return 'medium';
+  if (/^gemini-3\.(8|7|6|5)-flash$/.test(model)) return 'high';
   if (/^gemini-3\.(5|1)-flash-lite$/.test(model)) return 'minimal';
   if (/^gemini-3(?:\.1)?-pro-preview$/.test(model) || model === 'gemini-3-flash-preview') return 'high';
   // Gemma 4 thinks by default: high is what it does without a setting.

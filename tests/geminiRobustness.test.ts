@@ -66,6 +66,26 @@ describe('history repair', () => {
     expect(sanitizeHistory(sanitizeHistory(history))).toEqual(completed());
   });
 
+  it('handles a model turn the SDK split into a call content and a text content (real session, 25/09)', () => {
+    // Curated history as the SDK stores it: [call] then [text] as two model contents, then the response.
+    const split: Content[] = [
+      { role: 'user', parts: [{ text: 'Fix the bug.' }] },
+      { role: 'model', parts: [{ thoughtSignature: 'sig-1', functionCall: { id: 'read1', name: 'read_file', args: { file_path: 'a.js' } } }] },
+      { role: 'model', parts: [{ text: 'Reading a.js.' }] },
+      { role: 'user', parts: [{ functionResponse: { id: 'read1', name: 'read_file', response: { output: 'file contents' } } }] },
+    ];
+    // Complete: the response answers the call found two contents back.
+    expect(sanitizeHistory(split)).toEqual(split);
+    // Interrupted after the call and its text, before the response: the whole trailing group goes.
+    expect(sanitizeHistory(split.slice(0, 3))).toEqual(split.slice(0, 1));
+    // A trailing text-only answer stays.
+    const answered = [...split, { role: 'model', parts: [{ text: 'Done.' }] } as Content];
+    expect(sanitizeHistory(answered)).toEqual(answered);
+    // A response whose call is nowhere in the group before it is dropped; the text answer before it stays.
+    const hmm = { role: 'model', parts: [{ text: 'Hmm.' }] } as Content;
+    expect(sanitizeHistory([split[0], hmm, split[3]])).toEqual([split[0], hmm]);
+  });
+
   it('repairs the session without deleting the previous tool chain', () => {
     const session = newSession();
     vi.spyOn(session, 'getHistory').mockReturnValue([...completed(), pending]);

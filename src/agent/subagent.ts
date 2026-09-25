@@ -28,6 +28,8 @@ export interface SubagentRunParams {
   messageId?: string;
   /** Parent conversation to start from: a fork (/btw f) inherits it. */
   history?: Content[];
+  /** Where old command outputs cleared from the subagent's context are archived (without it, they stay in). */
+  contextDir?: string;
 }
 
 export interface SubagentResult {
@@ -137,6 +139,8 @@ export async function runSubagent(params: SubagentRunParams): Promise<SubagentRe
         progress(`✗ ${label} — ${String(err?.message ?? err).split('\n')[0]}`);
       }
     }
+    // Explore reads many files: the old ones leave its context too; command outputs are archived in contextDir.
+    if (config.settings.contextPruning !== false) session.pruneHistory({ saveDir: params.contextDir });
     turn = await session.sendToolResponses(responses, { signal });
   }
   const completed = turn.functionCalls.length === 0 && (!turn.finishReason || turn.finishReason === 'STOP');
