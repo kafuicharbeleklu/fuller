@@ -87,9 +87,11 @@ export interface AppProps {
   onExitSummary?: (summary: string) => void;
   frameWriter?: FrameWriter;
   fullscreen?: boolean;
+  /** /tui: the interface is torn down and mounted again in the other renderer on the same session. */
+  onSwitchRenderer?: (mode: 'classic' | 'fullscreen', session: SessionData) => void;
 }
 
-export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession, pickSession, onExitSummary, frameWriter, fullscreen = false }) => {
+export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession, pickSession, onExitSummary, frameWriter, fullscreen = false, onSwitchRenderer }) => {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [theme, setThemeState] = useState<Theme>(() => ({ ...loadTheme(config.settings.theme), syntaxHighlighting: loadSyntaxHighlighting() }));
@@ -449,6 +451,24 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
     applyMode(order[(order.indexOf(current) + 1) % order.length]);
   }, [applyMode, mode]);
 
+  // /tui [default|fullscreen]: Claude Code switches renderer in the session and keeps the choice.
+  const switchRenderer = useCallback(async (arg: string) => {
+    const wanted = arg.trim().toLowerCase();
+    const target: 'classic' | 'fullscreen' | null = wanted === '' ? (fullscreen ? 'classic' : 'fullscreen')
+      : wanted === 'fullscreen' ? 'fullscreen' : wanted === 'default' || wanted === 'classic' ? 'classic' : null;
+    if (!target) { addSystem('Usage: /tui [default|fullscreen]', 'notice'); return; }
+    try { saveUserSetting(['tui'], target === 'classic' ? 'default' : 'fullscreen'); config.settings.tui = target === 'classic' ? 'default' : 'fullscreen'; } catch {}
+    if ((target === 'fullscreen') === fullscreen) { addSystem(`Already using the ${target === 'fullscreen' ? 'fullscreen' : 'default'} renderer`, 'notice'); return; }
+    const agent = agentRef.current;
+    if (!agent || !onSwitchRenderer) { addSystem(`Renderer set to ${target === 'fullscreen' ? 'fullscreen' : 'default'} for new sessions`, 'notice'); return; }
+    if (agent.busy) { addSystem('Fuller is working · run /tui again when the turn is finished', 'notice'); return; }
+    if (agent.hasRunningWork()) { addSystem('Background tasks or agents are still running · stop them (/tasks) or wait, then run /tui again', 'notice'); return; }
+    agent.addSystemMessage(`Switched to the ${target === 'fullscreen' ? 'fullscreen' : 'default'} renderer · /tui to switch back`, 'notice');
+    const session = await agent.detach();
+    onSwitchRenderer(target, session);
+    exit();
+  }, [fullscreen, onSwitchRenderer, exit, addSystem, config]);
+
   const handleExit = useCallback(async () => {
     const agent = agentRef.current;
     if (agent) {
@@ -504,6 +524,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       toggleVerbose: () => setViewer((v) => (v === 'transcript' ? null : 'transcript')),
       openDiffViewer,
       openTextViewer: (title: string, lines: string[]) => setTextView({ title, lines }),
+      switchRenderer: (arg: string) => { void switchRenderer(arg); },
       transcriptMarkdown,
       addDir: (dir) => { config.additionalDirectories.push(dir); },
       openModelPicker: () => setModelPickerOpen(true),
@@ -523,7 +544,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       skills,
       reloadSkills: () => { const next = agent.reloadSkills(); setSkills(next); return next; },
     };
-  }, [config, gitInfo, theme, verbose, usage, addSystem, applyMode, cycleMode, clearScreen, redraw, handleExit, transcriptMarkdown, skills, openDiffViewer, fullscreen, model, thinking]);
+  }, [config, gitInfo, theme, verbose, usage, addSystem, applyMode, cycleMode, clearScreen, redraw, handleExit, transcriptMarkdown, skills, openDiffViewer, switchRenderer, fullscreen, model, thinking]);
 
   const menuCommands = useMemo<SlashCommand[]>(() => [
     ...COMMANDS,

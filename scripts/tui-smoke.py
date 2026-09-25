@@ -232,6 +232,45 @@ def model_picker_scenario(mode: str) -> None:
             os.close(fd)
 
 
+def tui_switch_scenario() -> None:
+    """/tui switches renderer in the session, both ways, keeping the conversation and the input."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.chdir(ROOT)
+        env = dict(os.environ, HOME=smoke_home(), GEMINI_API_KEY="ui_audit_dummy", TERM="xterm-256color")
+        os.execvpe("node", ["node", "dist/index.js"], env)
+    try:
+        resize(fd, 30, 120)
+        startup = capture_until(fd, b"manual mode on")
+        assert b"\x1b[?1049h" in startup, "did not start fullscreen"
+        os.write(fd, b"!echo before-switch\r")
+        assert b"before-switch" in capture_for(fd, b"before-switch", 0.5, 8), "shell command did not run"
+        os.write(fd, b"/tui")
+        capture(fd, 0.3)
+        os.write(fd, b"\r")
+        classic = capture_for(fd, b"Switched to the default renderer", 1.0, 10)
+        assert b"\x1b[?1049l" in classic, "/tui did not leave the alternate screen"
+        assert b"before-switch" in classic, "the conversation was lost when switching to the default renderer"
+        os.write(fd, b"!echo after-classic\r")
+        assert b"after-classic" in capture_for(fd, b"after-classic", 0.5, 8), "input did not respond after /tui"
+        os.write(fd, b"/tui fullscreen")
+        capture(fd, 0.3)
+        os.write(fd, b"\r")
+        full = capture_for(fd, b"Switched to the fullscreen renderer", 1.0, 10)
+        assert b"\x1b[?1049h" in full, "/tui fullscreen did not enter the alternate screen"
+        assert b"after-classic" in full, "the conversation was lost when switching back"
+        os.write(fd, b"\x03\x03")
+        assert b"\x1b[?1049l" in capture_for(fd, b"\x1b[?1049l", 0.5, 8), "alternate screen not restored at exit"
+        print("PASS /tui switches to the default renderer and back, keeping the conversation")
+    finally:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        os.waitpid(pid, 0)
+        os.close(fd)
+
+
 if __name__ == "__main__":
     for renderer in ("classic", "fullscreen"):
         for columns in (60, 100, 160):
@@ -239,3 +278,4 @@ if __name__ == "__main__":
         scenario(renderer, 100, active=True)
         model_picker_scenario(renderer)
     screen_reader_scenario()
+    tui_switch_scenario()

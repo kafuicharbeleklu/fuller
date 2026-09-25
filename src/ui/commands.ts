@@ -47,6 +47,8 @@ export interface CommandContext {
   openDiffViewer: () => void;
   /** A read-only text viewer (the transcript viewer's keys: scroll, / search, q to close). */
   openTextViewer: (title: string, lines: string[]) => void;
+  /** /tui: switch renderer in the session (and keep the choice for new sessions). */
+  switchRenderer: (arg: string) => void;
   toggleVerbose: () => void;
   transcriptMarkdown: () => string;
   addDir: (dir: string) => void;
@@ -285,6 +287,13 @@ export const COMMANDS: SlashCommand[] = [
       commands: COMMANDS.map((c) => ({ name: c.name, description: c.description })),
       custom: ctx.skills.filter((sk) => sk.userInvocable).map((sk) => ({ name: `/${sk.name}`, description: sk.description ?? '' })),
     }),
+  },
+  {
+    name: '/tui',
+    description: 'Switch between the fullscreen and the default renderer, keeping the conversation',
+    usage: '[default|fullscreen]',
+    takesArg: true,
+    run: (ctx, arg) => ctx.switchRenderer(arg),
   },
   {
     name: '/clear',

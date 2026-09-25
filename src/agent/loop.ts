@@ -547,6 +547,25 @@ export class AgentLoop {
     }, 1500);
   }
 
+  /**
+   * Hand the session over to a new interface (/tui): save it, stop the pending save timer so this
+   * loop never overwrites the next one's file, and close the MCP connections the next loop reopens.
+   * Nothing else ends: no SessionEnd hook, and the caller refuses while tasks or agents still run.
+   */
+  public async detach(): Promise<SessionData> {
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+    const data = this.getSessionData();
+    if (this.messages.length > 0) await saveSession(data);
+    await flushSessionSaves();
+    await this.mcp.close();
+    return data;
+  }
+
+  /** Background shell tasks and subagents still working: /tui waits for them. */
+  public hasRunningWork(): boolean {
+    return this.background.running() > 0 || [...this.agentControllers.values()].some((c) => !c.signal.aborted);
+  }
+
   /** Persist immediately (used before exit). */
   public async flush(): Promise<void> {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }

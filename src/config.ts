@@ -60,6 +60,8 @@ export interface Settings {
   diffPanel?: 'auto' | 'opened' | 'closed';
   /** What the /diff panel compares against (Ctrl+X B); Claude Code remembers it per project, so it lives in .fuller/settings.local.json. */
   diffBase?: 'session' | 'uncommitted' | 'branch';
+  /** Renderer for new sessions, saved by /tui (Claude Code's `tui` setting): 'default' is the classic renderer. */
+  tui?: 'default' | 'fullscreen';
   /** A second agent reviews the turn's changes before the model concludes: large changes only (default), every change, or never. */
   reviewChanges?: 'risky' | 'always' | 'off';
   notifications?: NotificationSetting;

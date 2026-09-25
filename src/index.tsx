@@ -70,7 +70,7 @@ program
   .option('--all', 'With --list-models: include every chat model (paid and older ones)', false)
   .option('--theme <name>', 'Theme (auto, dark, light, *-daltonized, *-ansi, monokai, ocean, forest, lagoon, olive, amethyst, citrus)')
   .option('--screen-reader', 'Use a plain, linear interactive interface for screen readers')
-  .option('--tui <mode>', 'Terminal renderer: fullscreen (default) | classic; FULLER_DISABLE_ALTERNATE_SCREEN=1 forces classic')
+  .option('--tui <mode>', 'Terminal renderer: fullscreen (default) | classic (alias default); /tui switches in a session and keeps the choice; FULLER_DISABLE_ALTERNATE_SCREEN=1 forces classic')
   .action(async (promptArgs: string[], options) => {
     let permissionMode: PermissionMode | undefined = options.permissionMode;
     if (permissionMode && !PERMISSION_MODES.includes(permissionMode)) {
@@ -200,29 +200,34 @@ program
       return;
     }
 
-    // Like Claude Code, start fullscreen unless the classic renderer is asked for.
-    options.tui ??= process.env.FULLER_DISABLE_ALTERNATE_SCREEN === '1' ? 'classic' : 'fullscreen';
+    // Like Claude Code, start fullscreen unless the classic renderer is asked for (flag, environment,
+    // or the `tui` setting that /tui saves).
+    options.tui ??= process.env.FULLER_DISABLE_ALTERNATE_SCREEN === '1' ? 'classic' : config.settings.tui === 'default' ? 'classic' : 'fullscreen';
+    if (options.tui === 'default') options.tui = 'classic';
     if (!['classic', 'fullscreen'].includes(options.tui)) {
-      process.stderr.write('Invalid --tui mode. Expected classic or fullscreen.\n');
+      process.stderr.write('Invalid --tui mode. Expected classic (or default) or fullscreen.\n');
       process.exit(2);
     }
 
     // ---------------------------------------------------------------- terminal setup
     const stdout = process.stdout;
     const originalWrite = stdout.write.bind(stdout);
-    const fullscreen = options.tui === 'fullscreen';
-    if (fullscreen) {
-      originalWrite('\x1b[?1049h\x1b[H');
-    } else {
-      originalWrite('\x1b[2J\x1b[3J\x1b[H');
-    }
+    let fullscreen = options.tui === 'fullscreen';
+    const mouseAllowed = process.env.FULLER_DISABLE_MOUSE !== '1';
+    /** Screen and mouse modes of one renderer; /tui leaves one and enters the other. */
+    const enterRenderer = (full: boolean) => {
+      originalWrite(full ? '\x1b[?1049h\x1b[H' : '\x1b[2J\x1b[3J\x1b[H');
+      if (full && mouseAllowed) originalWrite('\x1b[?1000h\x1b[?1006h');
+    };
+    const leaveRenderer = (full: boolean) => {
+      originalWrite(`\x1b[?1000l\x1b[?1006l${full ? '\x1b[?1049l' : ''}`);
+    };
+    enterRenderer(fullscreen);
     // Frame writer: exact erase counts after a resize + synchronized output (DEC 2026).
     const reflow = process.env.FULLER_NO_REFLOW === '1' ? false : (process.env.FULLER_REFLOW ? process.env.FULLER_REFLOW === '1' : true);
     const frameWriter = installFrameWriter(stdout, { reflow });
     // Bracketed paste so multi-line pastes arrive as one event.
     originalWrite('\x1b[?2004h');
-    const mouse = fullscreen && process.env.FULLER_DISABLE_MOUSE !== '1';
-    if (mouse) originalWrite('\x1b[?1000h\x1b[?1006h');
 
     // Lay out one column narrower than the terminal so that no line ever ends in the
     // last column (the "pending wrap" state confuses some terminals' reflow).
@@ -235,18 +240,13 @@ program
       },
     }) as NodeJS.WriteStream;
 
-    let summary = '';
-    const app = render(
-      <App config={config} initialPrompt={initialPrompt} restoredSession={restoredSession} pickSession={pickSession} onExitSummary={(s) => { summary = s; }} frameWriter={frameWriter} fullscreen={fullscreen} />,
-      { stdout: inkStdout, exitOnCtrlC: false, patchConsole: true }
-    );
-
-    // Remove Ink's eager resize listener, then relay native resize events to App's
-    // debounced listener through a separate event. Removing every native listener
-    // previously also removed App's listener when its effect had already mounted.
-    for (const listener of stdout.listeners('resize')) stdout.off('resize', listener as (...args: any[]) => void);
+    // Ink's eager resize listener is removed after each mount; native resize events reach App's
+    // debounced listener through a separate event.
     const relayResize = () => stdout.emit('fuller:resize');
-    stdout.on('resize', relayResize);
+    const takeOverResize = () => {
+      for (const listener of stdout.listeners('resize')) if (listener !== relayResize) stdout.off('resize', listener as (...args: any[]) => void);
+      if (!stdout.listeners('resize').includes(relayResize)) stdout.on('resize', relayResize);
+    };
 
     let cleaned = false;
     const cleanup = () => {
@@ -260,7 +260,31 @@ program
     process.on('SIGTERM', () => { cleanup(); process.exit(143); });
     process.on('SIGHUP', () => { cleanup(); process.exit(129); });
 
-    await app.waitUntilExit();
+    // One mount per renderer: /tui unmounts the interface, switches the terminal, and mounts it
+    // again on the saved session, as Claude Code's /tui keeps the conversation.
+    let summary = '';
+    let session = restoredSession;
+    let picker = pickSession;
+    let prompt = initialPrompt;
+    for (;;) {
+      let next: { mode: 'classic' | 'fullscreen'; session: typeof restoredSession } | null = null;
+      const app = render(
+        <App config={config} initialPrompt={prompt} restoredSession={session} pickSession={picker} onExitSummary={(s) => { summary = s; }} frameWriter={frameWriter} fullscreen={fullscreen}
+          onSwitchRenderer={(mode, data) => { next = { mode, session: data }; }} />,
+        { stdout: inkStdout, exitOnCtrlC: false, patchConsole: true }
+      );
+      takeOverResize();
+      await app.waitUntilExit();
+      const switched = next as { mode: 'classic' | 'fullscreen'; session: typeof restoredSession } | null;
+      if (!switched) break;
+      app.cleanup?.();
+      leaveRenderer(fullscreen);
+      fullscreen = switched.mode === 'fullscreen';
+      enterRenderer(fullscreen);
+      session = switched.session;
+      picker = false;
+      prompt = undefined;
+    }
     cleanup();
     // The session is saved (handleExit waited for it): leave now, as Claude Code does, rather than
     // wait for whatever is still pending (a keep-alive socket, a timer, a slow child) to let go.
