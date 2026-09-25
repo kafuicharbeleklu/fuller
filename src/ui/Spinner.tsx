@@ -39,6 +39,12 @@ export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, res
     return () => clearInterval(t);
   }, [startedAt]);
 
+  // "Deep in thought" is about the model call in progress, not the whole turn: a turn of 150 tool
+  // calls showed "Deep in thought… (517s · thinking)" on every call (real session, 25/09).
+  const [thinkingSince, setThinkingSince] = useState(() => Date.now());
+  useEffect(() => { setThinkingSince(Date.now()); }, [status]);
+  const callElapsed = Math.floor((Date.now() - thinkingSince) / 1000);
+
   useEffect(() => {
     const t = setInterval(() => setVerbIndex((v) => (v + 1 + Math.floor(Math.random() * 3)) % verbs.length), 4000);
     return () => clearInterval(t);
@@ -50,7 +56,7 @@ export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, res
     status === 'compacting' ? 'Compacting conversation'
     : status === 'retrying' ? 'Waiting to retry'
     : status === 'running_tool' ? 'Running'
-    : elapsed > 45 ? 'Deep in thought'
+    : status === 'thinking' && callElapsed > 45 ? 'Deep in thought'
     : verbs[verbIndex] ?? 'Thinking';
 
   // Claude Code shows the timer only once the wait gets noticeable, then what the model is doing.
