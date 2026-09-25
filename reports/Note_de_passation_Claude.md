@@ -211,3 +211,7 @@ Compte rendu complet : `chat/2026-09-25_120500_claude_compte_rendu_session_longu
 - **À décider (utilisateur)** : `maxTurns` = 50 atteint sur une tâche légitime de 70 appels ; Claude Code n'a pas de plafond.
 - **Non mesuré** : le cache implicite sur cette session (pilote à corriger : onglet Usage de `/status`).
 - Vérifications : typage, 484 tests, build, `dist/` reconstruit.
+
+## 15. Deuxième tâche réelle (25/09, 12:35–13:30 UTC) — test intermittent du sélecteur de sessions
+
+Compte rendu : `chat/2026-09-25_133500_claude_compte_rendu_session_picker.md` (K005) ; pièces dans `reports/usage/2026-09-25-tache-session-picker/`. Dans le vrai dépôt, Fuller a **reproduit** l'échec de `tests/sessionPicker.test.tsx` sous charge (9e appel), l'a attribué aux attentes fixes avant assertion, a enveloppé les assertions des trois tests interactifs dans `vi.waitFor` (composant intact), puis vérifié 10/10 et 2 suites complètes ; vérifié à nouveau par moi (3/3, 484/484). 38 appels d'outils, 791 270 tokens, **cache implicite 69 %**, 9 sorties effacées (~10 200 tokens). Trois relances du pilote (fenêtre de confiance, 503 pris pour une fin de tour, fenêtre de bascule « demander » sans humain) : aucune due à Fuller. Incident Fuller : `todo_write` refusé deux fois, le modèle ayant envoyé le texte du résultat précédent comme arguments ; refus propre, corrigé au coup suivant.
