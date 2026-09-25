@@ -40,6 +40,13 @@ describe('search_files', () => {
     expect(res.backend).toBe(rg ? 'ripgrep' : 'js');
   });
 
+  it('tells the model when a literal search looks like a regular expression and finds nothing (real session, 25/09)', () => {
+    const none = { matches: [], truncated: false, backend: 'js' as const, filesScanned: 3 };
+    expect(formatSearchOutput('mkdtempSync|afterEach|rmSync', none)).toContain('pass regex: true for a pattern');
+    expect(formatSearchOutput('mkdtempSync|afterEach|rmSync', none, 'content', undefined, { regex: true })).not.toContain('regex: true');
+    expect(formatSearchOutput('plainword', none)).not.toContain('regex: true');
+  });
+
   it('rejects invalid regular expressions', async () => {
     await expect(searchFiles('(', cwd, { regex: true })).rejects.toThrow(/Invalid regular expression/);
   });

@@ -251,9 +251,16 @@ export async function globFiles(pattern: string, cwd: string, extraDirs: string[
   return { files: filtered.slice(0, LIMITS.globFiles).map((e) => path.relative(cwd, e.path)), truncated };
 }
 
-export function formatSearchOutput(query: string, res: SearchResult, mode: SearchOutputMode = 'content', headLimit?: number): string {
+/** Characters that only mean something in a regular expression: a literal search for `a|b` finds nothing. */
+const REGEX_CHARS = /[|()[\]\\^$*+?{}]/;
+
+export function formatSearchOutput(query: string, res: SearchResult, mode: SearchOutputMode = 'content', headLimit?: number, options: { regex?: boolean } = {}): string {
   const real = res.matches.filter((m) => !m.context);
-  if (real.length === 0) return `No matches found for "${query}"${res.backend === 'js' ? ` (${res.filesScanned} files scanned)` : ''}.`;
+  if (real.length === 0) {
+    // Seen in a real session (25/09): the same `a|b|c` query searched literally twenty times, zero matches each time.
+    const hint = !options.regex && REGEX_CHARS.test(query) ? ' The query contains regular-expression characters but was searched literally: pass regex: true for a pattern, or search one plain word.' : '';
+    return `No matches found for "${query}"${res.backend === 'js' ? ` (${res.filesScanned} files scanned)` : ''}.${hint}`;
+  }
   const byFile = new Map<string, number>();
   for (const m of real) byFile.set(m.file, (byFile.get(m.file) ?? 0) + 1);
   const limit = headLimit && headLimit > 0 ? headLimit : undefined;

@@ -432,7 +432,7 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       });
       const mode = (['content', 'files_with_matches', 'count'].includes(args.output_mode) ? args.output_mode : 'content') as 'content' | 'files_with_matches' | 'count';
       const real = res.matches.filter((m) => !m.context).length;
-      return { output: formatSearchOutput(String(args.query), res, mode, args.head_limit), summary: `${real}${res.truncated ? '+' : ''} matches · ${res.backend}` };
+      return { output: formatSearchOutput(String(args.query), res, mode, args.head_limit, { regex: !!args.regex }), summary: `${real}${res.truncated ? '+' : ''} matches · ${res.backend}` };
     }
 
     case 'glob': {
