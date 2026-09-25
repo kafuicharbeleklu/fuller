@@ -50,6 +50,8 @@ export interface CommandContext {
   openTextViewer: (title: string, lines: string[]) => void;
   /** /tui: switch renderer in the session (and keep the choice for new sessions). */
   switchRenderer: (arg: string) => void;
+  /** /color: the prompt bar's colour for this session, or null for the theme's. */
+  setPromptColor: (color: string | null) => void;
   toggleVerbose: () => void;
   transcriptMarkdown: () => string;
   addDir: (dir: string) => void;
@@ -67,6 +69,9 @@ export interface CommandContext {
   skills: SkillDefinition[];
   reloadSkills: () => SkillDefinition[];
 }
+
+/** Claude Code's /color names; purple, orange and pink as hex, the others as terminal colours. */
+const PROMPT_COLORS: Record<string, string> = { red: 'red', blue: 'blue', green: 'green', yellow: 'yellow', purple: '#a878e0', orange: '#e8912d', pink: '#e87aa9', cyan: 'cyan' };
 
 export type InfoDialog =
   | { kind: 'help'; commands: CommandEntry[]; custom: CommandEntry[] }
@@ -212,6 +217,16 @@ function configItems(ctx: CommandContext): ConfigItem[] {
       onChange: (value) => { ctx.config.notifications = value as AppConfig['notifications']; saveUserSetting(['notifications'], value); },
     },
     {
+      label: 'Notification channel', value: ctx.config.settings.preferredNotifChannel ?? 'auto', options: ['auto', 'iterm2', 'terminal_bell', 'iterm2_with_bell', 'kitty', 'ghostty', 'notifications_disabled'],
+      description: 'Auto: desktop notification in iTerm2 (OSC 9), Kitty (OSC 99) and Ghostty (OSC 777), the terminal bell elsewhere',
+      onChange: (value) => { ctx.config.settings.preferredNotifChannel = value as NonNullable<AppConfig['settings']['preferredNotifChannel']>; saveUserSetting(['preferredNotifChannel'], value); },
+    },
+    {
+      label: 'Reduce motion', value: bool(ctx.config.settings.prefersReducedMotion === true), options: ['true', 'false'],
+      description: 'No spinner animation or shimmer',
+      onChange: (value) => { ctx.config.settings.prefersReducedMotion = value === 'true'; saveUserSetting(['prefersReducedMotion'], value === 'true'); },
+    },
+    {
       label: 'Default permission mode', value: MODE_NAMES[ctx.config.settings.permissions?.defaultMode ?? 'default'] ?? 'Default', options: Object.values(MODE_NAMES),
       onChange: (value) => {
         const mode = Object.keys(MODE_NAMES).find((key) => MODE_NAMES[key] === value) as PermissionMode;
@@ -293,6 +308,20 @@ export const COMMANDS: SlashCommand[] = [
       commands: COMMANDS.map((c) => ({ name: c.name, description: c.description })),
       custom: ctx.skills.filter((sk) => sk.userInvocable).map((sk) => ({ name: `/${sk.name}`, description: sk.description ?? '' })),
     }),
+  },
+  {
+    name: '/color',
+    description: 'Set the prompt bar color for this session (tells parallel sessions apart)',
+    usage: '[red|blue|green|yellow|purple|orange|pink|cyan|default]',
+    takesArg: true,
+    run: (ctx, arg) => {
+      const name = arg.trim().toLowerCase();
+      if (!name || name === 'default') { ctx.setPromptColor(null); ctx.addSystem('Prompt bar color reset to the theme\'s'); return; }
+      const color = PROMPT_COLORS[name];
+      if (!color) { ctx.addSystem(`Unknown color "${arg.trim()}" · choose ${Object.keys(PROMPT_COLORS).join(', ')} or default`, 'notice'); return; }
+      ctx.setPromptColor(color);
+      ctx.addSystem(`Prompt bar color set to ${name} for this session`);
+    },
   },
   {
     name: '/tui',

@@ -44,6 +44,8 @@ export interface InputBoxProps {
   onToggleHelp: () => void;
   onToggleTodos?: () => void;
   onOpenDiff?: () => void;
+  /** /color: the prompt bar's colour for this session (the bash colour still wins in ! mode). */
+  promptColor?: string;
   /** Ctrl+X B: cycle what the /diff panel compares against. */
   onCycleDiffBase?: () => void;
   /** x, y: the mouse position for wheel scrolls. */
@@ -89,7 +91,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const {
     isActive, busy, queue, history: initialHistory, allHistory = initialHistory, sessionHistory = [], fullscreen = false, cwd, commands, showHelp, compactEmpty = false, placeholder,
     onSubmit, onCommand, onBash, onInterrupt, onExit, onCycleMode, onClearScreen,
-    onToggleVerbose, onToggleHelp, onToggleTodos, onOpenDiff, onCycleDiffBase, onScrollTranscript, onDoubleEscape, onPopQueue, onStateChange, onSwitchModel, onSuspend, onAgents, onMouseClick, onMouseRelease, injected, commandUsage = {}, onSendNow, onBackground, onStopAgents, onTakeQueue,
+    onToggleVerbose, onToggleHelp, onToggleTodos, onOpenDiff, onCycleDiffBase, onScrollTranscript, onDoubleEscape, onPopQueue, onStateChange, onSwitchModel, onSuspend, onAgents, onMouseClick, onMouseRelease, injected, commandUsage = {}, onSendNow, onBackground, onStopAgents, onTakeQueue, promptColor,
   } = props;
 
   const ed = useRef<EditorState>({ text: '', cursor: 0 });
@@ -776,7 +778,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
     cursorLine = i + 1;
   }
   const promptChar = bashMode ? '!' : '❯';
-  const borderColor = bashMode ? theme.bashBorder : theme.promptBorder;
+  const borderColor = bashMode ? theme.bashBorder : promptColor ?? theme.promptBorder;
 
   const ghostSuffix = midSlash && !fullscreen && !midSlashOpen && slashMatches.length > 0 && cursor === text.length ? slashMatches[0].name.slice(slashToken!.length) : '';
   // A complete slash command at the start of the prompt is shown in the suggestion colour, as in Claude Code.

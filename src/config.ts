@@ -67,6 +67,10 @@ export interface Settings {
   /** A second agent reviews the turn's changes before the model concludes: large changes only (default), every change, or never. */
   reviewChanges?: 'risky' | 'always' | 'off';
   notifications?: NotificationSetting;
+  /** How a notification reaches the desktop (Claude Code's channels): auto picks OSC 9 / 99 / 777 in iTerm2, Kitty and Ghostty, the bell elsewhere. */
+  preferredNotifChannel?: 'auto' | 'iterm2' | 'terminal_bell' | 'iterm2_with_bell' | 'kitty' | 'ghostty' | 'notifications_disabled';
+  /** Reduce motion: no spinner animation or shimmer (Claude Code's prefersReducedMotion). */
+  prefersReducedMotion?: boolean;
   spinnerVerbs?: string[];
   bashTimeoutMs?: number;
   maxTurns?: number;

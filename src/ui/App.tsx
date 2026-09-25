@@ -38,6 +38,7 @@ import { FullscreenTranscript, useTranscriptRows, type ScrollAction } from './Fu
 import { transcriptLines } from './viewerText.js';
 import { readFileDiffs, isTestOrGenerated, nextDiffBase, defaultBranch, type FileDiff, type DiffBase } from './gitDiff.js';
 import { DiffViewer, turnViews, type DiffViewerData } from './DiffViewer.js';
+import { notificationSequence } from './notify.js';
 import { saveUserSetting, saveProjectLocalSetting } from '../config.js';
 import { DiffPanel, diffPanelClick, maxPanelScroll, panelSelection, type DiffPanelState, type PanelSelection } from './DiffPanel.js';
 import { toolLabel, toolArgSummary } from '../tools/registry.js';
@@ -123,6 +124,8 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const [viewer, setViewer] = useState<'transcript' | 'diff' | null>(null);
   /** A read-only text view opened by a command (/tasks → Enter shows a task's output). */
   const [textView, setTextView] = useState<{ title: string; lines: string[] } | null>(null);
+  /** /color for this session. */
+  const [promptColor, setPromptColor] = useState<string | null>(null);
   // ← on an empty prompt: the agents view, its agents, and the report opened from it.
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [agentTasks, setAgentTasks] = useState<AgentTask[]>([]);
@@ -155,7 +158,9 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const history = useMemo(() => loadPromptHistory(config.workspaceDir), [config.workspaceDir]);
   const allHistory = useMemo(() => loadPromptHistory(config.workspaceDir, Infinity, 'all'), [config.workspaceDir]);
   const memoryFiles = useMemo(() => loadProjectContext(config.workspaceDir).map((file) => file.path), [config.workspaceDir]);
-  const frame = useSpinnerFrame(!terminalActive && status !== 'idle' && status !== 'awaiting_permission');
+  // Reduce motion: one still glyph instead of the animated one (Claude Code's prefersReducedMotion).
+  const reducedMotion = config.settings.prefersReducedMotion === true;
+  const frame = useSpinnerFrame(!reducedMotion && !terminalActive && status !== 'idle' && status !== 'awaiting_permission');
   const rows = stdout?.rows ?? 24;
   const viewedTranscript = useMemo(() => transcriptLines(items, true), [items]);
 
@@ -327,8 +332,10 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const bell = useCallback((event: 'permission' | 'done' | 'error') => {
     if (config.notifications === 'off') return;
     if (config.notifications === 'permission' && event === 'done') return;
-    if (stdout?.isTTY) stdout.write('\x07');
-  }, [config.notifications, stdout]);
+    if (!stdout?.isTTY) return;
+    const body = event === 'permission' ? 'Fuller needs your permission' : event === 'error' ? 'Fuller stopped on an error' : 'Fuller finished';
+    stdout.write(notificationSequence(config.settings.preferredNotifChannel ?? 'auto', `${APP_NAME} · ${config.workspaceDir.split('/').pop()}`, body));
+  }, [config, stdout]);
 
   // ------------------------------------------------------------ agent bootstrap
   useEffect(() => {
@@ -526,6 +533,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       openDiffViewer,
       openTextViewer: (title: string, lines: string[]) => setTextView({ title, lines }),
       switchRenderer: (arg: string) => { void switchRenderer(arg); },
+      setPromptColor,
       transcriptMarkdown,
       addDir: (dir) => { config.additionalDirectories.push(dir); },
       openModelPicker: () => setModelPickerOpen(true),
@@ -758,7 +766,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
         {!fullscreen && live && !pickerOpen && (!confirmation || rows >= 20) ? <LiveArea live={live} verbose={verbose} frame={frame} maxLines={liveMaxLines} permissionOpen={!!confirmation} /> : null}
         {!pickerOpen && status !== 'idle' && status !== 'awaiting_permission' ? (
           <Box marginTop={1}>
-            <SpinnerLine status={status} startedAt={turnStartedAt} responseTokens={live?.text ? Math.round(live.text.length / 4) : 0} verbs={config.settings.spinnerVerbs} frame={frame} />
+            <SpinnerLine reducedMotion={reducedMotion} status={status} startedAt={turnStartedAt} responseTokens={live?.text ? Math.round(live.text.length / 4) : 0} verbs={config.settings.spinnerVerbs} frame={frame} />
           </Box>
         ) : null}
         {notice && !pickerOpen ? (
@@ -898,6 +906,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onToggleHelp={onToggleHelp}
             onToggleTodos={onToggleTodos}
             onOpenDiff={openDiffViewer}
+            promptColor={promptColor ?? undefined}
             onCycleDiffBase={cycleDiffBase}
             onScrollTranscript={fullscreen ? (direction, x) => {
               // The wheel over the diff panel scrolls the panel.

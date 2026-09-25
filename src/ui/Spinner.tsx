@@ -21,18 +21,21 @@ interface SpinnerLineProps {
   responseTokens: number;
   verbs?: string[];
   frame: string;
+  /** No shimmer and no verb rotation. */
+  reducedMotion?: boolean;
 }
 
-export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, responseTokens, verbs = SPINNER_VERBS, frame }) => {
+export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, responseTokens, verbs = SPINNER_VERBS, frame, reducedMotion = false }) => {
   const theme = useTheme();
   const [elapsed, setElapsed] = useState(0);
   const [verbIndex, setVerbIndex] = useState(() => Math.floor(Math.random() * verbs.length));
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
+    if (reducedMotion) return;
     const t = setInterval(() => setTick((x) => x + 1), 120);
     return () => clearInterval(t);
-  }, []);
+  }, [reducedMotion]);
 
   useEffect(() => {
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 500);
@@ -46,9 +49,10 @@ export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, res
   const callElapsed = Math.floor((Date.now() - thinkingSince) / 1000);
 
   useEffect(() => {
+    if (reducedMotion) return;
     const t = setInterval(() => setVerbIndex((v) => (v + 1 + Math.floor(Math.random() * 3)) % verbs.length), 4000);
     return () => clearInterval(t);
-  }, [verbs.length]);
+  }, [verbs.length, reducedMotion]);
 
   if (status === 'idle' || status === 'awaiting_permission') return null;
 
@@ -66,7 +70,7 @@ export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, res
   return (
     <Box>
       <Text color={theme.accent}>{frame} </Text>
-      <ShimmerText text={`${verb}…`} tick={tick} />
+      {reducedMotion ? <Text color={theme.accent}>{verb}…</Text> : <ShimmerText text={`${verb}…`} tick={tick} />}
       {showTimer ? <Text color={theme.subtle}> ({elapsed}s{detail ? ` · ${detail}` : ''})</Text> : null}
     </Box>
   );
