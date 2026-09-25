@@ -249,7 +249,7 @@ Tests : `tests/contextPruning.test.ts`, `tests/syntaxCheck.test.ts`, `tests/file
 2. **Le cache implicite fonctionne** dès qu'une session s'installe : 55 %, 69 %, 64 %, 88 %. Le « 0 % » du 24/09 venait des tâches courtes du banc.
 3. **Le masquage a besoin d'un ensemble de travail.** Trois lots gardés → un fichier lu 12 fois, 2,7 M tokens pour 8 fichiers. Budget de 200 k caractères → fichier le plus relu 2 fois, 15 fichiers, mais contexte non élagué (125 k tokens par requête en fin de session, 12,4 M tokens à 88 % de cache). Gardé ; à revoir seulement si la qualité en souffre, pas pour le seul coût.
 4. **`maxTurns` = 50** a été atteint 6 fois sur des besoins réels (70 puis 150 appels). Ce n'est plus « faut-il relever ? » mais « faut-il un plafond ? ». Décision de l'utilisateur, non prise.
-5. **Piloter Fuller sans humain** demande : dossier approuvé d'avance (`trusted-folders.json`), `modelFallback: auto` (sinon la fenêtre « changer de modèle ? » bloque sans fin), lecture du pied de page pour distinguer occupé/libre (« esc to interrupt »), Échap avant `/exit` si une boîte est ouverte. Le pilote qui fait tout ça : `reports/usage/2026-09-25-tache-tmp/pilote-task2.py` (copie de `task2.py`) ; consignes dans `consigne*.txt`.
+5. **Piloter Fuller sans humain** demande : dossier approuvé d'avance (`trusted-folders.json`), `modelFallback: auto` (sinon la fenêtre « changer de modèle ? » bloque sans fin), lecture du pied de page pour distinguer occupé/libre (« esc to interrupt »), Échap avant `/exit` si une boîte est ouverte, et **jamais le mode « bypass »** : en K007 le modèle a supprimé un dossier `/tmp` préexistant malgré la consigne (C006). Mode `auto` ou `acceptEdits` avec `--allowedTools` limité aux commandes de vérification, et espace isolé quand le vrai dépôt n'est pas nécessaire. Le pilote qui fait tout ça : `reports/usage/2026-09-25-tache-tmp/pilote-task2.py` (copie de `task2.py`) ; consignes dans `consigne*.txt`.
 6. **Le modèle** (3.6 à 3.8 Flash) lit par tranches de 20 à 60 lignes, relance une recherche sans résultat sans changer d'approche, et a deux fois renvoyé le texte d'un résultat comme arguments d'outil. Chaque cas a reçu une réponse dans l'outil, pas dans le prompt.
 7. **Quota** : le jour gratuit de 3.8 Flash est parti à 14:20 UTC sur les 15 clés (≈ 20 M tokens de prompt sur la journée, cache compris). Les sessions suivantes ont tourné sur 3.6 et 3.7. La remise à zéro est à 07:00 UTC.
 
@@ -264,7 +264,7 @@ Moteur conservé ; `taskState.ts` gelé ; pas de nouveau mécanisme sans échec 
 
 ### E. Ouvert
 
-- Décision `maxTurns` (utilisateur).
+- Décision `maxTurns` (utilisateur) ; depuis C006, le plafond demande un état des lieux au lieu de s'arrêter en silence (`loop.ts`), non observé en réel.
 - 5 225 dossiers `fuller-*` déjà dans `/tmp`, à supprimer à la main (aucun test ne les utilise).
 - Les autres tests Ink qui tapent après un simple `setImmediate` : candidats si un nouvel échec les désigne, pas avant.
 - La comparaison des seuils du budget de masquage : deux sessions, pas plus. Ne pas retoucher sans une troisième qui montre un problème de qualité.
