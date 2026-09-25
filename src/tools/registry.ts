@@ -258,7 +258,8 @@ export interface ToolContext {
 const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
 
 export function normalizeTodos(raw: unknown): TodoItem[] {
-  if (!Array.isArray(raw)) throw new Error('todos must be an array of { content, status }.');
+  // Seen twice in real sessions (25/09, two models): the previous result's text sent back as the arguments.
+  if (!Array.isArray(raw)) throw new Error('todos must be an array of { content, status }, for example {"todos": [{"content": "Run the tests", "status": "in_progress"}, {"content": "Report", "status": "pending"}]}. Send the list itself, not the text of a previous result.');
   return raw.slice(0, 50).map((t: any, i: number) => {
     const content = String(t?.content ?? '').trim();
     if (!content) throw new Error(`todos[${i}].content is required.`);

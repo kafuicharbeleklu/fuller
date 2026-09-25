@@ -46,7 +46,7 @@ describe('context pruning', () => {
     ];
     const history = conversation(rounds);
     const before = JSON.stringify(history);
-    const result = pruneToolOutputs(history, { saveDir: dir });
+    const result = pruneToolOutputs(history, { saveDir: dir, budgetChars: 0 });
     expect(JSON.stringify(history)).toBe(before); // the input is not modified
     // Rounds 1-3 are old (the last 3 stay): the two long ones are cleared, the short edit result stays.
     expect(result.pruned).toBe(2);
@@ -67,7 +67,7 @@ describe('context pruning', () => {
     expect(responses[0].parts![0].functionResponse!.id).toBe('c1');
     expect(responses[0].parts![0].functionResponse!.name).toBe('read_file');
     // A second pass finds nothing left to clear.
-    expect(pruneToolOutputs(result.history, { saveDir: dir, force: true }).pruned).toBe(0);
+    expect(pruneToolOutputs(result.history, { saveDir: dir, force: true, budgetChars: 0 }).pruned).toBe(0);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -81,7 +81,7 @@ describe('context pruning', () => {
       { name: 'glob', args: { pattern: '*' }, output: 'a' },
     ]);
     // No saveDir (a subagent without contextDir, or a failed archive): commands and subagent reports stay.
-    const result = pruneToolOutputs(history);
+    const result = pruneToolOutputs(history, { budgetChars: 0 });
     expect(result.pruned).toBe(1);
     const responses = result.history.filter((c) => c.role === 'user' && c.parts![0].functionResponse);
     expect(outputOf(responses[0])).toBe(big('deploy', 2000));
@@ -90,7 +90,7 @@ describe('context pruning', () => {
     expect(JSON.stringify(result.history)).not.toContain('Run it again');
     // With an archive, the command output goes and the marker points at the file.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-prune-'));
-    const archived = pruneToolOutputs(history, { saveDir: dir });
+    const archived = pruneToolOutputs(history, { saveDir: dir, budgetChars: 0 });
     expect(archived.pruned).toBe(3);
     expect(outputOf(archived.history.filter((c) => c.role === 'user' && c.parts![0].functionResponse)[0])).toMatch(/Full output saved at .*ctx-2-0\.txt/);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -104,7 +104,7 @@ describe('context pruning', () => {
       { role: 'user', parts: [{ functionResponse: { id: 'c1', name: 'read_file', response: { output: big('store') } } }] },
       ...conversation([{ name: 'glob', args: { pattern: '*' }, output: 'a' }, { name: 'glob', args: { pattern: '*' }, output: 'a' }, { name: 'glob', args: { pattern: '*' }, output: 'a' }]).slice(1),
     ];
-    const result = pruneToolOutputs(history, { force: true });
+    const result = pruneToolOutputs(history, { force: true, budgetChars: 0 });
     expect(result.pruned).toBe(1);
     expect(outputOf(result.history[3])).toContain('the output of read_file(src/session/store.ts)');
     expect(outputOf(result.history[3])).toContain('Read the file again');
@@ -117,7 +117,7 @@ describe('context pruning', () => {
       { role: 'user', parts: [{ functionResponse: { name: 'read_file', response: { output: big('one') } } }, { functionResponse: { name: 'read_file', response: { output: big('two') } } }] },
       ...conversation([{ name: 'glob', args: { pattern: '*' }, output: 'a\nb' }, { name: 'glob', args: { pattern: '*' }, output: 'a' }, { name: 'glob', args: { pattern: '*' }, output: 'a' }]).slice(1),
     ];
-    const result = pruneToolOutputs(history, { force: true });
+    const result = pruneToolOutputs(history, { force: true, budgetChars: 0 });
     expect(result.pruned).toBe(2);
     expect(outputOf(result.history[2], 0)).toContain('read_file(one.ts)');
     expect(outputOf(result.history[2], 1)).toContain('read_file(two.ts)');
@@ -133,11 +133,29 @@ describe('context pruning', () => {
     ]);
     const session = new GeminiAgentSession(config, history);
     expect(session.pruneHistory({ force: false })).toEqual({ pruned: 0, chars: 0 }); // under the trigger
-    const result = session.pruneHistory({ force: true });
+    const result = session.pruneHistory({ force: true, budgetChars: 0 });
     expect(result.pruned).toBe(1);
     const stored = session.getHistory().filter((c) => c.role === 'user' && c.parts![0].functionResponse);
     expect(outputOf(stored[0])).toContain(CLEARED_MARKER);
     expect(outputOf(stored[1])).toBe('short');
+  });
+
+  it('keeps a working set of recent outputs within the budget and clears only the oldest beyond it (real sessions, 25/09)', () => {
+    // Twelve old searches of ~28k characters each, then three short rounds: the budget (200k) keeps the most recent ones that fit.
+    const tag = (i: number) => String.fromCharCode(97 + i); // a…l: equal-sized outputs
+    const rounds = Array.from({ length: 12 }, (_, i) => ({ name: 'search_files', args: { query: tag(i) }, output: big(tag(i), 2000) }));
+    const history = conversation([...rounds, ...Array.from({ length: 3 }, () => ({ name: 'glob', args: { pattern: '*' }, output: 'a' }))]);
+    const result = pruneToolOutputs(history);
+    const responses = result.history.filter((c) => c.role === 'user' && c.parts![0].functionResponse);
+    const cleared = responses.map((r) => outputOf(r).startsWith(CLEARED_MARKER));
+    const fit = Math.floor(PRUNING.budgetChars / big('a', 2000).length); // how many of the equal-sized outputs the budget holds
+    expect(fit).toBeGreaterThan(3);
+    expect(result.pruned).toBe(12 - fit);
+    expect(cleared.slice(0, 12 - fit).every(Boolean)).toBe(true);
+    expect(cleared.slice(12 - fit).some(Boolean)).toBe(false);
+    // Under the trigger, nothing moves: one more old output beyond the budget is not worth a prefix change.
+    const small = conversation([...rounds.slice(0, 7), { name: 'search_files', args: { query: 'x' }, output: big('x', 300) }, ...Array.from({ length: 3 }, () => ({ name: 'glob', args: { pattern: '*' }, output: 'a' }))]);
+    expect(pruneToolOutputs(small).pruned).toBe(0);
   });
 
   it('never clears under the trigger unless forced, so the prompt prefix stays stable', () => {
@@ -147,7 +165,7 @@ describe('context pruning', () => {
       { name: 'glob', args: { pattern: '*' }, output: 'a' },
       { name: 'glob', args: { pattern: '*' }, output: 'a' },
     ]);
-    expect(pruneToolOutputs(history).pruned).toBe(0);
-    expect(pruneToolOutputs(history, { force: true }).pruned).toBe(1);
+    expect(pruneToolOutputs(history, { budgetChars: 0 }).pruned).toBe(0);
+    expect(pruneToolOutputs(history, { force: true, budgetChars: 0 }).pruned).toBe(1);
   });
 });

@@ -12,9 +12,16 @@ import type { Content, FunctionCall, Part } from '@google/genai';
 export const PRUNING = {
   /** The most recent tool-response rounds (one round = one batch of tool results) are never touched. */
   keepRounds: 3,
+  /**
+   * Working set: the most recent long outputs stay while they weigh at most this much together
+   * (about 50 000 tokens of a 1M window). Older ones beyond it are the only candidates. Two real
+   * sessions (25/09) showed a 3-round working set makes the model search and read the same
+   * things again and again on fan-out tasks (a file read 12 times, a query run 6 times).
+   */
+  budgetChars: 200_000,
   /** Shorter outputs stay: they are cheap and usually the useful part (a diff, an exit code). */
   minChars: 1_500,
-  /** Nothing is cleared until this much old output has piled up, so the prompt prefix (implicit cache) changes rarely. */
+  /** Nothing is cleared until this much output sits beyond the budget, so the prompt prefix (implicit cache) changes rarely. */
   triggerChars: 40_000,
   /** Kept at the top of the marker, so the model remembers what it was. */
   headChars: 160,
@@ -24,6 +31,7 @@ export interface PruneOptions {
   /** Where cleared outputs are written (`ctx-<round>-<part>.txt`); without it they are only described. */
   saveDir?: string;
   keepRounds?: number;
+  budgetChars?: number;
   minChars?: number;
   triggerChars?: number;
   /** Clear even under the trigger (manual /compact-like use). */
@@ -84,31 +92,43 @@ function hint(call: FunctionCall | undefined, saved?: string): string | null {
 
 /**
  * The history with old long tool outputs replaced by markers. The input is not modified.
- * Nothing changes until the clearable outputs weigh `triggerChars`, then every clearable
- * output goes at once: one prefix change instead of one per request.
+ * The most recent long outputs are kept as a working set (`keepRounds` at least, and as many
+ * older ones as fit in `budgetChars`); beyond it, nothing changes until the excess weighs
+ * `triggerChars`, then every output beyond the budget goes at once: one prefix change
+ * instead of one per request.
  */
 export function pruneToolOutputs(history: Content[], options: PruneOptions = {}): PruneResult {
   const keepRounds = options.keepRounds ?? PRUNING.keepRounds;
+  const budgetChars = options.budgetChars ?? PRUNING.budgetChars;
   const minChars = options.minChars ?? PRUNING.minChars;
   const triggerChars = options.triggerChars ?? PRUNING.triggerChars;
   const rounds = history.map((c, i) => (c.role === 'user' && (c.parts ?? []).some((p) => p.functionResponse) ? i : -1)).filter((i) => i >= 0);
   const clearable = rounds.slice(0, Math.max(0, rounds.length - keepRounds));
   type Candidate = { round: number; part: number; output: string };
-  const candidates: Candidate[] = [];
+  const older: Candidate[] = [];
   for (const round of clearable) {
     (history[round].parts ?? []).forEach((p, part) => {
       const output = (p.functionResponse?.response as { output?: unknown } | undefined)?.output;
       if (typeof output !== 'string' || output.length < minChars || output.startsWith(CLEARED_MARKER)) return;
-      candidates.push({ round, part, output });
+      older.push({ round, part, output });
     });
   }
+  // Newest first: what fits in the budget stays, the rest (oldest) is the candidate list.
+  let kept = 0;
+  let firstBeyond = older.length;
+  for (let i = older.length - 1; i >= 0; i--) {
+    if (kept + older[i].output.length > budgetChars) { firstBeyond = i + 1; break; }
+    kept += older[i].output.length;
+    firstBeyond = i;
+  }
+  const candidates = older.slice(0, firstBeyond);
   const chars = candidates.reduce((n, c) => n + c.output.length, 0);
   if (candidates.length === 0 || (!options.force && chars < triggerChars)) return { history, pruned: 0, chars: 0 };
 
   const next = history.map((c) => ({ ...c, parts: c.parts ? [...c.parts] : c.parts }));
   const usedCalls = new Set<FunctionCall>();
   let removed = 0;
-  let kept = 0;
+  let unarchived = 0;
   if (options.saveDir) {
     try { fs.mkdirSync(options.saveDir, { recursive: true, mode: 0o700 }); } catch {}
   }
@@ -122,7 +142,7 @@ export function pruneToolOutputs(history: Content[], options: PruneOptions = {})
       try { fs.writeFileSync(file, output, { encoding: 'utf8', mode: 0o600 }); saved = file; } catch {}
     }
     const recovery = hint(call, saved);
-    if (!recovery) { kept++; continue; }
+    if (!recovery) { unarchived++; continue; }
     const lines = output.split('\n').length;
     const head = output.slice(0, PRUNING.headChars).split('\n')[0];
     const marker = `${CLEARED_MARKER} to save space: the output of ${describeCall(call, response.name ?? 'tool')} (${lines} line${lines === 1 ? '' : 's'}, ${output.length.toLocaleString('en-US')} characters). ${recovery}]\n${head}${output.length > head.length ? ' …' : ''}`;
@@ -130,6 +150,6 @@ export function pruneToolOutputs(history: Content[], options: PruneOptions = {})
     next[round].parts![part] = replaced;
     removed += output.length - marker.length;
   }
-  const pruned = candidates.length - kept;
+  const pruned = candidates.length - unarchived;
   return pruned > 0 ? { history: next, pruned, chars: removed } : { history, pruned: 0, chars: 0 };
 }
