@@ -593,6 +593,20 @@ describe('AgentLoop', () => {
       expect(items.some((i) => i.kind === 'text' && i.content === 'Resumed.')).toBe(true);
     });
 
+    it('names the files changed this turn when the turn ends on an error', async () => {
+      script = [
+        { functionCalls: [{ id: 'w', name: 'write_file', args: { file_path: 'new.txt', content: 'x' } }] },
+        { error: new Error('fetch failed') },
+      ];
+      const { cb, items } = makeCallbacks();
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      config.permissionMode = 'bypassPermissions';
+      const loop = new AgentLoop(config, cb);
+      await loop.handleUserInput('write');
+      expect(notices(items).some((n) => n.includes('fetch failed'))).toBe(true);
+      expect(notices(items).some((n) => n === 'Files changed this turn: new.txt')).toBe(true);
+    });
+
     it('repairs the history when the model calls a tool anyway at the turn limit', async () => {
       script = [
         { functionCalls: [{ id: 'first', name: 'read_file', args: { file_path: 'a.txt' } }] },

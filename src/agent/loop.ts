@@ -955,6 +955,9 @@ export class AgentLoop {
         this.callbacks.onNotify?.('error');
         this.session.repairHistory();
       }
+      // No model status is coming: at least say what this turn changed (Codex, C007).
+      const changed = work.changedFiles();
+      if (changed.length) this.addSystemMessage(`Files changed this turn: ${changed.map((f) => (path.isAbsolute(f) ? path.relative(this.config.workspaceDir, f) || f : f)).join(', ')}`, 'notice');
       assistant.content = assistant.parts!.filter((p) => p.type === 'text').map((p: any) => p.content).join('\n\n');
     } finally {
       this.callbacks.onNotice(null);

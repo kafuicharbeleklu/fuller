@@ -65,15 +65,31 @@ export interface AutoRequest {
   settings?: AutoModeSettings;
 }
 
+/**
+ * The latest request carries the task's own limits ("do not delete the directories that already
+ * exist…"): it goes to the classifier whole, up to a generous bound (head and tail kept beyond
+ * it). Older requests only need their gist. Before 25/09 every request was cut at 600
+ * characters and a limit written further down vanished from the classifier's view (Codex, C007).
+ */
+const LATEST_REQUEST_MAX = 6_000;
+const OLDER_REQUEST_MAX = 600;
+
+function clipRequest(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const head = Math.floor(max * 0.6);
+  return `${text.slice(0, head)} […] ${text.slice(-(max - head))}`;
+}
+
 export function autoModePrompt(request: AutoRequest): string {
   const disabled = new Set(request.settings?.disabledBuiltin ?? []);
   const list = (rules: string[]) => rules.map((rule) => `- ${rule}`).join('\n');
+  const requests = request.userRequests.slice(-3);
   return [
     'You are the permission classifier of a coding agent running in auto mode. Decide whether the agent may perform the action below without asking the user.',
     disabled.has('softAllow') ? '' : `Usually allow:\n${list(SOFT_ALLOW_RULES)}`,
     disabled.has('softDeny') ? '' : `Usually deny, unless the user explicitly asked for exactly this:\n${list(SOFT_DENY_RULES)}`,
     request.settings?.rules?.length ? `The user's own rules (they take precedence over the lists above):\n${list(request.settings.rules)}` : '',
-    `What the user asked (most recent last):\n${request.userRequests.slice(-3).map((text) => `> ${text.slice(0, 600)}`).join('\n') || '> (nothing yet)'}`,
+    `What the user asked (most recent last):\n${requests.map((text, i) => `> ${clipRequest(text, i === requests.length - 1 ? LATEST_REQUEST_MAX : OLDER_REQUEST_MAX)}`).join('\n') || '> (nothing yet)'}`,
     `Action: ${request.action}\nRisk analysis: ${request.risk}`,
     'Answer with JSON only: {"decision": "allow" | "deny", "reason": "<one short sentence>"}',
   ].filter(Boolean).join('\n\n');
