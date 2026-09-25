@@ -66,6 +66,17 @@ describe('prompt parity', () => {
     expect(screen.sendNow).toHaveBeenLastCalledWith('', []);
   });
 
+  it('cycles the /diff panel base with Ctrl+X B, and keeps a plain b as text', async () => {
+    const onCycleDiffBase = vi.fn();
+    const screen = await input({ onCycleDiffBase });
+    await screen.keys('\x18', 'b');
+    expect(onCycleDiffBase).toHaveBeenCalledTimes(1);
+    expect(screen.lastFrame()).not.toMatch(/❯ b/);
+    await screen.keys('b');
+    expect(onCycleDiffBase).toHaveBeenCalledTimes(1);
+    expect(screen.lastFrame()).toContain('b');
+  });
+
   it('takes the queue ahead of a draft on its first line', async () => {
     const take = vi.fn(() => ({ text: 'one\ntwo', attachments: [], bash: false }));
     const screen = await input({ queue: ['one', 'two'], onTakeQueue: take });

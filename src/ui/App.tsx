@@ -36,8 +36,8 @@ import { Pager } from './Pager.js';
 import { editPromptExternally } from './externalEditor.js';
 import { FullscreenTranscript, useTranscriptRows, type ScrollAction } from './FullscreenTranscript.js';
 import { transcriptLines } from './viewerText.js';
-import { readGitDiff, readFileDiffs, type FileDiff } from './gitDiff.js';
-import { saveUserSetting } from '../config.js';
+import { readGitDiff, readFileDiffs, isTestOrGenerated, nextDiffBase, defaultBranch, type FileDiff, type DiffBase } from './gitDiff.js';
+import { saveUserSetting, saveProjectLocalSetting } from '../config.js';
 import { DiffPanel, diffPanelClick, maxPanelScroll, type DiffPanelState } from './DiffPanel.js';
 import { toolLabel, toolArgSummary } from '../tools/registry.js';
 import { TodoPanel } from './TodoPanel.js';
@@ -165,12 +165,22 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   // /diff: at 110 columns and more in fullscreen, Claude Code's panel beside the conversation.
   const [diffPanel, setDiffPanel] = useState<DiffPanelState | null>(null);
   /** Null outside a git repository. */
-  const loadDiffPanel = useCallback((showOthers = false, scroll = 0): DiffPanelState | null => {
-    const all = readFileDiffs(config.workspaceDir);
+  const loadDiffPanel = useCallback((showOthers = false, scroll = 0, showSkipped = false, baseArg?: DiffBase): DiffPanelState | null => {
+    // The base is remembered per project (Claude Code): this session, uncommitted, or since the default branch.
+    const base: DiffBase = baseArg ?? config.settings.diffBase ?? 'session';
+    const all = readFileDiffs(config.workspaceDir, base === 'branch' ? 'branch' : 'uncommitted');
     if (!all) return null;
     const edited = new Set(agentRef.current?.sessionEditedFiles() ?? []);
-    return { files: all.filter((f) => edited.has(f.file)), others: all.filter((f) => !edited.has(f.file)), showOthers, scroll };
-  }, [config.workspaceDir]);
+    // The list leaves out test and generated files, behind a count line; the earlier changes keep theirs.
+    const listed = base === 'session' ? all.filter((f) => edited.has(f.file)) : all;
+    const others = base === 'session' ? all.filter((f) => !edited.has(f.file)) : [];
+    return {
+      files: listed.filter((f) => !isTestOrGenerated(f.file)),
+      skipped: listed.filter((f) => isTestOrGenerated(f.file)),
+      others, showOthers, showSkipped, scroll, base,
+      branch: base === 'branch' ? defaultBranch(config.workspaceDir) : undefined,
+    };
+  }, [config]);
   // Claude Code remembers the panel across sessions: opened with /diff, it opens on its own at 110
   // columns; closed, it stays closed until /diff again; never used, it opens on its own from 144.
   const setDiffPreference = useCallback((value: 'opened' | 'closed') => {
@@ -211,9 +221,19 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
     diffRefresh.current = setTimeout(() => {
       diffRefresh.current = null;
       const current = diffPanelRef.current;
-      if (current) setDiffPanel(loadDiffPanel(current.showOthers, current.scroll) ?? current);
+      if (current) setDiffPanel(loadDiffPanel(current.showOthers, current.scroll, current.showSkipped, current.base) ?? current);
     }, 100);
   }, [loadDiffPanel]);
+  // Ctrl+X B while the panel is open: the next base, remembered for this project (.fuller/settings.local.json).
+  const cycleDiffBase = useCallback(() => {
+    const current = diffPanelRef.current;
+    if (!current) return;
+    const base = nextDiffBase(current.base ?? 'session');
+    config.settings.diffBase = base;
+    try { saveProjectLocalSetting(config.workspaceDir, ['diffBase'], base); } catch {}
+    setDiffPanel({ ...current, base, loading: true });
+    setTimeout(() => { const now = diffPanelRef.current; if (now) setDiffPanel(loadDiffPanel(now.showOthers, 0, now.showSkipped, base) ?? now); }, 0);
+  }, [config, loadDiffPanel]);
   const onToolDone = useCallback((name: string) => {
     if (!fullscreen) return;
     if (diffPanelRef.current) {
@@ -662,7 +682,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
               <Box flexDirection="column" width={diffPanel ? diffPanelLayout(stdout?.columns ?? 80).left : undefined} flexGrow={diffPanel ? 0 : 1}>
                 {(!pickerOpen || pickerTranscriptHeight > 0) && (!confirmation || rows >= 16) ? <FullscreenTranscript lines={fullscreenLines} height={measuredTranscriptHeight ?? transcriptHeight} scrollRequest={scrollRequest} width={diffPanel ? diffPanelLayout(stdout?.columns ?? 80).left : undefined} /> : null}
               </Box>
-              {diffPanel ? <DiffPanel files={diffPanel.files} others={diffPanel.others} showOthers={diffPanel.showOthers} loading={diffPanel.loading} scroll={diffPanel.scroll} width={diffPanelLayout(stdout?.columns ?? 80).panel} height={measuredTranscriptHeight ?? transcriptHeight} /> : null}
+              {diffPanel ? <DiffPanel {...diffPanel} width={diffPanelLayout(stdout?.columns ?? 80).panel} height={measuredTranscriptHeight ?? transcriptHeight} /> : null}
             </Box>
           </Box>
         ) : null}
@@ -810,6 +830,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onToggleHelp={onToggleHelp}
             onToggleTodos={onToggleTodos}
             onOpenDiff={openDiffViewer}
+            onCycleDiffBase={cycleDiffBase}
             onScrollTranscript={fullscreen ? (direction, x) => {
               // The wheel over the diff panel scrolls the panel.
               if (diffPanel && x !== undefined && x - 1 >= diffPanelLayout(stdout?.columns ?? 80).left && (direction === 'lineUp' || direction === 'lineDown')) {
@@ -831,7 +852,8 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
               const action = diffPanelClick(diffPanel, panel, measuredTranscriptHeight ?? transcriptHeight, y - 1, col);
               if (!action) return;
               if ('close' in action) { setDiffPanel(null); setDiffPreference('closed'); addSystem('Diff panel hidden', 'notice'); }
-              else if ('toggle' in action) setDiffPanel(loadDiffPanel(!diffPanel.showOthers) ?? diffPanel);
+              else if ('toggle' in action) setDiffPanel(loadDiffPanel(!diffPanel.showOthers, 0, diffPanel.showSkipped, diffPanel.base) ?? diffPanel);
+              else if ('toggleSkipped' in action) setDiffPanel({ ...diffPanel, showSkipped: !diffPanel.showSkipped });
               else setDiffPanel({ ...diffPanel, scroll: action.scroll });
             } : undefined}
             commandUsage={commandUsage}

@@ -42,6 +42,8 @@ export interface InputBoxProps {
   onToggleHelp: () => void;
   onToggleTodos?: () => void;
   onOpenDiff?: () => void;
+  /** Ctrl+X B: cycle what the /diff panel compares against. */
+  onCycleDiffBase?: () => void;
   /** x, y: the mouse position for wheel scrolls. */
   onScrollTranscript?: (action: ScrollAction, x?: number, y?: number) => void;
   onDoubleEscape: () => void;
@@ -81,7 +83,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const {
     isActive, busy, queue, history: initialHistory, allHistory = initialHistory, sessionHistory = [], fullscreen = false, cwd, commands, showHelp, compactEmpty = false, placeholder,
     onSubmit, onCommand, onBash, onInterrupt, onExit, onCycleMode, onClearScreen,
-    onToggleVerbose, onToggleHelp, onToggleTodos, onOpenDiff, onScrollTranscript, onDoubleEscape, onPopQueue, onStateChange, onSwitchModel, onSuspend, onAgents, onMouseClick, commandUsage = {}, onSendNow, onBackground, onTakeQueue,
+    onToggleVerbose, onToggleHelp, onToggleTodos, onOpenDiff, onCycleDiffBase, onScrollTranscript, onDoubleEscape, onPopQueue, onStateChange, onSwitchModel, onSuspend, onAgents, onMouseClick, commandUsage = {}, onSendNow, onBackground, onTakeQueue,
   } = props;
 
   const ed = useRef<EditorState>({ text: '', cursor: 0 });
@@ -528,6 +530,8 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
     if (sendChord.current) {
       sendChord.current = false;
       if (e.name === 'char' && e.ctrl && e.text === 's') { submit(true); return; }
+      // Ctrl+X B: the /diff panel compares against the next base (Claude Code).
+      if (e.name === 'char' && !e.ctrl && !e.alt && e.text.toLowerCase() === 'b') { onCycleDiffBase?.(); return; }
     }
     if (e.name === 'char' && e.ctrl) {
       switch (e.text) {

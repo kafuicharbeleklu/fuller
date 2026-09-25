@@ -97,5 +97,35 @@ describe('/diff panel (Claude Code 2.1.281, 110 columns and more)', () => {
     expect(plain(screen.lastFrame() || '')[1]).toMatch(/^ 1 file changed \+3 -1 +✕/);
     screen.unmount();
   });
+  it('leaves test and generated files out of the list, behind a count line that a click expands (Claude Code docs)', () => {
+    const skipped = [{ file: 'tests/a.test.ts', diff, additions: 3, removals: 1 }, { file: 'package-lock.json', diff, additions: 3, removals: 1 }];
+    const state = { files: [{ file: 'src/a.ts', diff, additions: 3, removals: 1 }], others: [], showOthers: false, skipped, showSkipped: false };
+    const { rows } = panelRows(state, 57);
+    const line = rows.findIndex((r) => r.kind === 'skipped');
+    expect((rows[line] as any).text).toBe('+2 test and generated files (show)');
+    expect(rows.some((r) => r.kind === 'title' && r.text === 'tests/a.test.ts')).toBe(false);
+    // The count line is a body row: clicking it toggles the group.
+    expect(diffPanelClick(state, 57, 40, 2 + line, 3)).toEqual({ toggleSkipped: true });
+    const expanded = panelRows({ ...state, showSkipped: true }, 57).rows;
+    expect((expanded.find((r) => r.kind === 'skipped') as any).text).toBe('+2 test and generated files (hide)');
+    expect(expanded.some((r) => r.kind === 'title' && r.text === 'package-lock.json')).toBe(true);
+    // Only the header counts the listed files.
+    const screen = render(<ThemeProvider theme={loadTheme('dark')}><DiffPanel {...state} width={57} height={16} /></ThemeProvider>);
+    expect(plain(screen.lastFrame() || '')[1]).toMatch(/^ 1 file changed \+3 -1/);
+    screen.unmount();
+  });
+
+  it('names the base in the header when it is not this session (Ctrl+X B)', () => {
+    const file = { file: 'src/a.ts', diff, additions: 3, removals: 1 };
+    const uncommitted = render(<ThemeProvider theme={loadTheme('dark')}><DiffPanel files={[file]} others={[]} showOthers={false} base="uncommitted" width={57} height={16} /></ThemeProvider>);
+    expect(plain(uncommitted.lastFrame() || '')[1]).toMatch(/^ 1 file changed \+3 -1 · uncommitted +✕/);
+    uncommitted.unmount();
+    const branch = render(<ThemeProvider theme={loadTheme('dark')}><DiffPanel files={[file]} others={[]} showOthers={false} base="branch" branch="main" width={57} height={16} /></ThemeProvider>);
+    expect(plain(branch.lastFrame() || '')[1]).toMatch(/· since main +✕/);
+    branch.unmount();
+    const session = render(<ThemeProvider theme={loadTheme('dark')}><DiffPanel files={[file]} others={[]} showOthers={false} base="session" width={57} height={16} /></ThemeProvider>);
+    expect(plain(session.lastFrame() || '')[1]).not.toContain('·');
+    session.unmount();
+  });
 });
 

@@ -58,6 +58,8 @@ export interface Settings {
   contextPruning?: boolean;
   /** The /diff panel as Claude Code remembers it: opened with /diff (opens on its own at 110 columns), or closed (stays closed). */
   diffPanel?: 'auto' | 'opened' | 'closed';
+  /** What the /diff panel compares against (Ctrl+X B); Claude Code remembers it per project, so it lives in .fuller/settings.local.json. */
+  diffBase?: 'session' | 'uncommitted' | 'branch';
   /** A second agent reviews the turn's changes before the model concludes: large changes only (default), every change, or never. */
   reviewChanges?: 'risky' | 'always' | 'off';
   notifications?: NotificationSetting;
@@ -172,6 +174,19 @@ export function saveUserSetting(keys: string[], value: unknown, configDir = user
   for (const key of keys.slice(0, -1)) node = node[key] = typeof node[key] === 'object' && node[key] ? node[key] : {};
   node[keys[keys.length - 1]] = value;
   fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(current, null, 2) + '\n', 'utf8');
+  return file;
+}
+
+/** Sets one setting of this project only, in .fuller/settings.local.json (not shared through git). */
+export function saveProjectLocalSetting(workspaceDir: string, keys: string[], value: unknown): string {
+  const dir = projectConfigDir(workspaceDir);
+  const file = path.join(dir, 'settings.local.json');
+  const current = readJson(file) ?? {};
+  let node: Record<string, any> = current;
+  for (const key of keys.slice(0, -1)) node = node[key] = typeof node[key] === 'object' && node[key] ? node[key] : {};
+  node[keys[keys.length - 1]] = value;
+  fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(file, JSON.stringify(current, null, 2) + '\n', 'utf8');
   return file;
 }

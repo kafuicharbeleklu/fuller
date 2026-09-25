@@ -54,16 +54,60 @@ function newFileDiff(cwd: string, file: string): string {
   }
 }
 
-/** Each changed file against HEAD (untracked files as new), for the /diff panel. */
-export function readFileDiffs(cwd: string): FileDiff[] | null {
+/**
+ * What the /diff panel compares against (Claude Code: "press Ctrl+X B to cycle from this
+ * session's changes, to your uncommitted changes as one list, to everything since your branch
+ * split from the default branch").
+ */
+export type DiffBase = 'session' | 'uncommitted' | 'branch';
+export const DIFF_BASES: DiffBase[] = ['session', 'uncommitted', 'branch'];
+
+export function nextDiffBase(base: DiffBase): DiffBase {
+  return DIFF_BASES[(DIFF_BASES.indexOf(base) + 1) % DIFF_BASES.length];
+}
+
+/** Test files and generated files: the panel's list leaves them out, behind a count line (Claude Code). */
+export function isTestOrGenerated(file: string): boolean {
+  const f = file.replace(/\\/g, '/');
+  const base = f.slice(f.lastIndexOf('/') + 1);
+  if (/(^|\/)(tests?|__tests__|__snapshots__|spec|specs|fixtures)\//i.test(f)) return true;
+  if (/\.(test|spec)\.[cm]?[jt]sx?$/i.test(base) || /(^test_.*\.py|_test\.(go|py|rb|rs)|Test\.(java|kt|cs|php)|_spec\.rb)$/.test(base)) return true;
+  if (/(^|\/)(dist|build|out|coverage|node_modules|target|\.next|\.nuxt|vendor|generated|__generated__)\//i.test(f)) return true;
+  if (/^(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|npm-shrinkwrap\.json|Cargo\.lock|poetry\.lock|Pipfile\.lock|composer\.lock|Gemfile\.lock|go\.sum|flake\.lock)$/.test(base)) return true;
+  return /(\.min\.(js|css)|\.map|\.snap|\.generated\.[a-z]+|\.g\.dart|\.pb\.go|_pb2\.py|\.d\.ts\.map|\.cast)$/i.test(base);
+}
+
+/** The branch the repository forks from: origin's HEAD, else main or master when they exist. */
+export function defaultBranch(cwd: string): string | null {
+  const run = (args: string[]) => spawnSync('git', ['-c', 'color.ui=false', ...args], { cwd, encoding: 'utf8' });
+  const origin = run(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  if (origin.status === 0 && origin.stdout.trim()) return origin.stdout.trim();
+  for (const name of ['main', 'master', 'origin/main', 'origin/master']) {
+    if (run(['rev-parse', '--verify', '--quiet', `refs/${name.startsWith('origin/') ? 'remotes/' : 'heads/'}${name}`]).status === 0) return name;
+  }
+  return null;
+}
+
+/**
+ * Each changed file (untracked files as new), for the /diff panel: against HEAD, or, for the
+ * `branch` base, against the point where the current branch split from the default branch.
+ */
+export function readFileDiffs(cwd: string, base: DiffBase = 'uncommitted'): FileDiff[] | null {
   const run = (args: string[]) => spawnSync('git', ['-c', 'color.ui=false', ...args], { cwd, encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
   const top = run(['rev-parse', '--show-toplevel']);
   if (top.error || top.status !== 0) return null;
   const hasHead = run(['rev-parse', '--verify', '--quiet', 'HEAD']).status === 0;
   const clean = (text: string) => stripAnsi(text).replace(/\r/g, '');
   const out: FileDiff[] = [];
+  let against: string[] = hasHead ? ['HEAD'] : ['--cached'];
+  if (base === 'branch' && hasHead) {
+    const branch = defaultBranch(cwd);
+    const fork = branch ? run(['merge-base', branch, 'HEAD']) : null;
+    // On the default branch itself, or without one, the fork point is HEAD: same as uncommitted.
+    if (fork && fork.status === 0 && fork.stdout.trim()) against = [fork.stdout.trim()];
+  }
   // One call for every tracked change, split per file.
-  const all = clean(run(['diff', ...(hasHead ? ['HEAD'] : ['--cached']), '--no-ext-diff', '--relative']).stdout);
+  const all = clean(run(['diff', ...against, '--no-ext-diff', '--relative']).stdout);
   for (const chunk of all.split(/^(?=diff --git )/m).filter((c) => c.startsWith('diff --git '))) {
     const header = chunk.match(/^diff --git a\/(.+?) b\/(.+)$/m);
     const file = header?.[2] ?? '';

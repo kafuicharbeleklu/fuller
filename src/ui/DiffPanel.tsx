@@ -4,18 +4,32 @@ import stringWidth from 'string-width';
 import wrapAnsi from 'wrap-ansi';
 import { useTheme } from './theme.js';
 import { DiffRow, diffRows, type DiffRowLine } from './DiffView.js';
-import type { FileDiff } from './gitDiff.js';
+import type { FileDiff, DiffBase } from './gitDiff.js';
 
 export interface DiffPanelState {
-  /** Files the agent changed in this session. */
+  /** Files the agent changed in this session (or every change, with the uncommitted and branch bases). */
   files: FileDiff[];
-  /** Other changed files ("+2 files edited before this session"). */
+  /** Other changed files ("+2 files edited before this session"); empty for the uncommitted and branch bases. */
   others: FileDiff[];
   showOthers: boolean;
+  /** Test files and generated files, left out of the list behind a count line (Claude Code). */
+  skipped?: FileDiff[];
+  showSkipped?: boolean;
+  /** What the panel compares against (Ctrl+X B). */
+  base?: DiffBase;
+  /** The default branch, for the `branch` base's header. */
+  branch?: string | null;
   /** While the changes are read. */
   loading?: boolean;
   /** First body row shown (the mouse wheel scrolls the panel). */
   scroll?: number;
+}
+
+/** "this session", "uncommitted", "since main": the header's suffix for the base in use. */
+export function baseLabel(base: DiffBase | undefined, branch?: string | null): string {
+  if (base === 'uncommitted') return 'uncommitted';
+  if (base === 'branch') return branch ? `since ${branch}` : 'since branch';
+  return 'this session';
 }
 
 interface Props extends DiffPanelState {
@@ -38,6 +52,7 @@ type Row =
   | { kind: 'blank' }
   | { kind: 'empty'; text: string }
   | { kind: 'toggle'; text: string }
+  | { kind: 'skipped'; text: string }
   | { kind: 'item'; file: FileDiff; target: number }
   | { kind: 'rule' }
   | { kind: 'title'; text: string }
@@ -53,6 +68,7 @@ type Row =
  */
 export function panelRows(state: DiffPanelState, width: number): { rows: Row[]; togglesInBody: boolean } {
   const { files, others, showOthers, loading } = state;
+  const skipped = state.skipped ?? [];
   const inner = Math.max(10, width - 2);
   const rows: Row[] = [];
   const group = (list: FileDiff[]) => {
@@ -71,14 +87,24 @@ export function panelRows(state: DiffPanelState, width: number): { rows: Row[]; 
       }
     });
   };
+  // The test and generated files come after the list, behind their own count line (Claude Code:
+  // "the list skips test files and generated files … Click either count line to expand it").
+  const skippedRows = () => {
+    if (!skipped.length) return;
+    rows.push({ kind: 'blank' }, { kind: 'skipped', text: skippedText(skipped.length, !!state.showSkipped) });
+    if (state.showSkipped) { rows.push({ kind: 'blank' }); group(skipped); }
+  };
   const othersOnTop = showOthers && files.length === 0 && others.length > 0 && !loading;
   if (othersOnTop) {
     rows.push({ kind: 'blank' }, { kind: 'empty', text: 'No changes this session' }, { kind: 'blank' });
     rows.push({ kind: 'toggle', text: toggleText(others.length, true) }, { kind: 'blank' });
     group(others);
-  } else if (files.length) {
+    skippedRows();
+  } else if (files.length || (skipped.length && !loading)) {
     rows.push({ kind: 'blank' });
-    group(files);
+    if (files.length) group(files);
+    else rows.push({ kind: 'empty', text: 'No changes this session' });
+    skippedRows();
     if (showOthers && others.length) { rows.push({ kind: 'blank' }); group(others); }
   }
   return { rows, togglesInBody: othersOnTop };
@@ -86,6 +112,10 @@ export function panelRows(state: DiffPanelState, width: number): { rows: Row[]; 
 
 function toggleText(count: number, shown: boolean): string {
   return count ? `+${plural(count, 'file')} edited before this session (${shown ? 'hide' : 'show'})` : '';
+}
+
+function skippedText(count: number, shown: boolean): string {
+  return `+${count} test and generated file${count === 1 ? '' : 's'} (${shown ? 'hide' : 'show'})`;
 }
 
 function bodyHeight(height: number): number {
@@ -98,7 +128,7 @@ export function maxPanelScroll(state: DiffPanelState, width: number, height: num
 }
 
 /** What a click at `row` (0 = the panel's first row) and `col` does: close, show/hide the earlier changes, or jump to a file. */
-export function diffPanelClick(state: DiffPanelState, width: number, height: number, row: number, col: number): { close: true } | { toggle: true } | { scroll: number } | null {
+export function diffPanelClick(state: DiffPanelState, width: number, height: number, row: number, col: number): { close: true } | { toggle: true } | { toggleSkipped: true } | { scroll: number } | null {
   if (row === 1 && col >= width - 2) return { close: true };
   const { rows, togglesInBody } = panelRows(state, width);
   if (!togglesInBody && row === height - BOTTOM && state.others.length) return { toggle: true };
@@ -106,6 +136,7 @@ export function diffPanelClick(state: DiffPanelState, width: number, height: num
   if (row < TOP || row >= height - BOTTOM || index < 0 || index >= rows.length) return null;
   const hit = rows[index];
   if (hit.kind === 'toggle') return { toggle: true };
+  if (hit.kind === 'skipped') return { toggleSkipped: true };
   if (hit.kind === 'item') return { scroll: Math.min(hit.target, maxPanelScroll(state, width, height)) };
   return null;
 }
@@ -130,6 +161,8 @@ export const DiffPanel: React.FC<Props> = (props) => {
   const removals = files.reduce((sum, f) => sum + f.removals, 0);
   const stat = (a: number, r: number) => <><Text color={STAT_ADDED}>+{a}</Text> <Text color={STAT_REMOVED}>-{r}</Text></>;
   const header = files.length ? `${plural(files.length, 'file')} changed ` : '';
+  // The base in use, after the counts: "· this session", "· uncommitted", "· since main".
+  const suffix = props.base && props.base !== 'session' ? ` · ${baseLabel(props.base, props.branch)}` : '';
 
   const { rows, togglesInBody } = panelRows(props, width);
   const visible = bodyHeight(height);
@@ -139,6 +172,7 @@ export const DiffPanel: React.FC<Props> = (props) => {
       case 'blank': return blank(key);
       case 'empty':
       case 'toggle':
+      case 'skipped':
       case 'note': return line(key, <Text color={theme.subtle}>{row.text}</Text>, stringWidth(row.text));
       case 'rule': return line(key, <Text color={theme.subtle}>{'─'.repeat(inner)}</Text>, inner);
       case 'title': return line(key, <Text bold>{row.text}</Text>, stringWidth(row.text));
@@ -168,7 +202,8 @@ export const DiffPanel: React.FC<Props> = (props) => {
       {blank('top')}
       {line('header', <>
         {files.length ? <><Text bold>{header}</Text>{stat(additions, removals)}</> : null}
-        {' '.repeat(Math.max(0, inner - stringWidth(header) - (files.length ? statText({ additions, removals }).length : 0) - 1))}
+        {suffix ? <Text color={theme.subtle}>{suffix}</Text> : null}
+        {' '.repeat(Math.max(0, inner - stringWidth(header) - (files.length ? statText({ additions, removals }).length : 0) - stringWidth(suffix) - 1))}
         <Text color={theme.subtle}>✕</Text>
       </>, inner)}
       <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
