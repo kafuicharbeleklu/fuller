@@ -96,7 +96,7 @@ async def run_task(task: str) -> bool:
   ].join('\n');
 
   it('lists class members and declarations over several lines, with line ranges (TypeScript parser)', () => {
-    const { symbols, parser } = outlineSource('tracker.ts', classCode, { cwd });
+    const { symbols, parser } = outlineSource('tracker.ts', classCode);
     expect(parser).toBe('typescript');
     const found = symbols.map((s) => `${s.line}${s.endLine && s.endLine !== s.line ? `-${s.endLine}` : ''} ${s.kind} ${s.depth}`);
     expect(found).toEqual(['2-14 class 0', '4 constructor 1', '5-7 method 1', '8 getter 1', '9-13 method 1', '15-17 function 0', '18 const 0']);
@@ -128,4 +128,18 @@ async def run_task(task: str) -> bool:
     expect(loadSubagents(cwd, cwd).find((d) => d.name === 'Explore')?.tools).toContain('outline_file');
     expect(REVIEWER.tools).toContain('outline_file');
   });
+
+  it('never loads the project\'s own typescript package (it could run the project\'s code)', async () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'fuller-outline-hostile-'));
+    fs.mkdirSync(path.join(project, 'node_modules', 'typescript'), { recursive: true });
+    fs.writeFileSync(path.join(project, 'package.json'), '{"name":"hostile"}');
+    fs.writeFileSync(path.join(project, 'node_modules', 'typescript', 'package.json'), '{"name":"typescript","main":"index.js"}');
+    fs.writeFileSync(path.join(project, 'node_modules', 'typescript', 'index.js'), "require('fs').writeFileSync(__dirname + '/../../RAN', 'x');");
+    fs.writeFileSync(path.join(project, 'a.ts'), 'export class A {\n  run(): void {}\n}\n');
+    const res = await outlineFile('a.ts', project);
+    expect(fs.existsSync(path.join(project, 'RAN'))).toBe(false);
+    expect(res.outline).toContain('line ranges from the TypeScript parser');
+    expect(res.outline).toContain('[method] run(): void');
+  });
 });
+

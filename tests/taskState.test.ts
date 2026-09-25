@@ -87,12 +87,24 @@ describe('WorkTracker.beforeConclude', () => {
     expect(reminder?.text).toContain('changed `src/b.js` after your last check (`node --test`)');
   });
 
-  it('counts a check behind a filter as run, without clearing a known failure', () => {
+  it('counts a check behind a filter as run, but asks once to confirm its result', () => {
     const work = new WorkTracker();
     work.noteChanges(['src/a.js']);
     work.noteCommand('npm test 2>&1 | tail -20', 'ok 1');
+    const reminder = work.beforeConclude(null);
+    expect(reminder?.kind).toBe('unconfirmed');
+    expect(reminder?.text).toContain('`npm test 2>&1 | tail -20`) ran behind a pipe, so its exit code is unknown');
     expect(work.beforeConclude(null)).toBeNull();
 
+    // A check that already passed with a known exit code, after the last change, is enough.
+    const verified = new WorkTracker();
+    verified.noteChanges(['src/a.js']);
+    verified.noteCommand('npm test', 'ok 1');
+    verified.noteCommand('npm test | tail -5', 'ok 1');
+    expect(verified.beforeConclude(null)).toBeNull();
+  });
+
+  it('does not clear a known failure with a check behind a filter', () => {
     const failing = new WorkTracker();
     failing.noteChanges(['src/a.js']);
     failing.noteCommand('npm test', 'not ok 1\n\n[Exit code: 1]');

@@ -17,23 +17,17 @@ export interface OutlineSymbol {
 type TS = typeof import('typescript');
 
 const JS_LIKE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i;
-let loaded: { cwd: string; ts: TS | null } | undefined;
+let loaded: TS | null | undefined;
 
 /**
- * TypeScript's own parser, from the project first, then from Fuller's install. It is not a
- * runtime dependency of Fuller: without it, the regex outline below is used.
+ * TypeScript's parser, from Fuller's own dependencies only: loading the project's copy would run
+ * the project's code from a read-only tool (a hostile repository could ship its own
+ * node_modules/typescript). Without it, the pattern outline below is used.
  */
-function loadTypeScript(cwd: string): TS | null {
-  if (loaded?.cwd === cwd) return loaded.ts;
-  let ts: TS | null = null;
-  for (const from of [path.join(cwd, 'package.json'), import.meta.url]) {
-    try {
-      ts = createRequire(from)('typescript') as TS;
-      break;
-    } catch {}
-  }
-  loaded = { cwd, ts };
-  return ts;
+function loadTypeScript(): TS | null {
+  if (loaded !== undefined) return loaded;
+  try { loaded = createRequire(import.meta.url)('typescript') as TS; } catch { loaded = null; }
+  return loaded;
 }
 
 /** One line, whitespace collapsed, without the trailing brace or colon. */
@@ -227,8 +221,8 @@ function outlineWithPatterns(file: string, content: string): OutlineSymbol[] {
 }
 
 /** The outline of some source text; `typescript: null` forces the pattern outline. */
-export function outlineSource(file: string, content: string, options: { typescript?: TS | null; cwd?: string } = {}): { symbols: OutlineSymbol[]; parser: 'typescript' | 'patterns' } {
-  const ts = options.typescript !== undefined ? options.typescript : JS_LIKE.test(file) ? loadTypeScript(options.cwd ?? process.cwd()) : null;
+export function outlineSource(file: string, content: string, options: { typescript?: TS | null } = {}): { symbols: OutlineSymbol[]; parser: 'typescript' | 'patterns' } {
+  const ts = options.typescript !== undefined ? options.typescript : JS_LIKE.test(file) ? loadTypeScript() : null;
   if (ts && JS_LIKE.test(file)) {
     try {
       return { symbols: outlineWithTypeScript(ts, file, content), parser: 'typescript' };
@@ -256,7 +250,7 @@ export async function outlineFile(
 
   const content = buf.toString('utf8');
   const totalLines = content.split('\n').length;
-  const { symbols, parser } = outlineSource(full, content, { cwd });
+  const { symbols, parser } = outlineSource(full, content);
 
   const rel = path.relative(cwd, full).split(path.sep).join('/') || filePath;
   if (symbols.length === 0) {

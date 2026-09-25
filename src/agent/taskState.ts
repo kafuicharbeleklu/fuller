@@ -167,7 +167,7 @@ const POLLING = new Set(['task_output']);
 export type ProgressVerdict = { level: 'ok' } | { level: 'warn' | 'stop'; reason: string };
 
 export interface Reminder {
-  kind: 'todos' | 'verify' | 'failing';
+  kind: 'todos' | 'verify' | 'failing' | 'unconfirmed';
   /** Sent to the model. */
   text: string;
   /** Shown to the user. */
@@ -187,6 +187,8 @@ export class WorkTracker {
   private readonly changed = new Map<string, number>();
   /** exitCode null: the check ran behind a filter (`| tail`), its result is unknown. */
   private lastCheck?: { command: string; version: number; exitCode: number | null };
+  /** Version of the files when a check last passed with a known exit code. */
+  private passedAt = -1;
   private readonly failedChecks = new Map<string, { command: string; exitCode: number }>();
   private readonly sent = new Set<Reminder['kind']>();
   private readonly calls = new Map<string, number>();
@@ -209,7 +211,7 @@ export class WorkTracker {
     const exitCode = status === 'unknown' ? null : codes.length ? Number(codes[codes.length - 1][1]) : /\[Command timed out/.test(output) ? 1 : 0;
     this.lastCheck = { command, version: this.version, exitCode };
     // A result behind a filter neither clears nor records a failure.
-    if (exitCode === 0) this.failedChecks.delete(checkKey(command));
+    if (exitCode === 0) { this.failedChecks.delete(checkKey(command)); this.passedAt = this.version; }
     else if (exitCode !== null) this.failedChecks.set(checkKey(command), { command, exitCode });
   }
 
@@ -283,6 +285,15 @@ export class WorkTracker {
         kind: 'failing',
         text: `[Before you finish] A check still needs attention: \`${failure.command}\` exited with code ${failure.exitCode}. Fix the cause and run it again as is, without piping its output, so its exit code shows. A different passing check does not resolve this failure. If the failure is unrelated to your change or expected, say so plainly in your final answer.`,
         notice: `A check failed (exit ${failure.exitCode}) · asking to fix it or explain`,
+      };
+    }
+    // A check behind a filter ran, but its result is not verified: ask once for its exit code.
+    if (check && !stale.length && check.exitCode === null && this.passedAt < this.version && !this.sent.has('unconfirmed')) {
+      this.sent.add('unconfirmed');
+      return {
+        kind: 'unconfirmed',
+        text: `[Before you finish] Your last check (\`${check.command}\`) ran behind a pipe, so its exit code is unknown. Run it once as is, without piping its output, then give your final answer from that result.`,
+        notice: 'Check result unknown (output piped) · asking to confirm it',
       };
     }
     return null;

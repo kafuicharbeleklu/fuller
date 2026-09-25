@@ -99,3 +99,17 @@ Signalé par une session de l'utilisateur : à « crée un fichier HTML sur mon 
 - **Non vérifié** : les libellés exacts de Claude Code pour ce cas. Son quota hebdomadaire était épuisé et une capture demandait un tour du modèle ; les textes choisis sont plausibles, sans preuve.
 - Le panneau `/diff` (« No changes this session ») visible dans la session n'était pas un défaut : l'utilisateur l'avait ouvert.
 - `tests/sessionPicker.test.tsx` échoue encore de temps en temps quand toute la suite tourne en parallèle, puis passe seul (déjà signalé par Codex).
+
+## 10. Mise à jour — les trois points de la revue de Codex (25/09 au matin)
+
+1. **`outline_file` exécutait du code du projet** (confirmé par Codex et par moi : un faux `node_modules/typescript` a laissé une trace, même en mode plan). Corrigé : Fuller ne charge plus que **son propre** TypeScript, devenu une dépendance d'exécution (23 Mo, chargé au premier appel seulement). Test de non-régression avec un paquet hostile : `tests/outline.test.ts`.
+2. **Un contrôle derrière un filtre passait sans résultat vérifié** (`npm test | tail -20`). Maintenant, un rappel unique « exit code unknown, run it once as is » est envoyé, sauf si un contrôle au code de sortie connu a déjà réussi après la dernière modification. Code : `src/agent/taskState.ts` (`passedAt`, rappel `unconfirmed`).
+3. **Reconstruction de la conversation pendant une réponse** : **reproduit** avec la vraie session, le vrai SDK et un faux serveur qui envoie sa réponse en deux morceaux. Changer de mode, d'effort ou de modèle pendant le flux vidait l'historique, parce que le SDK n'inscrit l'échange qu'à la fin du flux. Corrigé : `GeminiAgentSession.rebuild()` attend la fin du flux (`src/agent/gemini.ts`). Test : `tests/refreshDuringStream.test.ts`. Sans le correctif, 3 cas sur 4 échouent ; le témoin passe.
+
+**Autres constats** :
+- `tests/modelFallback.test.ts` échouait par délai dépassé autour de 07:00 UTC, c'est-à-dire minuit heure du Pacifique, la remise à zéro des quotas du jour. Le repos d'une clé se compte jusqu'à cette heure : juste avant, Fuller attend la remise à zéro au lieu de proposer un autre modèle. La date est désormais fixée dans ces tests (`FALLBACK_TEST_NOW` pour la changer).
+- **Non traité, à décider** : Fuller n'a pas de fenêtre « Do you trust the files in this folder? ». Un dépôt ouvert peut lancer ses hooks (`.fuller/settings.json`) et ses serveurs MCP (`.mcp.json`) sans confirmation. Claude Code demande avant. C'est un chantier à part.
+- **Non traité** : juste après minuit heure du Pacifique, un 429 « par jour » encore renvoyé par Google mettrait la clé au repos pour 24 h.
+- `/tmp` contient environ 14 700 dossiers `fuller-*` et `parity-*` laissés par les tests (1,1 Go en mémoire).
+- `scripts/tui-smoke.py` : ce matin, la machine était lente (`node -e 0` prenait 0,4 s ; Fuller 4 à 11 s avant son premier affichage). La suite échouait donc sur ses délais fixes, y compris avec la version déjà commitée. Le démarrage attend maintenant jusqu'à 20 s, et chaque étape attend le texte attendu (5 s au plus) au lieu d'un délai fixe. TypeScript n'est pas chargé au démarrage (vérifié avec `strace`).
+

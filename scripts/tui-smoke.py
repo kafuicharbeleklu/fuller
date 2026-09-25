@@ -33,7 +33,18 @@ def capture(fd: int, seconds: float) -> bytes:
     return bytes(data)
 
 
-def capture_until(fd: int, marker: bytes, timeout: float = 8.0) -> bytes:
+def capture_for(fd: int, markers, minimum: float, timeout: float = 5.0) -> bytes:
+    """Read at least `minimum` seconds, then on until one of `markers` shows up (a slow machine lags)."""
+    markers = [markers] if isinstance(markers, bytes) else list(markers or [])
+    data = bytearray(capture(fd, minimum))
+    end = time.monotonic() + timeout
+    while markers and not any(m in data for m in markers) and time.monotonic() < end:
+        data.extend(capture(fd, 0.1))
+    return bytes(data)
+
+
+def capture_until(fd: int, marker: bytes, timeout: float = 20.0) -> bytes:
+    # Generous: this suite checks the screen, not startup speed (a busy machine took 4 to 11 s).
     end = time.monotonic() + timeout
     data = bytearray()
     while marker not in data and time.monotonic() < end:
@@ -69,18 +80,18 @@ def scenario(mode: str, width: int, active: bool = False) -> None:
         menu_output = b""
         if active:
             os.write(fd, b"/")
-            menu = capture(fd, 0.35)
+            menu = capture_for(fd, b"/about", 0.35)
             # Claude Code style: the list above the prompt, no navigation hint line.
             assert b"/about" in menu and b"Navigate" not in menu, "slash menu did not open"
             os.write(fd, b"\x1b[B")
-            navigated = capture(fd, 0.25)
+            navigated = capture_for(fd, b"/accept-edits", 0.25)
             assert b"/accept-edits" in navigated, "down arrow did not move the slash selection"
             os.write(fd, b"\x1b[A\r")
-            selected = capture(fd, 0.35)
+            selected = capture_for(fd, b"Virginia Calculator", 0.35)
             assert b"Virginia Calculator" in selected, "Enter did not select the slash command"
             menu_output = menu + navigated + selected
             os.write(fd, b"!sleep 2\r")
-            running = capture(fd, 0.3)
+            running = capture_for(fd, b"sleep 2", 0.3)
             assert b"sleep 2" in running, "shell command did not start"
         resize(fd, 10, max(25, width // 2))
         shrunk = capture(fd, 0.6)
@@ -90,12 +101,12 @@ def scenario(mode: str, width: int, active: bool = False) -> None:
         interaction = b""
         if active:
             os.write(fd, b"\x0f")  # Ctrl+O
-            transcript_view = capture(fd, 0.3)
+            transcript_view = capture_for(fd, b"Showing detailed transcript", 0.3)
             assert b"Showing detailed transcript" in transcript_view, "Ctrl+O did not open the transcript"
             os.write(fd, b"q")
             interaction += transcript_view + capture(fd, 0.15)
             os.write(fd, b"/diff\r")
-            diff_view = capture(fd, 0.4)
+            diff_view = capture_for(fd, (b"Diff panel shown", b"Diff viewer"), 0.4)
             if mode == "fullscreen" and min(200, width + 60) >= 110:
                 # Claude Code opens /diff as a panel beside the conversation from 110 columns.
                 assert b"Diff panel shown" in diff_view, f"/diff did not open the diff panel: {diff_view[-1500:]!r}"
@@ -105,7 +116,7 @@ def scenario(mode: str, width: int, active: bool = False) -> None:
                 os.write(fd, b"q")
             interaction += diff_view + capture(fd, 0.15)
         os.write(fd, b"\x03\x03")
-        output = startup + menu_output + (running if active else b"") + shrunk + grown + completed + interaction + capture(fd, 0.4)
+        output = startup + menu_output + (running if active else b"") + shrunk + grown + completed + interaction + capture_for(fd, b"\x1b[?1049l" if mode == "fullscreen" else None, 0.4)
         assert shrunk and grown, f"idle resize did not trigger a redraw (shrink={len(shrunk)}, grow={len(grown)})"
         if mode == "fullscreen":
             assert b"\x1b[?1049h" in output, "alternate screen was not entered"

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
@@ -47,7 +47,11 @@ const session = (settings: Record<string, unknown> = {}) => {
   return { s: new GeminiAgentSession(config as any), keys };
 };
 
-beforeEach(() => { failing = {}; calls.length = 0; });
+// Rest delays count down to midnight Pacific: pin the date, or a run close to the daily reset waits
+// a few seconds for the quota instead of falling back (these tests used to time out around 07:00 UTC).
+const NOW = process.env.FALLBACK_TEST_NOW ?? '2026-09-24T19:00:00Z';
+beforeEach(() => { failing = {}; calls.length = 0; vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW)); });
+afterEach(() => { vi.useRealTimers(); });
 
 describe('quota scheduler in a session', () => {
   it('changes key silently for the same model: no question, no model change', async () => {
@@ -110,6 +114,8 @@ describe('quota scheduler in a session', () => {
   });
 
   it('waits out per-minute limits on every key instead of asking, then continues on the same model', async () => {
+    // A real wait: the clock must move (a per-minute limit does not depend on the daily reset).
+    vi.useRealTimers();
     const { s } = session();
     const ask = vi.fn();
     const waits: Array<number | null> = [];

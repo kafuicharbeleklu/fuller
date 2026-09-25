@@ -291,9 +291,22 @@ export class GeminiAgentSession {
     });
   }
 
+  /** Replies being streamed: the SDK records an exchange in the history only when its stream ends. */
+  private streaming = 0;
+  private pendingRebuild: (() => void) | null = null;
+
+  /**
+   * Rebuild the chat now, or once the reply in flight is recorded: a chat rebuilt under a streaming
+   * reply lost that exchange (a mode change with Maj+Tab, /model or /effort during a turn).
+   */
+  private rebuild(apply: () => void) {
+    if (this.streaming > 0) { this.pendingRebuild = apply; return; }
+    apply();
+  }
+
   /** Rebuild the chat (new system prompt / mode) while keeping the history. */
   public refresh() {
-    this.initChat(this.getHistory());
+    this.rebuild(() => this.initChat(this.getHistory()));
   }
 
   public getHistory(): Content[] {
@@ -309,7 +322,7 @@ export class GeminiAgentSession {
     this.preferredModel = model;
     this.config.model = model;
     this.config.thinkingLevel = thinkingLevel;
-    this.initChat(adaptHistoryForModel(this.getHistory(), model));
+    this.rebuild(() => this.initChat(adaptHistoryForModel(this.getHistory(), model)));
   }
 
   public setThinkingLevel(level?: ThinkingLevelSetting) {
@@ -349,13 +362,27 @@ export class GeminiAgentSession {
   }
 
   private async streamTurn(message: string | Part[], options: StreamOptions): Promise<ModelTurnOutput> {
-    const { onChunk, signal } = options;
+    const { signal } = options;
     if (signal?.aborted) throw new Error('Interrupted');
     // A new user message tries the preferred model first; tool results stay on the current route.
     const userTurn = typeof message === 'string' || !message.some((p) => p.functionResponse);
     await this.ensureRoute(userTurn);
     let delivered = false;
+    this.streaming++;
+    try {
+      return await this.streamWithRetry(message, options, () => delivered, () => { delivered = true; });
+    } finally {
+      this.streaming--;
+      if (this.streaming === 0 && this.pendingRebuild) {
+        const apply = this.pendingRebuild;
+        this.pendingRebuild = null;
+        apply();
+      }
+    }
+  }
 
+  private streamWithRetry(message: string | Part[], options: StreamOptions, wasDelivered: () => boolean, markDelivered: () => void): Promise<ModelTurnOutput> {
+    const { onChunk, signal } = options;
     return withRetry(
       async () => {
         const stream = await this.chat.sendMessageStream({
@@ -378,7 +405,7 @@ export class GeminiAgentSession {
           for (const part of parts) {
             if (part.text && !part.thought) {
               text += part.text;
-              delivered = true;
+              markDelivered();
               onChunk?.(part.text);
             }
             if (part.functionCall) {
@@ -411,10 +438,10 @@ export class GeminiAgentSession {
       {
         signal,
         // A partly streamed answer is not resent on another key (the text would repeat).
-        recover: ((recover) => async (err: any) => !delivered && recover(err))(this.makeRecover(signal)),
+        recover: ((recover) => async (err: any) => !wasDelivered() && recover(err))(this.makeRecover(signal)),
         onAttempt: options.onAttempt,
         onRetry: (info) => {
-          if (delivered) throw info.error;
+          if (wasDelivered()) throw info.error;
           options.onRetry?.(info);
         },
       }
