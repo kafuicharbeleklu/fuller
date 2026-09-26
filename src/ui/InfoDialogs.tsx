@@ -176,7 +176,7 @@ export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; con
           : <Text key={t.key}>{' '}<Text bold inverse>{` ${t.label} `}</Text></Text>))}
     </Text>
   );
-  const width = Math.max(20, (stdout.columns || 80) - 5);
+  const width = Math.max(20, (stdout.columns || 80) - 6);
   const rows = (entries: InfoRow[]) => {
     if (entries.length <= linesPage) {
       return (
@@ -203,13 +203,15 @@ export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; con
       <Box borderStyle="round" borderColor={focus === 'search' ? theme.permission : undefined} borderDimColor={focus !== 'search'} width={width} paddingX={1}>
         {query ? <Text>⌕ {query}</Text> : focus === 'search' ? <Text>⌕ <Text color={theme.subtle}>Search settings…</Text></Text> : <Text color={theme.subtle}>⌕ Search settings…</Text>}
       </Box>
+      {/* Claude Code 2.1.283: a blank row under the search field; a setting's description only under the selected one. */}
+      <Box marginTop={(stdout.rows || 24) >= 16 ? 1 : 0} />
       {items.length === 0 ? <Text color={theme.subtle}>  No settings match "{query}"</Text> : null}
       {items.slice(offset, offset + page).map((item, i) => {
         const selected = focus === 'list' && offset + i === safe;
         return (
           <Box key={item.label} flexDirection="column">
             <Text wrap="truncate-end" color={selected ? theme.permission : undefined}>{selected ? '❯ ' : '  '}{item.label.padEnd(CONFIG_LABEL_WIDTH)}{item.value}</Text>
-            {item.description ? <Text color={theme.subtle} wrap="truncate-end">    {item.description}</Text> : null}
+            {selected && item.description ? <Text color={theme.subtle} wrap="truncate-end">    {item.description}</Text> : null}
           </Box>
         );
       })}
@@ -299,7 +301,7 @@ export const InputDialog: React.FC<{ title: string; description?: string; label?
       <Box flexDirection="column">
         {description ? <Text wrap="wrap">{description}</Text> : null}
         {label ? <Text>{label}</Text> : null}
-        <Box borderStyle="round" borderColor={theme.permission} width={Math.max(20, (stdout.columns || 80) - 7)} paddingX={1}>
+        <Box borderStyle="round" borderColor={theme.permission} width={Math.max(20, (stdout.columns || 80) - 8)} paddingX={1}>
           <Text>{value}{value ? <Text inverse> </Text> : <><Text inverse>{(placeholder ?? ' ')[0]}</Text><Text color={theme.subtle}>{(placeholder ?? '').slice(1)}</Text></>}</Text>
         </Box>
       </Box>

@@ -47,6 +47,11 @@ describe('transcript navigation', () => {
     expect(screen.lastFrame()).toContain('row-031');
     screen.stdin.write('\x02'); await settle();
     expect(screen.lastFrame()).toContain('row-010');
+    // Claude Code 2.1.283: ctrl+n and ctrl+p move one line in the transcript.
+    screen.stdin.write('\x0e'); await settle();
+    expect(screen.lastFrame()).not.toContain('row-010');
+    screen.stdin.write('\x10'); await settle();
+    expect(screen.lastFrame()).toContain('row-010');
   });
 
   it('opens an editor and restores terminal ownership after scrollback export', async () => {

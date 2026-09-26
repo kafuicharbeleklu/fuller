@@ -98,11 +98,12 @@ export const Pager: React.FC<Props> = ({ title, status, rightLabel, ansi = false
       return;
     }
     if (event.name === 'escape' || (event.name === 'char' && event.ctrl && (event.text.toLowerCase() === 'o' || event.text.toLowerCase() === 'c')) || (event.name === 'char' && event.text === 'q')) { onClose(); return; }
-    if (event.name === 'up' || (event.name === 'char' && event.text === 'k')) setTop((value) => Math.max(0, value - 1));
-    else if (event.name === 'down' || (event.name === 'char' && event.text === 'j')) setTop((value) => Math.min(maxTop, value + 1));
+    // Claude Code's Transcript bindings (2.1.283 binary): ctrl+p/ctrl+n a line, ctrl+b/ctrl+f a page, ctrl+u/ctrl+d half.
+    if (event.name === 'up' || (event.name === 'char' && (event.text === 'k' || (event.ctrl && event.text === 'p')))) setTop((value) => Math.max(0, value - 1));
+    else if (event.name === 'down' || (event.name === 'char' && (event.text === 'j' || (event.ctrl && event.text === 'n')))) setTop((value) => Math.min(maxTop, value + 1));
     else if (event.name === 'char' && event.ctrl && event.text === 'u') setTop((value) => Math.max(0, value - Math.max(1, Math.floor(page / 2))));
     else if (event.name === 'char' && event.ctrl && event.text === 'd') setTop((value) => Math.min(maxTop, value + Math.max(1, Math.floor(page / 2))));
-    else if (event.name === 'pageup' || (event.name === 'char' && event.text === 'b')) setTop((value) => Math.max(0, value - page));
+    else if (event.name === 'pageup' || (event.name === 'char' && (event.text === 'b' || (event.ctrl && event.text === 'b')))) setTop((value) => Math.max(0, value - page));
     else if (event.name === 'pagedown' || (event.name === 'char' && (event.text === ' ' || (event.ctrl && event.text === 'f')))) setTop((value) => Math.min(maxTop, value + page));
     else if (event.name === 'home' || (event.name === 'char' && event.text === 'g')) setTop(0);
     else if (event.name === 'end' || (event.name === 'char' && event.text === 'G')) setTop(maxTop);

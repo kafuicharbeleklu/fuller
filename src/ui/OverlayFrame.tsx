@@ -28,7 +28,9 @@ interface Props {
 export const OverlayFrame: React.FC<Props> = ({ title, header, color, description, hint, ruleLabel, gap = true, children }) => {
   const theme = useTheme();
   const { stdout } = useStdout();
-  const width = Math.max(1, (stdout.columns || 80) - 1);
+  // Claude Code: the rule across the whole width, the content 3 columns in from each side
+  // (100 columns: rule 100, search fields 94). The classic renderer's layout margin still applies.
+  const width = Math.max(1, stdout.columns || 80);
   const paddingLeft = width < 28 ? 1 : 3;
   const compact = (stdout.rows || 24) < 16;
   const label = ruleLabel && stringWidth(ruleLabel) + 4 < width ? ` ${ruleLabel} ` : '';
@@ -37,7 +39,7 @@ export const OverlayFrame: React.FC<Props> = ({ title, header, color, descriptio
   return (
     <Box flexDirection="column" marginTop={compact ? 0 : 1} width={width}>
       <Text color={color ?? theme.permission}>{ruleStart}{label ? <><Text color={theme.subtle}>{label}</Text>▔</> : null}</Text>
-      <Box flexDirection="column" paddingLeft={paddingLeft} paddingRight={width < 28 ? 0 : 1}>
+      <Box flexDirection="column" paddingLeft={paddingLeft} paddingRight={width < 28 ? 0 : 3}>
         {header ?? <Text bold color={color ?? theme.permission} wrap="truncate-end">{title}</Text>}
         {description ? <Text color={theme.subtle} wrap="wrap">{description}</Text> : null}
         <Box flexDirection="column" marginTop={compact || !gap ? 0 : 1}>{children}</Box>

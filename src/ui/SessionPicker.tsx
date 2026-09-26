@@ -81,7 +81,7 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
   const page = Math.max(1, Math.min(8, Math.floor((rows - 12) / 3)));
   const spaced = rows >= 16;
   // Ink's columns are one short of the terminal (LayoutMargin); Claude Code's field is terminal − 6 wide.
-  const width = Math.max(20, (stdout.columns || 80) - 5);
+  const width = Math.max(20, (stdout.columns || 80) - 6);
   const project = sessions[0] ? path.basename(sessions[0].workspaceDir) : '';
 
   const previewItems = useMemo<TranscriptItem[]>(() => {

@@ -60,7 +60,7 @@ export const ThemePicker: React.FC<Props> = ({ current, syntaxHighlighting, onPr
   const initialIndex = Math.max(0, names.indexOf(current));
   const showPreview = rows >= 22;
   // Claude Code: the terminal's width less 6, whatever the renderer's layout margin.
-  const ruleWidth = Math.max(10, (process.stdout.columns || stdout.columns || 80) - 6);
+  const ruleWidth = Math.max(10, (stdout.columns || 80) - 6);
   // Claude Code: a blank row before the list and before the preview (2.1.283 capture); none when short.
   const spaced = rows >= 16;
   const maxVisible = Math.max(3, Math.min(names.length, rows - (showPreview ? 20 : 12)));

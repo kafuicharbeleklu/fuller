@@ -164,7 +164,7 @@ export const PermissionsDialog: React.FC<Props> = ({ allow, ask, deny, directori
 
   if (draft !== null && (current.key === 'allow' || current.key === 'ask' || current.key === 'deny' || current.key === 'auto')) {
     // "Add allow permission rule": explanation, an example and a full-width field.
-    const width = Math.max(20, (stdout.columns || 80) - 5);
+    const width = Math.max(20, (stdout.columns || 80) - 6);
     const auto = current.key === 'auto';
     return (
       <OverlayFrame title={auto ? 'Add auto mode rule' : `Add ${current.key} permission rule`} hint="Enter to submit · Esc to cancel" ruleLabel={ruleLabel}>
@@ -198,7 +198,7 @@ export const PermissionsDialog: React.FC<Props> = ({ allow, ask, deny, directori
   );
   const hint = confirm !== null ? 'Enter to delete · Esc to cancel' : HINTS[focus];
   // Claude Code's search field is exactly as wide as the tab's description.
-  const maxWidth = Math.max(20, (stdout.columns || 80) - 5);
+  const maxWidth = Math.max(20, (stdout.columns || 80) - 6);
   const searchWidth = Math.min(Math.max(20, stringWidth(current.description)), maxWidth);
 
   return (

@@ -118,7 +118,8 @@ describe('picker overlays', () => {
     ), 24, 10);
     expect(frame).toMatchSnapshot();
     expect(frame.split('\n').length).toBeLessThanOrEqual(10);
-    expect(frame.split('\n').every((line) => line.length <= 23)).toBe(true);
+    // The rule spans the width it is given, as Claude Code's (the classic renderer gives one column less).
+    expect(frame.split('\n').every((line) => line.length <= 24)).toBe(true);
   });
 
   it('keeps the latest conversation row visible above a short fullscreen picker', () => {
