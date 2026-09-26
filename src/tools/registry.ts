@@ -2,7 +2,7 @@ import { Type, type FunctionDeclaration } from '@google/genai';
 import { executeBash, type BackgroundReady } from './bash.js';
 import { desktopAuthentication, needsNativeTerminal, type RunInTerminal } from './nativeTerminal.js';
 import { readFile, writeFile, editFile, previewEdit, previewWrite } from './fileOps.js';
-import { listDirectory, searchFiles, globFiles, formatSearchOutput } from './search.js';
+import { listDirectory, searchFiles, globFiles, formatSearchOutput, addContext } from './search.js';
 import { outlineFile } from './outline.js';
 import { checkSyntax, syntaxWarning } from './syntaxCheck.js';
 import { webFetch } from './web.js';
@@ -54,7 +54,7 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
   },
   {
     name: 'read_file',
-    description: 'Read a file from the workspace. Returns numbered lines. Reads up to 2000 lines; use offset/limit for large files.',
+    description: 'Read a file from the workspace. Returns numbered lines. Reads up to 2000 lines: read small and medium files whole (no offset/limit) and use offset/limit only for large files. Files of 300 lines or less are always returned whole.',
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -232,6 +232,14 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
   },
 ];
 
+/** A file of at most this many lines is always read whole, whatever offset/limit say. */
+export const READ_WHOLE_LINES = 300;
+/** From its second partial read in a session, a file of at most this many lines is read whole. */
+export const READ_WHOLE_REPEAT_LINES = 1000;
+/** A search with at most this many matches comes with the code around them (plan, item 9). */
+export const SEARCH_AUTO_CONTEXT_MATCHES = 3;
+export const SEARCH_AUTO_CONTEXT_LINES = 10;
+
 export const READ_ONLY_TOOLS = new Set(['read_file', 'outline_file', 'list_directory', 'search_files', 'glob', 'skill', 'todo_write', 'task_output', 'task_kill', 'exit_plan_mode', 'agent']);
 
 export interface ToolContext {
@@ -382,8 +390,13 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
     case 'read_file': {
       // Saved command outputs (outside the workspace) may be read too.
       const readDirs = [...ctx.extraDirs, ...(ctx.readableDirs ?? [])];
-      const r = await readFile(args.file_path, { ...fileCtx, extraDirs: readDirs }, args.offset, args.limit);
-      ctx.fileTracker?.record(resolveInWorkspace(String(args.file_path), ctx.cwd, readDirs));
+      const full = resolveInWorkspace(String(args.file_path), ctx.cwd, readDirs);
+      // Real session (26/09): a 665-line file read in 15 slices of about 50 lines, one model call each.
+      // A small file is always returned whole; a medium one from its second partial read.
+      const wholeUpTo = (ctx.fileTracker?.partialReads(full) ?? 0) > 0 ? READ_WHOLE_REPEAT_LINES : READ_WHOLE_LINES;
+      const r = await readFile(args.file_path, { ...fileCtx, extraDirs: readDirs }, args.offset, args.limit, wholeUpTo);
+      ctx.fileTracker?.record(full);
+      if (r.truncated) ctx.fileTracker?.recordPartial(full);
       return { output: r.content, summary: r.summary };
     }
 
@@ -432,7 +445,11 @@ export async function dispatchTool(name: string, args: Record<string, any>, ctx:
       });
       const mode = (['content', 'files_with_matches', 'count'].includes(args.output_mode) ? args.output_mode : 'content') as 'content' | 'files_with_matches' | 'count';
       const real = res.matches.filter((m) => !m.context).length;
-      return { output: formatSearchOutput(String(args.query), res, mode, args.head_limit, { regex: !!args.regex }), summary: `${real}${res.truncated ? '+' : ''} matches · ${res.backend}` };
+      // A few matches: the code around them comes with them, instead of a read_file per match.
+      const auto = mode === 'content' && !args.context_lines && real > 0 && real <= SEARCH_AUTO_CONTEXT_MATCHES;
+      const shown = auto ? await addContext(res, ctx.cwd, SEARCH_AUTO_CONTEXT_LINES) : res;
+      const note = auto ? `\n[${SEARCH_AUTO_CONTEXT_LINES} lines of context around each match]` : '';
+      return { output: formatSearchOutput(String(args.query), shown, mode, args.head_limit, { regex: !!args.regex }) + note, summary: `${real}${res.truncated ? '+' : ''} matches · ${res.backend}` };
     }
 
     case 'glob': {

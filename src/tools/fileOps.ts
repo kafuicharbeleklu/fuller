@@ -25,7 +25,9 @@ export async function readFile(
   filePath: string,
   ctx: FileCtx,
   offset?: number,
-  limit?: number
+  limit?: number,
+  /** A file of at most this many lines is returned whole, offset and limit ignored. */
+  wholeUpTo?: number
 ): Promise<ReadResult> {
   const fullPath = assertReadable(filePath, ctx.cwd, ctx.extraDirs);
   const stat = await fs.stat(fullPath);
@@ -40,6 +42,8 @@ export async function readFile(
   const lines = buf.toString('utf8').split('\n');
   if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
   const totalLines = lines.length;
+  const widened = wholeUpTo !== undefined && (offset !== undefined || limit !== undefined) && totalLines <= wholeUpTo && totalLines <= LIMITS.readLines;
+  if (widened) { offset = undefined; limit = undefined; }
   const start = Math.max(1, offset ?? 1) - 1;
   const max = Math.min(limit ?? LIMITS.readLines, LIMITS.readLines);
   const end = Math.min(totalLines, start + max);
@@ -54,7 +58,7 @@ export async function readFile(
   const truncated = end < totalLines || start > 0;
   const content = truncated
     ? `${numbered}\n\n[PARTIAL view: lines ${start + 1}-${end} of ${totalLines}. Use offset/limit to read more.]`
-    : numbered;
+    : widened ? `[Whole file (${totalLines} lines): small enough to read at once, offset/limit ignored.]\n${numbered}` : numbered;
   return {
     content,
     totalLines,

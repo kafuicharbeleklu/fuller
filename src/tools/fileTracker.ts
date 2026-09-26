@@ -9,6 +9,17 @@ import { safeRealpath } from './paths.js';
  */
 export class FileTracker {
   private readonly seen = new Map<string, number>();
+  /** Partial reads (offset/limit) per file this session: a medium file sliced twice is read whole. */
+  private readonly slices = new Map<string, number>();
+
+  recordPartial(fullPath: string): void {
+    const key = safeRealpath(fullPath);
+    this.slices.set(key, (this.slices.get(key) ?? 0) + 1);
+  }
+
+  partialReads(fullPath: string): number {
+    return this.slices.get(safeRealpath(fullPath)) ?? 0;
+  }
 
   private mtime(fullPath: string): number | undefined {
     try { return fs.statSync(fullPath).mtimeMs; } catch { return undefined; }

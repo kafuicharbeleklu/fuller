@@ -230,7 +230,34 @@ export async function searchFiles(
       }
     }
   }
-  return { matches, filesScanned, truncated, backend: 'js' };
+  const result: SearchResult = { matches, filesScanned, truncated, backend: 'js' };
+  // Without ripgrep the context lines were ignored: the model asked for them and got bare matches.
+  return options.contextLines && options.contextLines > 0 ? addContext(result, cwd, Math.min(10, options.contextLines)) : result;
+}
+
+/**
+ * The lines around each match, as ripgrep's -C gives them: context entries (file-line- text) between
+ * the matches, overlapping ranges merged, each line once.
+ */
+export async function addContext(res: SearchResult, cwd: string, lines: number): Promise<SearchResult> {
+  const real = res.matches.filter((m) => !m.context);
+  const byFile = new Map<string, SearchMatch[]>();
+  for (const m of real) byFile.set(m.file, [...(byFile.get(m.file) ?? []), m]);
+  const out: SearchMatch[] = [];
+  for (const [file, matches] of byFile) {
+    let text: string[];
+    try { text = (await fs.readFile(path.resolve(cwd, file), 'utf8')).split('\n'); } catch { out.push(...matches); continue; }
+    const hit = new Set(matches.map((m) => m.line));
+    const wanted = new Set<number>();
+    for (const m of matches) for (let n = Math.max(1, m.line - lines); n <= Math.min(text.length, m.line + lines); n++) wanted.add(n);
+    // With the code around them, lines keep their indentation (the matches alone are trimmed).
+    const raw = (n: number) => text[n - 1].replace(/\r$/, '').slice(0, 300);
+    for (const n of [...wanted].sort((a, b) => a - b)) {
+      if (hit.has(n)) out.push({ ...matches.find((m) => m.line === n)!, text: raw(n) });
+      else out.push({ file, line: n, text: raw(n), context: true });
+    }
+  }
+  return { ...res, matches: out };
 }
 
 export async function globFiles(pattern: string, cwd: string, extraDirs: string[] = [], base?: string): Promise<{ files: string[]; truncated: boolean }> {
