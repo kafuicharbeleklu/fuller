@@ -778,7 +778,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
           </Box>
         ) : null}
         {showTodos && todos.length > 0 && todos.some((t) => t.status !== 'completed') && !confirmation && !pickerOpen ? (
-          <TodoPanel todos={todos} frame={frame} maxItems={Math.max(3, Math.min(6, rows - 18))} />
+          <TodoPanel todos={todos} frame={frame} maxItems={Math.max(3, Math.min(5, rows - 18))} />
         ) : null}
         {modelSwitch && !confirmation ? <QuotaDialog request={modelSwitch} /> : null}
         {confirmation ? <PermissionPrompt key={confirmation.toolCall.id} confirmation={confirmation} verbose={verbose} maxDiffLines={Math.max(8, rows - 14)} /> : null}

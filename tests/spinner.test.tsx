@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { render } from 'ink-testing-library';
-import { SpinnerLine, lighten } from '../src/ui/Spinner.js';
+import { SpinnerLine, lighten, thinkingTier } from '../src/ui/Spinner.js';
 import { Footer } from '../src/ui/Footer.js';
 import { turnEndLine } from '../src/ui/viewerText.js';
 import { ThemeProvider, loadTheme } from '../src/ui/theme.js';
@@ -20,6 +20,10 @@ describe('waiting animation (Claude Code 2.1.281)', () => {
       later.unmount();
       resolve();
     }, 600));
+  });
+
+  it('names the thinking tiers like Claude Code 2.1.282 (10, 20, 30, 45 s), as the detail and not the verb', () => {
+    expect([0, 9, 10, 19, 20, 30, 44, 45, 600].map(thinkingTier)).toEqual(['thinking', 'thinking', 'still thinking', 'still thinking', 'thinking more', 'thinking some more', 'thinking some more', 'deep in thought', 'deep in thought']);
   });
 
   it('uses Claude Code glyphs and a lighter glint derived from the accent', () => {
@@ -42,5 +46,18 @@ describe('waiting animation (Claude Code 2.1.281)', () => {
     const full = render(wrap(<Footer mode="default" status="idle" usage={usage(75_000)} autoCompactThreshold={0.85} inputEmpty bashMode={false} />));
     expect(full.lastFrame()).toContain('Context left until auto-compact: 12%');
     full.unmount();
+  });
+});
+
+describe('task panel (Claude Code 2.1.282 glyphs and header, read in its binary)', () => {
+  it('heads the list with the counts and uses ✔ ◼ ◻', async () => {
+    const { todoHeader, todoGlyph } = await import('../src/ui/TodoPanel.js');
+    const todos = [
+      { content: 'a', status: 'completed' as const }, { content: 'b', status: 'completed' as const },
+      { content: 'c', status: 'in_progress' as const }, { content: 'd', status: 'pending' as const }, { content: 'e', status: 'pending' as const },
+    ];
+    expect(todoHeader(todos)).toBe('5 tasks (2 done, 1 in progress, 2 open)');
+    expect(todoHeader([todos[3]])).toBe('1 task (0 done, 0 in progress, 1 open)');
+    expect(['completed', 'in_progress', 'pending'].map((s) => todoGlyph(s as any))).toEqual(['✔', '◼', '◻']);
   });
 });

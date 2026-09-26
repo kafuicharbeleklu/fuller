@@ -42,7 +42,7 @@ export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, res
     return () => clearInterval(t);
   }, [startedAt]);
 
-  // "Deep in thought" is about the model call in progress, not the whole turn: a turn of 150 tool
+  // The thinking tiers count the model call in progress, not the whole turn: a turn of 150 tool
   // calls showed "Deep in thought… (517s · thinking)" on every call (real session, 25/09).
   const [thinkingSince, setThinkingSince] = useState(() => Date.now());
   useEffect(() => { setThinkingSince(Date.now()); }, [status]);
@@ -60,11 +60,10 @@ export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, res
     status === 'compacting' ? 'Compacting conversation'
     : status === 'retrying' ? 'Waiting to retry'
     : status === 'running_tool' ? 'Running'
-    : status === 'thinking' && callElapsed > 45 ? 'Deep in thought'
     : verbs[verbIndex] ?? 'Thinking';
 
   // Claude Code shows the timer only once the wait gets noticeable, then what the model is doing.
-  const detail = status === 'thinking' ? 'thinking' : responseTokens > 0 ? `↓ ${formatTokens(responseTokens)} tokens` : '';
+  const detail = status === 'thinking' ? thinkingTier(callElapsed) : responseTokens > 0 ? `↓ ${formatTokens(responseTokens)} tokens` : '';
   const showTimer = elapsed >= SPINNER_TIMER_AFTER_S;
 
   return (
@@ -75,6 +74,18 @@ export const SpinnerLine: React.FC<SpinnerLineProps> = ({ status, startedAt, res
     </Box>
   );
 };
+
+/**
+ * What the model is doing, by how long the current call has been thinking: Claude Code 2.1.282's
+ * tiers, read in its binary (10, 20, 30 and 45 s). "deep in thought" is this detail, not the verb.
+ */
+export function thinkingTier(seconds: number): string {
+  if (seconds >= 45) return 'deep in thought';
+  if (seconds >= 30) return 'thinking some more';
+  if (seconds >= 20) return 'thinking more';
+  if (seconds >= 10) return 'still thinking';
+  return 'thinking';
+}
 
 /** Seconds before the spinner shows its timer (Claude Code: none at 4 s, shown at 6 s). */
 export const SPINNER_TIMER_AFTER_S = 5;
