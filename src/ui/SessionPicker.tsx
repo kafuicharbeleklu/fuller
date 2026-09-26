@@ -88,7 +88,7 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
     const messages = data ? messagesToTranscript(data.messages) : [];
     return banner ? [{ key: 'banner', kind: 'banner' } as TranscriptItem, ...messages] : messages;
   }, [mode, chosen?.id, chosen?.workspaceDir, banner]);
-  const previewRows = useTranscriptRows({ items: previewItems, live: null, verbose: false, banner: banner ?? ({} as BannerProps), frame: '', permissionOpen: false, width: Math.max(20, (stdout.columns || 80) - 2) });
+  const previewRows = useTranscriptRows({ items: previewItems, live: null, verbose: false, banner: banner ?? ({} as BannerProps), frame: '', permissionOpen: false, width: Math.max(20, (stdout.columns || 80) - 2) }).lines;
   const previewHeight = Math.max(3, rows - 9);
   const previewMaxTop = Math.max(0, previewRows.length - previewHeight);
   const top = Math.min(previewTop ?? previewMaxTop, previewMaxTop);

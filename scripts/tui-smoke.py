@@ -248,7 +248,8 @@ def tui_switch_scenario() -> None:
         os.write(fd, b"/tui")
         capture(fd, 0.3)
         os.write(fd, b"\r")
-        classic = capture_for(fd, b"Switched to the default renderer", 1.0, 10)
+        # The notice is drawn before the interface is torn down: wait for the screen switch itself.
+        classic = capture_for(fd, b"\x1b[?1049l", 0.5, 15) + capture_for(fd, b"before-switch", 0.5, 10)
         assert b"\x1b[?1049l" in classic, "/tui did not leave the alternate screen"
         assert b"before-switch" in classic, "the conversation was lost when switching to the default renderer"
         os.write(fd, b"!echo after-classic\r")
@@ -256,7 +257,7 @@ def tui_switch_scenario() -> None:
         os.write(fd, b"/tui fullscreen")
         capture(fd, 0.3)
         os.write(fd, b"\r")
-        full = capture_for(fd, b"Switched to the fullscreen renderer", 1.0, 10)
+        full = capture_for(fd, b"\x1b[?1049h", 0.5, 15) + capture_for(fd, b"after-classic", 0.5, 10)
         assert b"\x1b[?1049h" in full, "/tui fullscreen did not enter the alternate screen"
         assert b"after-classic" in full, "the conversation was lost when switching back"
         os.write(fd, b"\x03\x03")

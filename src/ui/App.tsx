@@ -321,8 +321,15 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
     frame,
     permissionOpen: false,
     width: Math.max(20, (stdout?.columns ?? 80) - 2),
-  });
-  const fullscreenLines = useTranscriptRows({
+  }).lines;
+  // Tool results opened with a click in fullscreen (Claude Code: click a collapsed tool result to expand it).
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(() => new Set());
+  const [transcriptClick, setTranscriptClick] = useState<{ id: number; row: number }>({ id: 0, row: 0 });
+  const toggleItem = useCallback((key: string) => {
+    setExpandedItems((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  }, []);
+  const { lines: fullscreenLines, owners: fullscreenOwners } = useTranscriptRows({
+    expanded: expandedItems,
     items: fullscreen ? items : noItems,
     live: fullscreen ? live : null,
     verbose,
@@ -758,7 +765,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
           <Box ref={transcriptBox} flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
             <Box flexDirection="row" flexGrow={1}>
               <Box flexDirection="column" width={diffPanel ? diffPanelLayout(stdout?.columns ?? 80).left : undefined} flexGrow={diffPanel ? 0 : 1}>
-                {(!pickerOpen || pickerTranscriptHeight > 0) && (!confirmation || rows >= 16) ? <FullscreenTranscript lines={fullscreenLines} height={measuredTranscriptHeight ?? transcriptHeight} scrollRequest={scrollRequest} width={diffPanel ? diffPanelLayout(stdout?.columns ?? 80).left : undefined} /> : null}
+                {(!pickerOpen || pickerTranscriptHeight > 0) && (!confirmation || rows >= 16) ? <FullscreenTranscript lines={fullscreenLines} owners={fullscreenOwners} clickRequest={transcriptClick} onToggleItem={toggleItem} height={measuredTranscriptHeight ?? transcriptHeight} scrollRequest={scrollRequest} width={diffPanel ? diffPanelLayout(stdout?.columns ?? 80).left : undefined} /> : null}
               </Box>
               {diffPanel ? <DiffPanel {...diffPanel} width={diffPanelLayout(stdout?.columns ?? 80).panel} height={measuredTranscriptHeight ?? transcriptHeight} /> : null}
             </Box>
@@ -932,10 +939,12 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onAgents={() => setAgentsOpen(true)}
             onMouseRelease={diffPanel ? onPanelRelease : undefined}
             injected={injected}
-            onMouseClick={diffPanel ? (x, y) => {
-              const { left, panel } = diffPanelLayout(stdout?.columns ?? 80);
+            onMouseClick={fullscreen ? (x, y) => {
+              const layout = diffPanel ? diffPanelLayout(stdout?.columns ?? 80) : null;
+              // Left of the panel (or no panel): the conversation, where a click opens or closes a tool result.
+              if (!diffPanel || !layout || x - 1 < layout.left) { setTranscriptClick((c) => ({ id: c.id + 1, row: y - 1 })); return; }
+              const { left, panel } = layout;
               const col = x - 1 - left;
-              if (col < 0) return;
               const action = diffPanelClick(diffPanel, panel, measuredTranscriptHeight ?? transcriptHeight, y - 1, col);
               // A press on a diff line may start a selection, ended by the release (onPanelRelease).
               if (!action) { pressRow.current = y - 1; return; }
