@@ -39,6 +39,7 @@ import { transcriptLines } from './viewerText.js';
 import { readFileDiffs, isTestOrGenerated, nextDiffBase, defaultBranch, type FileDiff, type DiffBase } from './gitDiff.js';
 import { DiffViewer, turnViews, type DiffViewerData } from './DiffViewer.js';
 import { notificationSequence } from './notify.js';
+import { setMaxProseWidth } from './Markdown.js';
 import { saveUserSetting, saveProjectLocalSetting } from '../config.js';
 import { DiffPanel, diffPanelClick, maxPanelScroll, panelSelection, type DiffPanelState, type PanelSelection } from './DiffPanel.js';
 import { toolLabel, toolArgSummary } from '../tools/registry.js';
@@ -158,6 +159,8 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const history = useMemo(() => loadPromptHistory(config.workspaceDir), [config.workspaceDir]);
   const allHistory = useMemo(() => loadPromptHistory(config.workspaceDir, Infinity, 'all'), [config.workspaceDir]);
   const memoryFiles = useMemo(() => loadProjectContext(config.workspaceDir).map((file) => file.path), [config.workspaceDir]);
+  // maxProseWidth applies to every Markdown render from now on.
+  setMaxProseWidth(config.settings.maxProseWidth);
   // Reduce motion: one still glyph instead of the animated one (Claude Code's prefersReducedMotion).
   const reducedMotion = config.settings.prefersReducedMotion === true;
   const frame = useSpinnerFrame(!reducedMotion && !terminalActive && status !== 'idle' && status !== 'awaiting_permission');
@@ -908,6 +911,11 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             onOpenDiff={openDiffViewer}
             promptColor={promptColor ?? undefined}
             onCycleDiffBase={cycleDiffBase}
+            onDiffPanelScroll={diffPanel ? (delta) => {
+              const max = maxPanelScroll(diffPanel, diffPanelLayout(stdout?.columns ?? 80).panel, measuredTranscriptHeight ?? transcriptHeight);
+              setDiffPanel({ ...diffPanel, scroll: Math.max(0, Math.min(max, (diffPanel.scroll ?? 0) + delta * 3)) });
+              return true;
+            } : undefined}
             onScrollTranscript={fullscreen ? (direction, x) => {
               // The wheel over the diff panel scrolls the panel.
               if (diffPanel && x !== undefined && x - 1 >= diffPanelLayout(stdout?.columns ?? 80).left && (direction === 'lineUp' || direction === 'lineDown')) {

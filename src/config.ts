@@ -69,6 +69,10 @@ export interface Settings {
   notifications?: NotificationSetting;
   /** How a notification reaches the desktop (Claude Code's channels): auto picks OSC 9 / 99 / 777 in iTerm2, Kitty and Ghostty, the bell elsewhere. */
   preferredNotifChannel?: 'auto' | 'iterm2' | 'terminal_bell' | 'iterm2_with_bell' | 'kitty' | 'ghostty' | 'notifications_disabled';
+  /** /copy copies the whole response without the picker (Claude Code's copyFullResponse). */
+  copyFullResponse?: boolean;
+  /** Claude Code's maxProseWidth: the model's prose wraps at this many columns (40 at least); code and tables keep the full width. */
+  maxProseWidth?: number;
   /** Reduce motion: no spinner animation or shimmer (Claude Code's prefersReducedMotion). */
   prefersReducedMotion?: boolean;
   spinnerVerbs?: string[];

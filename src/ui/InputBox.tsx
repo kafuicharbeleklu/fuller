@@ -48,6 +48,8 @@ export interface InputBoxProps {
   promptColor?: string;
   /** Ctrl+X B: cycle what the /diff panel compares against. */
   onCycleDiffBase?: () => void;
+  /** Ctrl/Alt+↑↓ while the /diff panel is open: scroll it (Claude Code: app:diffFileListUp/Down). */
+  onDiffPanelScroll?: (delta: number) => boolean;
   /** x, y: the mouse position for wheel scrolls. */
   onScrollTranscript?: (action: ScrollAction, x?: number, y?: number) => void;
   onDoubleEscape: () => void;
@@ -91,13 +93,16 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const {
     isActive, busy, queue, history: initialHistory, allHistory = initialHistory, sessionHistory = [], fullscreen = false, cwd, commands, showHelp, compactEmpty = false, placeholder,
     onSubmit, onCommand, onBash, onInterrupt, onExit, onCycleMode, onClearScreen,
-    onToggleVerbose, onToggleHelp, onToggleTodos, onOpenDiff, onCycleDiffBase, onScrollTranscript, onDoubleEscape, onPopQueue, onStateChange, onSwitchModel, onSuspend, onAgents, onMouseClick, onMouseRelease, injected, commandUsage = {}, onSendNow, onBackground, onStopAgents, onTakeQueue, promptColor,
+    onToggleVerbose, onToggleHelp, onToggleTodos, onOpenDiff, onCycleDiffBase, onDiffPanelScroll, onScrollTranscript, onDoubleEscape, onPopQueue, onStateChange, onSwitchModel, onSuspend, onAgents, onMouseClick, onMouseRelease, injected, commandUsage = {}, onSendNow, onBackground, onStopAgents, onTakeQueue, promptColor,
   } = props;
 
   const ed = useRef<EditorState>({ text: '', cursor: 0 });
   const undo = useRef<EditorSnapshot[]>([]);
   const lastTypeAt = useRef(0);
-  const killRing = useRef('');
+  /** Killed texts, most recent last (readline's kill ring; Ctrl+Y pastes the last, Alt+Y cycles). */
+  const killRing = useRef<string[]>([]);
+  /** The text Ctrl+Y or Alt+Y just inserted, so that Alt+Y can replace it with an older kill. */
+  const lastYank = useRef<{ start: number; length: number; index: number } | null>(null);
   const pastes = useRef(new Map<number, string>());
   const pasteCounter = useRef(0);
   const images = useRef<ImageAttachment[]>([]);
@@ -137,7 +142,11 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   /** ctrl+s: prompt put aside with its cursor, pastes and images (Claude Code "stash"). */
   const stash = useRef<{ text: string; cursor: number; pastes: Map<number, string>; images: ImageAttachment[]; bashMode: boolean } | null>(null);
   const [stashed, setStashed] = useState(false);
-  const remember = (deleted: string) => { killRing.current = deleted; if (deleted) setKilled(true); };
+  const remember = (deleted: string) => {
+    if (!deleted) return;
+    killRing.current = [...killRing.current.slice(-9), deleted];
+    setKilled(true);
+  };
   /** A key that starts a bound chord, waiting for the second key (3 s, as Claude Code). */
   const pendingUserChord = useRef<{ key: string; at: number } | null>(null);
 
@@ -273,7 +282,27 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
     remember(t.slice(start, c));
     set(t.slice(0, start) + t.slice(c), start);
   };
-  const yank = () => { if (killRing.current) { insert(killRing.current); setKilled(false); } };
+  const yank = () => {
+    const ring = killRing.current;
+    if (!ring.length) return;
+    const text = ring[ring.length - 1];
+    const start = ed.current.cursor;
+    insert(text);
+    lastYank.current = { start, length: text.length, index: ring.length - 1 };
+    setKilled(false);
+  };
+  /** Alt+Y right after a yank: replace the yanked text with the previous kill (readline's yank-pop). */
+  const yankPop = () => {
+    const y = lastYank.current;
+    const ring = killRing.current;
+    if (!y || ring.length < 2) return;
+    const index = (y.index - 1 + ring.length) % ring.length;
+    const text = ring[index];
+    const t = ed.current.text;
+    if (t.slice(y.start, y.start + y.length) !== ring[y.index]) { lastYank.current = null; return; }
+    set(t.slice(0, y.start) + text + t.slice(y.start + y.length), y.start + text.length);
+    lastYank.current = { start: y.start, length: text.length, index };
+  };
   const undoOnce = () => {
     const prev = undo.current.pop();
     if (prev) {
@@ -303,7 +332,9 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const expandPastes = (t: string) => t.replace(PASTE_RE, (m, n) => pastes.current.get(Number(n)) ?? m);
 
   const insertPaste = (raw: string) => {
-    const normalized = raw.replace(/\r\n?/g, '\n');
+    let normalized = raw.replace(/\r\n?/g, '\n');
+    // Claude Code: a paste that starts with ! into an empty prompt switches to shell mode.
+    if (!ed.current.text && !bashMode && normalized.startsWith('!')) { setBashMode(true); normalized = normalized.slice(1); if (!normalized) return; }
     const lines = normalized.split('\n').length;
     const previous = lastPaste.current;
     lastPaste.current = null;
@@ -522,6 +553,8 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
       if (e.mouse?.button === 0 && e.mouse.release) onMouseRelease?.(e.mouse.x, e.mouse.y);
       return;
     }
+    // Only Alt+Y right after Ctrl+Y (or another Alt+Y) cycles the kill ring.
+    if (!(e.name === 'char' && ((e.alt && e.text === 'y') || (e.ctrl && e.text === 'y')))) lastYank.current = null;
     // User bindings (~/.fuller/keybindings.json or ~/.claude/keybindings.json, reloaded when they change).
     const keybindings = currentKeybindings();
     const single = keyString(e);
@@ -656,7 +689,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
         case 'b': if (onBackground?.()) return; ed.current.cursor = prevCp(ed.current.text, ed.current.cursor); bump(); return;
         case 'f': ed.current.cursor = nextCp(ed.current.text, ed.current.cursor); bump(); return;
         case 'k': killToEnd(); return;
-        case 'u': killToStart(); return;
+        case 'u': if (!ed.current.text && bashMode) { setBashMode(false); return; } killToStart(); return;
         case 'w': case 'h': if (e.text === 'h') backspace(); else deleteWordBack(true); return;
         case 'y': yank(); return;
         case 'j': insert('\n'); return;
@@ -688,6 +721,13 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
       }
       case 'tab':
         if (e.shift) { onCycleMode(); return; }
+        // Shell mode: Tab completes from the ! commands already run (most recent first), as in Claude Code.
+        if (bashMode && !e.ctrl && !e.alt) {
+          const typed = ed.current.text;
+          const match = [...history.current].reverse().find((h) => h.startsWith('!') && h.length > typed.length + 1 && h.slice(1).startsWith(typed));
+          if (match) { snapshot(); set(match.slice(1)); }
+          return;
+        }
         if (midSlash && slashMatches.length && !fullscreen && !midSlashOpen && (slashMatches.length > 1 || slashToken === '/')) { setMidSlashOpen(true); return; }
         if (menuOpen || slashMatches.length) completeMenu(false);
         else acceptSuggestion();
@@ -703,6 +743,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
         return;
       }
       case 'up':
+        if ((e.ctrl || e.alt) && onDiffPanelScroll?.(-1)) return;
         if (menuOpen) { setMenuNavigated(true); setMenuIndex((i) => (i <= 0 ? menuLength - 1 : i - 1)); return; }
         if (lineBounds(ed.current.text, ed.current.cursor).start === 0 && queue.length > 0) {
           const entry = onTakeQueue?.(!ed.current.text);
@@ -719,6 +760,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
         browseHistory(-1);
         return;
       case 'down':
+        if ((e.ctrl || e.alt) && onDiffPanelScroll?.(1)) return;
         if (menuOpen) { setMenuNavigated(true); setMenuIndex((i) => midSlash && !menuNavigated ? 0 : (i >= menuLength - 1 ? 0 : i + 1)); return; }
         if (moveLine(1)) return;
         browseHistory(1);
@@ -744,6 +786,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
       case 'delete': del(); return;
       case 'char': {
         if (e.alt) {
+          if (e.text === 'y') { yankPop(); return; }
           if (e.text === 'v') { void pasteImage(); return; }
           if (e.text === 'p') { onSwitchModel?.(); return; }
           if (e.text === 'b') { ed.current.cursor = moveWordLeft(); bump(); }

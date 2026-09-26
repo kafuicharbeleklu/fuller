@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { marked } from 'marked';
+import os from 'node:os';
 import { execSync } from 'node:child_process';
 import type { AgentLoop } from '../agent/loop.js';
 import { addPermissionRule, removePermissionRule, loadSettingsSources, saveDefaultModel, saveUserSetting, userConfigDir, type AppConfig } from '../config.js';
@@ -18,6 +20,7 @@ import { completeDirectory } from './InfoDialogs.js';
 import type { Denial } from './PermissionsDialog.js';
 import type { ContextData } from './ContextView.js';
 import { keybindingsFile, loadKeybindingsFull } from './keybindings.js';
+import { setMaxProseWidth } from './Markdown.js';
 import type { ThinkingLevelSetting } from '../agent/thinking.js';
 import { contextLabel } from './ModelPicker.js';
 import { modelLabel } from './modelLabel.js';
@@ -72,6 +75,47 @@ export interface CommandContext {
 
 /** Claude Code's /color names; purple, orange and pink as hex, the others as terminal colours. */
 const PROMPT_COLORS: Record<string, string> = { red: 'red', blue: 'blue', green: 'green', yellow: 'yellow', purple: '#a878e0', orange: '#e8912d', pink: '#e87aa9', cyan: 'cyan' };
+
+/** The fenced code blocks of a response, in order (Claude Code's /copy picker lists them). */
+export function codeBlocks(markdown: string): Array<{ code: string; lang?: string }> {
+  try {
+    return marked.lexer(markdown).filter((t) => t.type === 'code').map((t: any) => ({ code: String(t.text), lang: t.lang || undefined }));
+  } catch {
+    return [];
+  }
+}
+
+/** ".py" for a python block, ".txt" without a language (Claude Code's file names: copy.<ext>, response.md). */
+export function fileExtension(lang?: string): string {
+  const clean = (lang ?? '').replace(/[^a-zA-Z0-9]/g, '');
+  return clean && clean !== 'plaintext' ? `.${clean}` : '.txt';
+}
+
+/** Copied files live in a private temporary folder, as in Claude Code. */
+async function writeCopyFile(text: string, name: string): Promise<string> {
+  try {
+    const dir = path.join(os.tmpdir(), `fuller-copy-${process.getuid?.() ?? 'user'}`);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, text, 'utf8');
+    return `Written to ${file}`;
+  } catch (err: any) {
+    return `Failed to write file: ${err?.message ?? err}`;
+  }
+}
+
+async function copyAndWrite(text: string, name: string): Promise<string> {
+  const lines = text.split('\n').length;
+  let head: string;
+  try {
+    await copyToClipboard(text);
+    head = `Copied to clipboard (${text.length} characters, ${lines} lines)`;
+  } catch (err: any) {
+    head = `✗ ${err?.message ?? err}`;
+  }
+  const written = await writeCopyFile(text, name);
+  return written.startsWith('Written to ') ? `${head}\nAlso written to ${written.slice('Written to '.length)}` : head;
+}
 
 export type InfoDialog =
   | { kind: 'help'; commands: CommandEntry[]; custom: CommandEntry[] }
@@ -220,6 +264,16 @@ function configItems(ctx: CommandContext): ConfigItem[] {
       label: 'Notification channel', value: ctx.config.settings.preferredNotifChannel ?? 'auto', options: ['auto', 'iterm2', 'terminal_bell', 'iterm2_with_bell', 'kitty', 'ghostty', 'notifications_disabled'],
       description: 'Auto: desktop notification in iTerm2 (OSC 9), Kitty (OSC 99) and Ghostty (OSC 777), the terminal bell elsewhere',
       onChange: (value) => { ctx.config.settings.preferredNotifChannel = value as NonNullable<AppConfig['settings']['preferredNotifChannel']>; saveUserSetting(['preferredNotifChannel'], value); },
+    },
+    {
+      label: 'Always copy full response', value: bool(ctx.config.settings.copyFullResponse === true), options: ['true', 'false'],
+      description: '/copy copies the whole response without offering its code blocks',
+      onChange: (value) => { ctx.config.settings.copyFullResponse = value === 'true'; saveUserSetting(['copyFullResponse'], value === 'true'); },
+    },
+    {
+      label: 'Max prose width', value: ctx.config.settings.maxProseWidth ? String(ctx.config.settings.maxProseWidth) : 'off', options: ['off', '80', '100', '120'],
+      description: 'Wrap the model\'s prose at this many columns; code blocks and tables keep the full width',
+      onChange: (value) => { const n = value === 'off' ? undefined : Number(value); ctx.config.settings.maxProseWidth = n; saveUserSetting(['maxProseWidth'], n ?? null); setMaxProseWidth(n); },
     },
     {
       label: 'Reduce motion', value: bool(ctx.config.settings.prefersReducedMotion === true), options: ['true', 'false'],
@@ -741,21 +795,53 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/copy',
-    description: 'Copy the last assistant response to clipboard',
+    description: "Copy the model's last response to the clipboard (or /copy N for the Nth-latest)",
     usage: '[N]',
     takesArg: true,
     run: async (ctx, arg) => {
-      const n = Math.max(1, parseInt(arg, 10) || 1);
-      const texts = ctx.agent.getMessages().filter((m) => m.role === 'assistant' && (m.content || m.parts?.some((p) => p.type === 'text')));
-      const msg = texts[texts.length - n];
-      if (!msg) { ctx.addSystem('No assistant message to copy'); return; }
-      const text = msg.content || (msg.parts ?? []).filter((p) => p.type === 'text').map((p: any) => p.content).join('\n\n');
-      try {
-        const via = await copyToClipboard(text);
-        ctx.addSystem(`Copied ${text.length} characters to the clipboard (${via}).`);
-      } catch (err: any) {
-        ctx.addSystem(`✗ ${err.message}`, 'notice');
+      // Claude Code 2.1.282 (read in its binary): with code blocks, a picker (full response, each
+      // block, "Always copy full response"); Enter copies, w writes to a file, Esc cancels.
+      const texts = ctx.agent.getMessages()
+        .filter((m) => m.role === 'assistant' && (m.content || m.parts?.some((p) => p.type === 'text')))
+        .map((m) => m.content || (m.parts ?? []).filter((p) => p.type === 'text').map((p: any) => p.content).join('\n\n'))
+        .reverse();
+      if (!texts.length) { ctx.addSystem('No assistant message to copy'); return; }
+      let index = 0;
+      if (arg.trim()) {
+        const n = Number(arg.trim());
+        if (!Number.isInteger(n) || n < 1) { ctx.addSystem(`Usage: /copy [N] where N is 1 (latest), 2, 3, … Got: ${arg.trim()}`); return; }
+        if (n > texts.length) { ctx.addSystem(`Only ${texts.length} assistant ${texts.length === 1 ? 'message' : 'messages'} available to copy`); return; }
+        index = n - 1;
       }
+      const full = texts[index];
+      const blocks = codeBlocks(full);
+      if (!blocks.length || ctx.config.settings.copyFullResponse) { ctx.addSystem(await copyAndWrite(full, 'response.md')); return; }
+      const lineCount = (t: string) => t.split('\n').length;
+      const clip = (t: string) => { const one = t.replace(/\s+/g, ' ').trim(); return one.length > 60 ? `${one.slice(0, 59)}…` : one; };
+      ctx.openDialog({
+        kind: 'list',
+        title: 'Copy',
+        header: ['Select content to copy:'],
+        numbered: true,
+        shortcutKey: 'w',
+        hint: 'Enter to copy · w to write to file · Esc to cancel',
+        items: [
+          { label: 'Full response', hint: `${full.length} chars, ${lineCount(full)} lines`, onSelect: () => { void copyAndWrite(full, 'response.md').then((m) => ctx.addSystem(m)); }, onShortcut: () => { void writeCopyFile(full, 'response.md').then((m) => ctx.addSystem(m)); } },
+          ...blocks.map((b) => {
+            const name = `copy${fileExtension(b.lang)}`;
+            const lines = lineCount(b.code);
+            return { label: clip(b.code), hint: [b.lang, lines > 1 ? `${lines} lines` : undefined].filter(Boolean).join(', ') || undefined, onSelect: () => { void copyAndWrite(b.code, name).then((m) => ctx.addSystem(m)); }, onShortcut: () => { void writeCopyFile(b.code, name).then((m) => ctx.addSystem(m)); } };
+          }),
+          {
+            label: 'Always copy full response', hint: 'Skip this picker in the future (revert via /config)',
+            onSelect: () => {
+              ctx.config.settings.copyFullResponse = true;
+              try { saveUserSetting(['copyFullResponse'], true); } catch {}
+              void copyAndWrite(full, 'response.md').then((m) => ctx.addSystem(`${m}\nPreference saved. Use /config to change copyFullResponse`));
+            },
+          },
+        ],
+      });
     },
   },
   {

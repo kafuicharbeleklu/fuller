@@ -164,6 +164,35 @@ describe('prompt parity', () => {
     screen.unmount();
   });
 
+  it('cycles older kills with Alt+Y after Ctrl+Y (yank-pop)', async () => {
+    const screen = await input();
+    await screen.keys('first', '\x15', 'second', '\x15');
+    await screen.keys('\x19');
+    expect(screen.lastFrame()).toContain('second');
+    await screen.keys('\x1by');
+    expect(screen.lastFrame()).toContain('first');
+    expect(screen.lastFrame()).not.toContain('second');
+    await screen.keys('\x1by');
+    expect(screen.lastFrame()).toContain('second');
+    await screen.keys('\r');
+    expect(screen.submit).toHaveBeenLastCalledWith('second', []);
+  });
+
+  it('shell mode: a pasted ! command enters it, Ctrl+U on an empty field leaves it, Tab completes from ! history', async () => {
+    const onStateChange = vi.fn();
+    const screen = await input({ onStateChange, history: ['!npm run build', 'hello', '!npm test'] });
+    await screen.keys('\x1b[200~!ls -la\x1b[201~');
+    expect(onStateChange).toHaveBeenLastCalledWith(expect.objectContaining({ bashMode: true }));
+    expect(screen.lastFrame()).toContain('ls -la');
+    await screen.keys('\x15');
+    await screen.keys('\x15');
+    expect(onStateChange).toHaveBeenLastCalledWith(expect.objectContaining({ bashMode: false }));
+    await screen.keys('!', 'npm', '\t');
+    expect(screen.lastFrame()).toContain('npm test');
+    await screen.keys('\x17', '\x17', 'npm run', '\t');
+    expect(screen.lastFrame()).toContain('npm run build');
+  });
+
   it('takes the queue ahead of a draft on its first line', async () => {
     const take = vi.fn(() => ({ text: 'one\ntwo', attachments: [], bash: false }));
     const screen = await input({ queue: ['one', 'two'], onTakeQueue: take });

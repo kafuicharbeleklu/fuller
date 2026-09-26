@@ -63,8 +63,11 @@ describe('picker overlays', () => {
     const onSelect = vi.fn();
     const screen = render(wrap(<ModelPicker apiKey="test" current="gemini-3.8-flash" onSelect={onSelect} onCancel={() => {}} />));
     await vi.waitFor(() => expect(screen.lastFrame()).toContain('● High effort (default) ←/→ to adjust'));
-    await new Promise((resolve) => setImmediate(resolve));
-    screen.stdin.write('\x1b[D');
+    // The key listener is attached by an effect after the first frame: under load an early key is lost.
+    for (let i = 0; i < 40 && !(screen.lastFrame() ?? '').includes('◐ Medium effort'); i++) {
+      screen.stdin.write('\x1b[D');
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
     await vi.waitFor(() => expect(screen.lastFrame()).toContain('◐ Medium effort ←/→ to adjust'));
     screen.stdin.write('\x1b[D');
     await vi.waitFor(() => expect(screen.lastFrame()).toContain('○ Low effort ←/→ to adjust'));

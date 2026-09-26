@@ -111,7 +111,18 @@ function renderTable(t: Tokens.Table, theme: Theme, width: number, key: string):
   );
 }
 
+/** maxProseWidth (Claude Code 2.1.282): prose wraps at this width; code blocks and tables keep the full width. */
+let proseLimit: number | undefined;
+export function setMaxProseWidth(columns?: number): void {
+  proseLimit = typeof columns === 'number' && Number.isFinite(columns) && columns > 0 ? Math.max(40, Math.floor(columns)) : undefined;
+}
+export function maxProseWidth(): number | undefined {
+  return proseLimit;
+}
+
 function renderBlocks(tokens: Token[], theme: Theme, width: number, depth = 0, keyPrefix = ''): React.ReactNode[] {
+  // Prose boxes are capped; the full width stays for code and tables.
+  const prose = proseLimit && proseLimit < width ? proseLimit : undefined;
   const out: React.ReactNode[] = [];
   tokens.forEach((t, i) => {
     const key = `${keyPrefix}${i}`;
@@ -121,18 +132,18 @@ function renderBlocks(tokens: Token[], theme: Theme, width: number, depth = 0, k
       case 'heading': {
         const h = t as Tokens.Heading;
         out.push(
-          <Box key={key} marginTop={out.length ? 1 : 0}>
+          <Box key={key} marginTop={out.length ? 1 : 0} width={prose}>
             <Text bold underline={h.depth <= 1}>{renderInline(h.tokens, theme, key + '-')}</Text>
           </Box>
         );
         break;
       }
       case 'paragraph':
-        out.push(<Box key={key} marginTop={out.length ? 1 : 0}><Text>{renderInline((t as Tokens.Paragraph).tokens, theme, key + '-')}</Text></Box>);
+        out.push(<Box key={key} marginTop={out.length ? 1 : 0} width={prose}><Text>{renderInline((t as Tokens.Paragraph).tokens, theme, key + '-')}</Text></Box>);
         break;
       case 'text': {
         const tk = t as Tokens.Text;
-        out.push(<Box key={key}><Text>{tk.tokens ? renderInline(tk.tokens, theme, key + '-') : decode(tk.text)}</Text></Box>);
+        out.push(<Box key={key} width={prose}><Text>{tk.tokens ? renderInline(tk.tokens, theme, key + '-') : decode(tk.text)}</Text></Box>);
         break;
       }
       case 'code': {
