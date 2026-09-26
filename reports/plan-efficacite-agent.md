@@ -116,3 +116,20 @@ Voir [Comparaison_trois_recherches_Claude.md](Comparaison_trois_recherches_Claud
 **Troisième tâche réelle (25/09, K006 dans `chat/`)** : sur une tâche en éventail (42 occurrences dans 20 fichiers), le masquage à trois lots a fait tourner le modèle en rond (fichier lu 12 fois, 2,7 M tokens). Le masquage passe à un budget d'ensemble de travail de 200 000 caractères (seuls les résultats plus anciens au-delà sont effacés). `todo_write` : message d'erreur avec exemple après un second cas. Sélecteur de sessions : sonde de saisie, la vraie cause était l'attache tardive de l'écouteur.
 
 **Quatrième tâche réelle (25/09, K007 dans `chat/`)** : nettoyage des dossiers temporaires terminé par Fuller (0 par passage). Masquage par budget validé sur la même forme de tâche (plus de tourbillon, contexte plus gros : 88 % de cache, 125 k tokens par requête en fin de session). `search_files` : indice regex sur résultat vide. Bilan du jour : quatre défauts de fonctionnement trouvés en sessions réelles, tous invisibles sur le banc.
+
+## Mesure du 26/09 — coût de la réflexion visible
+
+Question laissée ouverte le 25/09 : la réflexion visible (`showThinking`, résumés de réflexion demandés à Gemini 3) coûte-t-elle des tokens au tour suivant ? Banc complet, 2 essais par tâche, Gemini 3.6 Flash, avec puis sans (`node scripts/eval.mjs --repeat 2 --label thinking-off --settings '{"showThinking":false}' --compare …`). Résultats : `evals/results/2026-09-26-10-04-gemini-3.6-flash-thinking-on.json` et `…-10-20-…-thinking-off.json`.
+
+| Sur les 11 essais notés des deux côtés | Réflexion visible | Sans |
+|---|---|---|
+| Réussites | 11 | 11 |
+| Prompt moyen par appel | 4 499 tokens | 4 643 tokens |
+| Réflexion moyenne par appel | 228 tokens | 88 tokens |
+| Appels à l'API | 105 | 91 |
+
+- **Pas de coût au tour suivant** : le prompt moyen par appel est le même ; les résumés sont bien retirés de l'historique (`stripThoughtSummaries`).
+- **Coût direct** : environ 140 tokens de réflexion de plus par appel, soit 3 % du coût d'un appel sur ce banc et bien moins sur une vraie session, où le prompt dépasse souvent 50 000 tokens.
+- **Écart d'appels (105 contre 91)** : du bruit de chemin, dans les deux sens selon la tâche (`rename-function` : 16 contre 8 au premier essai, 10 contre 14 au second). Le temps plus long sans réflexion vient des attentes de débit juste avant l'épuisement du quota.
+- **Décision** : la réflexion visible reste activée par défaut.
+- **Limites** : 5 essais perdus (surcharge de Gemini 3.6 Flash, puis quota du jour épuisé), banc facile. Le banc affichait les essais perdus comme « PASS → FAIL » : corrigé, seuls les essais notés des deux côtés sont listés.

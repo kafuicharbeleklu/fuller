@@ -209,8 +209,8 @@ if (compareFile) {
   console.log(`  on the ${pairs.length} run${pairs.length === 1 ? '' : 's'} scored in both: passed ${olds.filter((r) => r.pass).length} → ${news.filter((r) => r.pass).length} · tokens ${delta(sum(olds, 'tokens'), sum(news, 'tokens'))} (prompt ${delta(sum(olds, 'promptTokens'), sum(news, 'promptTokens'))}, output ${delta(sum(olds, 'outputTokens'), sum(news, 'outputTokens'))}, thinking ${delta(sum(olds, 'thoughtsTokens'), sum(news, 'thoughtsTokens'))}) · API calls ${delta(sum(olds, 'apiCalls'), sum(news, 'apiCalls'))} · tool calls ${delta(sum(olds, 'toolCalls'), sum(news, 'toolCalls'))} · time ${delta(Math.round(sum(olds, 'durationMs') / 1000), Math.round(sum(news, 'durationMs') / 1000))}s`);
   const left = rows.filter((r) => !pairs.some(([, n]) => n === r)).map((r) => r.task);
   if (left.length) console.log(`  not compared (API error on one side): ${[...new Set(left)].join(', ')}`);
-  for (const r of rows) {
-    const b = before.rows.find((x) => x.task === r.task && x.run === r.run);
-    if (b && b.pass !== r.pass) console.log(`  ${r.task}: ${b.pass ? 'PASS → FAIL' : 'FAIL → PASS'}`);
+  // Only real verdicts: a run lost to an API error (quota, overload) did not fail.
+  for (const [b, r] of pairs) {
+    if (b.pass !== r.pass) console.log(`  ${r.task} #${r.run}: ${b.pass ? 'PASS → FAIL' : 'FAIL → PASS'}`);
   }
 }
