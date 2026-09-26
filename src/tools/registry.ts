@@ -123,7 +123,7 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
         regex: { type: Type.BOOLEAN, description: 'Interpret query as a regular expression (default false).' },
         ignore_case: { type: Type.BOOLEAN, description: 'Case-insensitive search.' },
         glob: { type: Type.STRING, description: 'Restrict to files matching this glob, e.g. "**/*.ts".' },
-        path: { type: Type.STRING, description: 'Directory to search in (defaults to workspace).' },
+        path: { type: Type.STRING, description: 'File or directory to search in (defaults to workspace).' },
         max_results: { type: Type.INTEGER, description: 'Maximum matches (default 200).' },
         output_mode: { type: Type.STRING, description: '"content" (matching lines, default), "files_with_matches" (file paths only) or "count" (matches per file).' },
         context_lines: { type: Type.INTEGER, description: 'Lines of context around each match (content mode).' },

@@ -197,7 +197,10 @@ export async function searchFiles(
     throw new Error(`Invalid regular expression: ${err.message}`);
   }
   const ig = await loadIgnore(cwd);
-  const files = await fg(options.glob || '**/*', {
+  // `path` may name one file, as with Claude Code's Grep: listing the files under it found none, so
+  // every search in a file answered "0 matches" and a real session searched again and again (26/09).
+  const rootStat = await fs.stat(root).catch(() => null);
+  const files = rootStat?.isFile() ? [root] : await fg(options.glob || '**/*', {
     cwd: root,
     absolute: true,
     onlyFiles: true,

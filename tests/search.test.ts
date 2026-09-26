@@ -34,6 +34,13 @@ describe('search_files', () => {
     expect(formatSearchOutput('x', res, 'content', 2).split('\n')).toHaveLength(3);
   });
 
+  it('searches one file when the path names a file (real session, 26/09: always "0 matches" before)', async () => {
+    const res = await searchFiles('alpha', cwd, { path: 'src/a.ts' });
+    expect(res.matches.map((m) => [m.file, m.line])).toEqual([['src/a.ts', 1], ['src/a.ts', 3]]);
+    expect((await searchFiles('beta', cwd, { path: path.join(cwd, 'src', 'a.ts') })).matches).toHaveLength(1);
+    expect((await searchFiles('gamma', cwd, { path: 'src/a.ts' })).matches).toHaveLength(0);
+  });
+
   it('reports which backend was used', async () => {
     const res = await searchFiles('alpha', cwd);
     const rg = await findRipgrep();
