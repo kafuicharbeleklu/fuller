@@ -1065,11 +1065,36 @@ describe('AgentLoop', () => {
     const { cb } = makeCallbacks();
     const unanswered = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
     await unanswered.mcpReady();
-    expect(unanswered.mcpStatuses()).toEqual([]);
+    // Listed by /mcp as disabled, like Claude Code, but never started.
+    expect(unanswered.mcpStatuses().map((s) => [s.name, s.status])).toEqual([['echo', 'disabled']]);
+    expect(unanswered.mcpTools()).toEqual([]);
     saveMcpApproval(cwd, { enabled: [], disabled: ['echo'] });
     const refused = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
     await refused.mcpReady();
-    expect(refused.mcpStatuses()).toEqual([]);
+    expect(refused.mcpStatuses().map((s) => s.status)).toEqual(['disabled']);
+    expect(refused.mcpTools()).toEqual([]);
+  });
+
+  it('/mcp turns a server off and on for this project, and reconnects it', async () => {
+    const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'mcp-echo.mjs');
+    fs.writeFileSync(path.join(cwd, '.mcp.json'), JSON.stringify({ mcpServers: { echo: { command: process.execPath, args: [fixture] } } }));
+    const { saveMcpApproval, mcpApproval } = await import('../src/mcp/approval.js');
+    saveMcpApproval(cwd, { enabled: ['echo'], disabled: [] });
+    const { cb, items } = makeCallbacks();
+    const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+    await loop.mcpReady();
+    expect(loop.mcpStatuses()[0]).toMatchObject({ status: 'connected', toolCount: 3, capabilities: ['tools'], file: path.join(cwd, '.mcp.json') });
+    expect(loop.mcpStatuses()[0].endpoint).toBe(`${process.execPath} ${fixture}`);
+    const notices = () => items.filter((i) => i.kind === 'system' && /MCP echo/.test(i.message.content)).length;
+    const before = notices();
+    expect(await loop.mcpReconnect('echo')).toMatchObject({ status: 'connected', toolCount: 3 });
+    // /mcp reports its own actions: no "⚡ MCP echo connected" notice on top.
+    expect(notices()).toBe(before);
+    expect(await loop.mcpSetEnabled('echo', false)).toMatchObject({ status: 'disabled', toolCount: 0 });
+    expect(loop.mcpTools()).toEqual([]);
+    expect(mcpApproval(cwd).disabled).toEqual(['echo']);
+    expect(await loop.mcpSetEnabled('echo', true)).toMatchObject({ status: 'connected', toolCount: 3 });
+    expect(mcpApproval(cwd)).toMatchObject({ enabled: ['echo'], disabled: [] });
   });
 
   describe('subagents', () => {

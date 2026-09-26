@@ -20,9 +20,9 @@ import path from 'node:path';
 import os from 'node:os';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { APP_NAME, CONFIG_DIR_NAME } from '../branding.js';
-import { McpManager, type McpServerStatus } from '../mcp/manager.js';
-import { loadMcpConfig } from '../mcp/config.js';
-import { isApproved, mcpApproval } from '../mcp/approval.js';
+import { McpManager, type McpServerStatus, type McpToolInfo } from '../mcp/manager.js';
+import { loadMcpConfig, type McpServerEntry } from '../mcp/config.js';
+import { isApproved, mcpApproval, saveMcpApproval } from '../mcp/approval.js';
 import { loadSubagents, type SubagentDefinition } from './subagents.js';
 import { runSubagent } from './subagent.js';
 import { WorkTracker } from './taskState.js';
@@ -73,13 +73,17 @@ const AUTO_PAUSE_TOTAL = 20;
 
 const PARALLEL_READ_TOOLS = new Set(['read_file', 'outline_file', 'list_directory', 'search_files', 'glob']);
 
-/** The MCP servers allowed to start: the user's own, and the project servers the user enabled. */
-function safeLoadMcp(cwd: string) {
+/**
+ * Every configured MCP server, and the ones not to start: turned off for this project with /mcp,
+ * or project servers the user has not enabled. /mcp lists them all, like Claude Code.
+ */
+function safeLoadMcp(cwd: string): { entries: McpServerEntry[]; disabled: string[] } {
   try {
     const approval = mcpApproval(cwd);
-    return loadMcpConfig(cwd).filter((entry) => isApproved(entry, approval));
+    const entries = loadMcpConfig(cwd);
+    return { entries, disabled: entries.filter((entry) => !isApproved(entry, approval)).map((entry) => entry.name) };
   } catch {
-    return [];
+    return { entries: [], disabled: [] };
   }
 }
 
@@ -229,8 +233,10 @@ export class AgentLoop {
     this.session.setSubagents(this.subagents);
     this.session.refresh();
     this.checkpointManager = new CheckpointManager(config.workspaceDir);
-    this.mcp = new McpManager(safeLoadMcp(config.workspaceDir), {
-      onStatus: (statuses) => this.onMcpStatus(statuses),
+    const mcpConfig = safeLoadMcp(config.workspaceDir);
+    this.mcp = new McpManager(mcpConfig.entries, {
+      onStatus: (statuses, changed, quiet) => this.onMcpStatus(statuses, changed, quiet),
+      disabled: mcpConfig.disabled,
     });
     if (this.mcp.configured > 0) void this.mcp.connectAll();
     this.background = new BackgroundTaskManager(config.workspaceDir, this.sessionId, (task, tail) => {
@@ -287,11 +293,11 @@ export class AgentLoop {
   }
 
   // ---------------------------------------------------------------- MCP
-  private onMcpStatus(statuses: McpServerStatus[]) {
+  private onMcpStatus(statuses: McpServerStatus[], changed?: string, quiet = false) {
     this.session.setExtraTools(this.mcp.getDeclarations());
     this.session.refresh();
-    const settled = statuses.filter((s) => s.status !== 'connecting');
-    const last = settled[settled.length - 1];
+    // The server that just settled; /mcp reports its own actions ("Reconnected to echo.").
+    const last = quiet ? undefined : statuses.find((s) => s.name === changed && (s.status === 'connected' || s.status === 'failed'));
     if (last) {
       this.addSystemMessage(
         last.status === 'connected'
@@ -312,8 +318,19 @@ export class AgentLoop {
     return this.mcp.statuses();
   }
 
-  public mcpTools(): Array<{ server: string; name: string; fullName: string; description?: string }> {
+  public mcpTools(): McpToolInfo[] {
     return this.mcp.getTools();
+  }
+
+  /** /mcp → Reconnect. */
+  public mcpReconnect(name: string): Promise<McpServerStatus> {
+    return this.mcp.reconnect(name);
+  }
+
+  /** /mcp → Disable or Enable: kept for this project, like Claude Code's disabled servers. */
+  public async mcpSetEnabled(name: string, enabled: boolean): Promise<McpServerStatus> {
+    saveMcpApproval(this.config.workspaceDir, enabled ? { enabled: [name], disabled: [] } : { enabled: [], disabled: [name] });
+    return this.mcp.setEnabled(name, enabled);
   }
 
   public getBackgroundTasks(): BackgroundTask[] {
@@ -755,6 +772,8 @@ export class AgentLoop {
   private recordUsage(u?: TurnUsage) {
     if (!u) return;
     this.usage.promptTokens = u.promptTokens;
+    // The footer counts down to this point, as Claude Code's "N% until auto-compact".
+    this.usage.compactAt = this.config.autoCompact ? Math.round(this.autoCompactLimit()) : undefined;
     this.usage.responseTokens = u.responseTokens;
     this.usage.cumulativeTokens += u.totalTokens;
     this.usage.apiCalls++;
@@ -1713,11 +1732,17 @@ export class AgentLoop {
     }
   }
 
+  /**
+   * Prompt tokens at which the conversation is compacted: before it outgrows the smallest model of
+   * the fallback chain, so a fallback never starts with a request it cannot hold.
+   */
+  private autoCompactLimit(): number {
+    return Math.min(this.config.autoCompactThreshold * this.usage.contextWindow, 0.8 * this.session.chainMinWindow());
+  }
+
   private async maybeAutoCompact(): Promise<void> {
     if (!this.config.autoCompact) return;
-    // Compact before the conversation outgrows the smallest model of the fallback chain, so a
-    // fallback never starts with a request it cannot hold, and each request spends less quota.
-    const limit = Math.min(this.config.autoCompactThreshold * this.usage.contextWindow, 0.8 * this.session.chainMinWindow());
+    const limit = this.autoCompactLimit();
     const ratio = this.usage.promptTokens / this.usage.contextWindow;
     if (this.usage.promptTokens < limit) return;
     this.addSystemMessage(`Context is ${Math.round(ratio * 100)}% full — compacting conversation…`, 'notice');

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { editorName, tildePath } from './externalEditor.js';
+import type { McpApi } from './McpDialog.js';
 import path from 'node:path';
 import { marked } from 'marked';
 import os from 'node:os';
@@ -125,6 +126,7 @@ export type InfoDialog =
   | { kind: 'effort' }
   | { kind: 'input'; title: string; description?: string; label?: string; placeholder?: string; hint?: string; complete?: (value: string) => string; onSubmit: (value: string) => void }
   | { kind: 'list'; title: string; header?: string[]; items: ListItem[]; empty?: string; footer?: string; numbered?: boolean; hint?: string; shortcutKey?: string }
+  | { kind: 'mcp'; api: McpApi }
   | { kind: 'permissions'; allow: string[]; ask: string[]; deny: string[]; directories: string[]; denials: Denial[]; autoRules: string[]; disabledBuiltin: Array<'softAllow' | 'softDeny'>; onAddRule: (kind: 'allow' | 'ask' | 'deny', rule: string) => void; onRemoveRule: (rule: string) => void; onAddAutoRule: (rule: string) => void; onRemoveAutoRule: (rule: string) => void; onToggleBuiltin: (group: 'softAllow' | 'softDeny') => void; onAddDirectory: () => void };
 
 /** /permissions dialog data; its actions update the settings and reopen it. */
@@ -887,22 +889,18 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/mcp',
-    description: 'Show MCP server connections and their tools',
+    description: 'Manage MCP servers',
+    // Claude Code 2.1.283: servers by file, then a server's menu (View tools, Reconnect, Disable).
     run: (ctx) => {
-      const statuses = ctx.agent.mcpStatuses();
-      const tools = ctx.agent.mcpTools();
+      const agent = ctx.agent;
       ctx.openDialog({
-        kind: 'list',
-        title: 'Manage MCP servers',
-        header: [`${statuses.length} server${statuses.length === 1 ? '' : 's'}`],
-        numbered: false,
-        items: statuses.map((st) => ({
-          glyph: st.status === 'connected' ? '✔' : st.status === 'failed' ? '✘' : '◯',
-          label: st.name,
-          hint: st.status === 'connected' ? `${tools.filter((t) => t.server === st.name).length} tools` : st.error ? `${st.status}: ${st.error}` : st.status,
-        })),
-        empty: 'No MCP servers configured.',
-        footer: 'Add servers in .mcp.json or ~/.fuller/mcp.json · tools appear as mcp__<server>__<tool>',
+        kind: 'mcp',
+        api: {
+          statuses: () => agent.mcpStatuses(),
+          toolsOf: (server) => agent.mcpTools().filter((tool) => tool.server === server),
+          reconnect: (name) => agent.mcpReconnect(name),
+          setEnabled: (name, enabled) => agent.mcpSetEnabled(name, enabled),
+        },
       });
     },
   },

@@ -12,6 +12,8 @@ interface Props {
   status: AgentStatus;
   usage: UsageInfo;
   autoCompactThreshold: number;
+  /** Off: the red "Context low" warning instead of the countdown. */
+  autoCompact?: boolean;
   inputEmpty: boolean;
   bashMode: boolean;
   menuOpen?: boolean;
@@ -48,12 +50,27 @@ export const PromptHints: React.FC<{ model: string; thinkingLevel?: ThinkingLeve
   );
 };
 
-/** Percent of context left before auto-compact from which the footer shows it. */
-export const CONTEXT_WARNING_LEFT = 20;
+/** Claude Code shows the context in the footer only in the last 20,000 tokens before its limit. */
+export const CONTEXT_WARNING_TOKENS = 20_000;
+
+/**
+ * The footer's context label, as Claude Code 2.1.283 computes it (read in its binary, 26/09):
+ * dim "N% until auto-compact" counting down to the compaction point, or, with auto-compact off,
+ * "Context low (N% remaining) · Run /compact to compact & continue" in red. Nothing before the
+ * last 20,000 tokens.
+ */
+export function contextLabel(usage: UsageInfo, autoCompact: boolean, threshold: number): { text: string; low: boolean } | null {
+  const tokens = usage.promptTokens;
+  if (!tokens || !usage.contextWindow) return null;
+  const limit = autoCompact ? usage.compactAt ?? threshold * usage.contextWindow : usage.contextWindow;
+  if (limit <= 0 || tokens < limit - CONTEXT_WARNING_TOKENS) return null;
+  const left = Math.max(0, Math.round((limit - tokens) / limit * 100));
+  return autoCompact ? { text: `${left}% until auto-compact`, low: false } : { text: `Context low (${left}% remaining) · Run /compact to compact & continue`, low: true };
+}
 /** From this share of the model's quota spent (over every key), the footer turns to the warning colour. */
 const QUOTA_WARNING = 0.8;
 
-export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThreshold, inputEmpty, bashMode, menuOpen = false, hint, statusLine, statusLinePadding, backgroundTasks = 0, quota }) => {
+export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThreshold, autoCompact = true, inputEmpty, bashMode, menuOpen = false, hint, statusLine, statusLinePadding, backgroundTasks = 0, quota }) => {
   const theme = useTheme();
   const busy = status !== 'idle';
 
@@ -71,10 +88,8 @@ export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThresh
   else if (mode === 'bypassPermissions') modeNode = <Text color={theme.bypass}>{PLAY}{PLAY_GAP}bypass permissions on<Text color={theme.subtle}>{hints}</Text></Text>;
   else modeNode = <Text color={theme.subtle}>{PAUSE}{PAUSE_GAP}manual mode on{hints}</Text>;
 
-  const used = usage.promptTokens / usage.contextWindow;
-  const left = Math.max(0, Math.round((autoCompactThreshold - used) / autoCompactThreshold * 100));
-  // Claude Code warns from 80 % of the context used, i.e. 20 % left before auto-compact.
-  const showContext = usage.promptTokens > 0 && left <= CONTEXT_WARNING_LEFT;
+  const context = contextLabel(usage, autoCompact, autoCompactThreshold);
+  const showContext = !!context;
 
   const showQuota = !!quota && quota.exhausted > 0 && !hint;
 
@@ -94,7 +109,7 @@ export const Footer: React.FC<Props> = ({ mode, status, usage, autoCompactThresh
       <Box flexShrink={0}>
         {backgroundTasks > 0 ? <Text color={theme.accent}>⏵ {backgroundTasks} background task{backgroundTasks > 1 ? 's' : ''} (/tasks){showContext ? ' · ' : ''}</Text> : null}
         {showContext ? (
-          <Text color={left < 20 ? theme.warning : theme.subtle}>Context left until auto-compact: {left}%</Text>
+          <Text color={context!.low ? theme.error : theme.subtle} wrap="truncate">{context!.text}</Text>
         ) : null}
         {showQuota && quota ? (
           // One bar for the model over every key (Gemini CLI shows usage from its warning threshold).

@@ -58,8 +58,9 @@ export function saveMcpApproval(workspaceDir: string, answer: McpApproval): void
 
 /** Whether a server may start: the user's own, or a project server the user enabled. */
 export function isApproved(entry: McpServerEntry, approval: McpApproval): boolean {
-  if (entry.scope === 'user') return true;
+  // /mcp → Disable turns any server off for this project, the user's own included.
   if (approval.disabled.includes(entry.name)) return false;
+  if (entry.scope === 'user') return true;
   return approval.all === true || approval.enabled.includes(entry.name);
 }
 

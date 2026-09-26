@@ -19,10 +19,17 @@ export interface McpToolInfo {
 export interface McpServerStatus {
   name: string;
   scope: McpServerEntry['scope'];
-  status: 'connecting' | 'connected' | 'failed';
+  /** 'disabled': turned off for this project (/mcp), or a project server not approved. */
+  status: 'connecting' | 'connected' | 'failed' | 'disabled';
   error?: string;
   toolCount: number;
   transport: 'stdio' | 'http';
+  /** The command line (stdio) or the URL (http), as /mcp shows it. */
+  endpoint: string;
+  /** The file that declares the server. */
+  file: string;
+  /** What the connected server offers: tools, prompts, resources. */
+  capabilities?: string[];
 }
 
 const MAX_OUTPUT = 100_000;
@@ -36,33 +43,81 @@ export class McpManager {
 
   constructor(
     private readonly entries: McpServerEntry[],
-    private readonly options: { onStatus?: (statuses: McpServerStatus[]) => void; connectTimeoutMs?: number } = {}
+    private readonly options: {
+      /** `changed`: the server whose state moved; `quiet`: the user asked for it in /mcp, no notice. */
+      onStatus?: (statuses: McpServerStatus[], changed?: string, quiet?: boolean) => void;
+      connectTimeoutMs?: number;
+      /** Servers listed but not started (turned off for this project, or not approved). */
+      disabled?: Iterable<string>;
+    } = {}
   ) {
+    const off = new Set(options.disabled ?? []);
     for (const e of entries) {
-      this.status.set(e.name, { name: e.name, scope: e.scope, status: 'connecting', toolCount: 0, transport: isHttpServer(e.config) ? 'http' : 'stdio' });
+      const endpoint = isHttpServer(e.config) ? e.config.url : [e.config.command, ...(e.config.args ?? [])].join(' ');
+      this.status.set(e.name, { name: e.name, scope: e.scope, status: off.has(e.name) ? 'disabled' : 'connecting', toolCount: 0, transport: isHttpServer(e.config) ? 'http' : 'stdio', endpoint, file: e.file });
     }
   }
 
+  /** Servers to start (the disabled ones are only listed). */
   public get configured(): number {
-    return this.entries.length;
+    return this.entries.filter((e) => this.status.get(e.name)?.status !== 'disabled').length;
   }
 
   public connectAll(): Promise<void> {
     if (!this.readyPromise) {
-      this.readyPromise = Promise.all(this.entries.map((e) => this.connect(e))).then(() => undefined);
+      this.readyPromise = Promise.all(this.entries.filter((e) => this.status.get(e.name)?.status !== 'disabled').map((e) => this.connect(e))).then(() => undefined);
     }
     return this.readyPromise;
+  }
+
+  /** The tools of one server, with their input schema (/mcp → View tools). */
+  public toolsOf(server: string): McpToolInfo[] {
+    return this.getTools().filter((t) => t.server === server);
+  }
+
+  /** Stop a server's process and forget its tools. */
+  private async drop(name: string): Promise<void> {
+    const client = this.clients.get(name);
+    this.clients.delete(name);
+    for (const [key, tool] of this.tools) if (tool.server === name) this.tools.delete(key);
+    await client?.close().catch(() => undefined);
+  }
+
+  /** /mcp → Reconnect: restart the server and list its tools again. */
+  public async reconnect(name: string): Promise<McpServerStatus> {
+    const entry = this.entries.find((e) => e.name === name);
+    const st = this.status.get(name);
+    if (!entry || !st) throw new Error(`Unknown MCP server ${name}`);
+    await this.drop(name);
+    Object.assign(st, { status: 'connecting', error: undefined, toolCount: 0, capabilities: undefined });
+    this.emit(name, true);
+    await this.connect(entry, true);
+    return { ...st };
+  }
+
+  /** /mcp → Disable or Enable, for this session; the caller keeps the choice. */
+  public async setEnabled(name: string, enabled: boolean): Promise<McpServerStatus> {
+    const st = this.status.get(name);
+    if (!st) throw new Error(`Unknown MCP server ${name}`);
+    if (!enabled) {
+      await this.drop(name);
+      Object.assign(st, { status: 'disabled', error: undefined, toolCount: 0, capabilities: undefined });
+      this.emit(name, true);
+      return { ...st };
+    }
+    if (st.status !== 'disabled') return { ...st };
+    return this.reconnect(name);
   }
 
   public ready(): Promise<void> {
     return this.readyPromise ?? Promise.resolve();
   }
 
-  private emit() {
-    this.options.onStatus?.(this.statuses());
+  private emit(changed?: string, quiet = false) {
+    this.options.onStatus?.(this.statuses(), changed, quiet);
   }
 
-  private async connect(entry: McpServerEntry): Promise<void> {
+  private async connect(entry: McpServerEntry, quiet = false): Promise<void> {
     const timeoutMs = this.options.connectTimeoutMs ?? 10_000;
     const st = this.status.get(entry.name)!;
     try {
@@ -75,13 +130,15 @@ export class McpManager {
         const info: McpToolInfo = { server: entry.name, name: t.name, fullName: mcpToolName(entry.name, t.name), description: t.description, inputSchema: t.inputSchema };
         this.tools.set(info.fullName, info);
       }
+      const caps = client.getServerCapabilities() ?? {};
+      st.capabilities = (['tools', 'prompts', 'resources'] as const).filter((cap) => caps[cap]);
       st.status = 'connected';
       st.toolCount = tools.length;
     } catch (err: any) {
       st.status = 'failed';
       st.error = String(err?.message ?? err).split('\n')[0].slice(0, 200);
     }
-    this.emit();
+    this.emit(entry.name, quiet);
   }
 
   private async createTransport(entry: McpServerEntry) {
@@ -107,7 +164,7 @@ export class McpManager {
   }
 
   public statuses(): McpServerStatus[] {
-    return [...this.status.values()];
+    return [...this.status.values()].map((st) => ({ ...st }));
   }
 
   public getTools(): McpToolInfo[] {

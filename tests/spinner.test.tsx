@@ -38,14 +38,28 @@ describe('waiting animation (Claude Code 2.1.281)', () => {
     expect(turnEndLine({ key: 't2', durationMs: 1_000, toolCount: 0, timestamp: at })).toBeNull();
   });
 
-  it('keeps the mode in the footer with "esc to interrupt" while busy, and hides the context until 80 % used', () => {
+  it('keeps the mode in the footer with "esc to interrupt" while busy, and shows the context only near the limit', () => {
     const usage = (promptTokens: number) => ({ promptTokens, responseTokens: 0, cumulativeTokens: 0, contextWindow: 100_000, apiCalls: 1, turns: 1 });
     const busy = render(wrap(<Footer mode="default" status="thinking" usage={usage(1000)} autoCompactThreshold={0.85} inputEmpty bashMode={false} />));
     expect(busy.lastFrame()?.trimEnd()).toBe('  ⏸ manual mode on · esc to interrupt · ← for agents');
     busy.unmount();
     const full = render(wrap(<Footer mode="default" status="idle" usage={usage(75_000)} autoCompactThreshold={0.85} inputEmpty bashMode={false} />));
-    expect(full.lastFrame()).toContain('Context left until auto-compact: 12%');
+    expect(full.lastFrame()).toContain('12% until auto-compact');
     full.unmount();
+  });
+
+  it('counts down to auto-compact only in the last 20,000 tokens, as Claude Code 2.1.283 does', async () => {
+    const { contextLabel } = await import('../src/ui/Footer.js');
+    const usage = (promptTokens: number, compactAt?: number) => ({ promptTokens, responseTokens: 0, cumulativeTokens: 0, contextWindow: 1_000_000, apiCalls: 1, turns: 1, compactAt });
+    // Gemini: a 1M window compacted at 85 %, i.e. 850,000 tokens.
+    expect(contextLabel(usage(829_000), true, 0.85)).toBeNull();
+    expect(contextLabel(usage(830_000), true, 0.85)).toEqual({ text: '2% until auto-compact', low: false });
+    // The loop's real compaction point wins (a smaller model in the fallback chain).
+    expect(contextLabel(usage(190_000, 200_000), true, 0.85)).toEqual({ text: '5% until auto-compact', low: false });
+    // Auto-compact off: red, against the whole window.
+    expect(contextLabel(usage(990_000), false, 0.85)).toEqual({ text: 'Context low (1% remaining) · Run /compact to compact & continue', low: true });
+    expect(contextLabel(usage(900_000), false, 0.85)).toBeNull();
+    expect(contextLabel(usage(0), true, 0.85)).toBeNull();
   });
 });
 

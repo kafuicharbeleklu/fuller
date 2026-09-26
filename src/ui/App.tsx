@@ -11,6 +11,7 @@ import { LiveArea } from './LiveArea.js';
 import { SpinnerLine, useSpinnerFrame } from './Spinner.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
 import { PlanApproval } from './PlanApproval.js';
+import { McpDialog } from './McpDialog.js';
 import { RewindMenu } from './RewindMenu.js';
 import { ModelPicker } from './ModelPicker.js';
 import { ThemePicker, themeLabel } from './ThemePicker.js';
@@ -329,7 +330,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
   const toggleItem = useCallback((key: string) => {
     setExpandedItems((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   }, []);
-  const { lines: fullscreenLines, owners: fullscreenOwners } = useTranscriptRows({
+  const { lines: fullscreenLines, owners: fullscreenOwners, prompts: fullscreenPrompts, itemCount: fullscreenItemCount } = useTranscriptRows({
     expanded: expandedItems,
     items: fullscreen ? items : noItems,
     live: fullscreen ? live : null,
@@ -601,7 +602,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
     appendPromptHistory(config.workspaceDir, cmd);
     const name = cmd.split(/\s/)[0];
     if (menuCommands.some((c) => c.name === name)) { recordCommandUsage(name); setCommandUsage(loadCommandUsage()); }
-    if (cmd === '/model' || cmd.startsWith('/model ')) agentRef.current?.addCommandMessage(cmd);
+    if (cmd === '/model' || cmd.startsWith('/model ') || cmd === '/mcp') agentRef.current?.addCommandMessage(cmd);
     const ctx = commandContext();
     if (ctx) void runCommand(cmd, ctx).then(() => setModel(config.model));
   }, [commandContext, config.workspaceDir, config, menuCommands]);
@@ -766,7 +767,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
           <Box ref={transcriptBox} flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
             <Box flexDirection="row" flexGrow={1}>
               <Box flexDirection="column" width={diffPanel ? diffPanelLayout(stdout?.columns ?? 80).left : undefined} flexGrow={diffPanel ? 0 : 1}>
-                {(!pickerOpen || pickerTranscriptHeight > 0) && (!confirmation || rows >= 16) ? <FullscreenTranscript lines={fullscreenLines} owners={fullscreenOwners} clickRequest={transcriptClick} onToggleItem={toggleItem} height={measuredTranscriptHeight ?? transcriptHeight} scrollRequest={scrollRequest} width={diffPanel ? diffPanelLayout(stdout?.columns ?? 80).left : undefined} /> : null}
+                {(!pickerOpen || pickerTranscriptHeight > 0) && (!confirmation || rows >= 16) ? <FullscreenTranscript lines={fullscreenLines} owners={fullscreenOwners} prompts={fullscreenPrompts} itemCount={fullscreenItemCount} clickRequest={transcriptClick} onToggleItem={toggleItem} height={measuredTranscriptHeight ?? transcriptHeight} scrollRequest={scrollRequest} width={diffPanel ? diffPanelLayout(stdout?.columns ?? 80).left : undefined} /> : null}
               </Box>
               {diffPanel ? <DiffPanel {...diffPanel} width={diffPanelLayout(stdout?.columns ?? 80).panel} height={measuredTranscriptHeight ?? transcriptHeight} /> : null}
             </Box>
@@ -842,6 +843,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
           : infoDialog.kind === 'help' ? <HelpDialog commands={infoDialog.commands} custom={infoDialog.custom} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
           : infoDialog.kind === 'settings' ? <SettingsDialog status={infoDialog.status} usage={infoDialog.usage} config={infoDialog.config} stats={infoDialog.stats} initialTab={infoDialog.tab} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
           : infoDialog.kind === 'permissions' ? <PermissionsDialog allow={infoDialog.allow} ask={infoDialog.ask} deny={infoDialog.deny} denials={infoDialog.denials} autoRules={infoDialog.autoRules} disabledBuiltin={infoDialog.disabledBuiltin} onAddAutoRule={infoDialog.onAddAutoRule} onRemoveAutoRule={infoDialog.onRemoveAutoRule} onToggleBuiltin={infoDialog.onToggleBuiltin} directories={infoDialog.directories} onAddRule={infoDialog.onAddRule} onRemoveRule={infoDialog.onRemoveRule} onAddDirectory={infoDialog.onAddDirectory} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
+          : infoDialog.kind === 'mcp' ? <McpDialog api={infoDialog.api} onClose={(message) => { setInfoDialog(null); addSystem(message ?? 'MCP dialog dismissed', 'notice'); }} ruleLabel={effortLabel} />
           : infoDialog.kind === 'input' ? <InputDialog title={infoDialog.title} description={infoDialog.description} label={infoDialog.label} placeholder={infoDialog.placeholder} hint={infoDialog.hint} complete={infoDialog.complete} onSubmit={infoDialog.onSubmit} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
           : <ListDialog shortcutKey={infoDialog.shortcutKey} title={infoDialog.title} header={infoDialog.header} items={infoDialog.items} empty={infoDialog.empty} footer={infoDialog.footer} numbered={infoDialog.numbered} hint={infoDialog.hint} onClose={() => setInfoDialog(null)} ruleLabel={effortLabel} />
         ) : null}
@@ -963,6 +965,7 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
             status={status}
             usage={usage}
             autoCompactThreshold={config.autoCompactThreshold}
+            autoCompact={config.autoCompact}
             inputEmpty={inputState.empty}
             bashMode={inputState.bashMode}
             menuOpen={inputState.menuOpen}
