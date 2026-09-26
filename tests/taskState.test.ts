@@ -264,6 +264,16 @@ describe('review', () => {
     expect(parseReview(text).status).toBe('issues');
   });
 
+  it('reads an incomplete review and the list of checked call sites (Codex, C009)', () => {
+    expect(parseReview('INCOMPLETE: could not read the callers of compactHistory in src/agent/loop.ts')).toEqual({ status: 'incomplete', text: 'could not read the callers of compactHistory in src/agent/loop.ts' });
+    // Call sites listed as path:line under "Checked:" are not defects.
+    expect(parseReview('Checked:\n- src/agent/loop.ts:521\n- src/agent/loop.ts:1726\nNO_ISSUES')).toEqual({ status: 'clean' });
+    expect(parseReview('Checked: src/agent/loop.ts:521, src/agent/loop.ts:1726\nNO_ISSUES')).toEqual({ status: 'clean' });
+    // A defect still wins over "incomplete".
+    expect(parseReview('src/a.js:3 — off by one\nINCOMPLETE: src/b.js not read').status).toBe('issues');
+    expect(reviewPrompt('x', { files: ['a.ts'], diff: '' } as any, 'done')).toContain('read every call site');
+  });
+
   it('accepts NO_ISSUES as the closing sentence or line', () => {
     expect(parseReview('No defect found. NO_ISSUES')).toEqual({ status: 'clean' });
     expect(parseReview('I read the diff and the callers.\nNO_ISSUES')).toEqual({ status: 'clean' });

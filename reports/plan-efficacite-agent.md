@@ -129,10 +129,10 @@ Question laissée ouverte le 25/09 : la réflexion visible (`showThinking`, rés
 | Appels à l'API | 105 | 91 |
 
 - **Pas de coût au tour suivant** : le prompt moyen par appel est le même ; les résumés sont bien retirés de l'historique (`stripThoughtSummaries`).
-- **Coût direct** : environ 140 tokens de réflexion de plus par appel, soit 3 % du coût d'un appel sur ce banc et bien moins sur une vraie session, où le prompt dépasse souvent 50 000 tokens.
+- **Coût direct** : environ 140 tokens de réflexion de plus par appel, soit 3 % des **tokens** d'un appel sur ce banc. En **argent**, la part est plus grande : la réflexion est facturée au prix de la sortie, plus cher que l'entrée, et les prompts du banc sont courts (remarque de Codex, C009). Sur une vraie session, où le prompt dépasse souvent 50 000 tokens, elle redevient faible. Rien ne montre que l'affichage améliore le raisonnement : c'est un confort de lecture.
 - **Écart d'appels (105 contre 91)** : du bruit de chemin, dans les deux sens selon la tâche (`rename-function` : 16 contre 8 au premier essai, 10 contre 14 au second). Le temps plus long sans réflexion vient des attentes de débit juste avant l'épuisement du quota.
 - **Décision** : la réflexion visible reste activée par défaut.
-- **Limites** : 5 essais perdus (surcharge de Gemini 3.6 Flash, puis quota du jour épuisé), banc facile. Le banc affichait les essais perdus comme « PASS → FAIL » : corrigé, seuls les essais notés des deux côtés sont listés.
+- **Limites** : 5 essais perdus sur 32 (surcharge de Gemini 3.6 Flash, puis quota du jour épuisé), banc facile. Exclus du score, ces essais comptent pour la fiabilité de bout en bout : 16 % des passages n'ont pas abouti pour une raison extérieure à l'agent. Le banc affichait les essais perdus comme « PASS → FAIL » : corrigé, seuls les essais notés des deux côtés sont listés.
 
 ## Tâche réelle en mode auto (26/09) — ce qu'elle apprend
 
@@ -144,3 +144,5 @@ Fuller a modifié sa propre compaction, en mode auto, dans un worktree isolé (`
   1. Lire les fichiers de taille moyenne en entier : 15 tranches de 50 lignes pour un fichier de 665 lignes.
   2. Point 9 du plan : une recherche à 3 résultats ou moins renvoie le code autour.
   3. Rendre le relecteur plus exigeant sur l'intégration : vérifier que les appelants des fonctions modifiées ont suivi.
+
+**Suite de la relecture de Codex (C009, 26/09)** : la section « mot pour mot » tronquait les plus anciens messages en premier, donc souvent la consigne initiale et ses limites. Elle garde maintenant le premier et le dernier message entiers, raccourcit ceux du milieu (début et fin conservés) avec un budget de 40 000 caractères, et le dit quand elle raccourcit. Le résumé partiel (`summarizeTurn`) reçoit aussi les messages tapés. Le relecteur doit lire tous les sites d'appel d'une fonction dont le contrat change, et répondre `INCOMPLETE:` s'il n'a pas pu ; le modèle vérifie alors lui-même au lieu d'un feu vert.

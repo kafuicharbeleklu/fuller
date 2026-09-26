@@ -82,13 +82,19 @@ ${answer.slice(0, 3000)}
 
 Review the changes against the request. Report only concrete defects: a requirement of the request not met, a bug, a caller, import or test left inconsistent, leftover debug code, or a claim in the answer that the code contradicts. Read the surrounding code when you need to confirm a problem. Do not report style preferences or optional improvements.
 
-Reply with one line per defect: \`path:line — problem — why it matters\`. If you find no defect, reply exactly: NO_ISSUES`;
+When the diff changes what a function takes or returns (its parameters, their meaning, its result), search its references and read every call site, including those outside the diff: a caller left on the old contract is a defect.
+
+Reply with one line per defect: \`path:line — problem — why it matters\`. If you find no defect, end with a line \`Checked: <the call sites and files you verified>\` and then exactly: NO_ISSUES. If you could not verify something that matters (a call site you could not read, a file you ran out of turns for), reply \`INCOMPLETE: <what was not verified>\` instead of NO_ISSUES.`;
 }
 
 export type ReviewVerdict =
   | { status: 'clean' }
   | { status: 'issues'; text: string }
+  /** The reviewer said what it could not verify: no green light. */
+  | { status: 'incomplete'; text: string }
   | { status: 'inconclusive' };
+
+const INCOMPLETE = /^[\s`*_]*INCOMPLETE[\s`*_]*:\s*(.+)$/m;
 
 /**
  * A defect line: `path:line — problem`, as asked, or the usual variants a model writes (a list
@@ -101,7 +107,12 @@ const CLEAN = /(?:^|\n|[.!]\s+)[\s`*_]*NO_ISSUES[\s`*_.]*$/;
 /** Only an explicit verdict counts as a completed review. */
 export function parseReview(text: string): ReviewVerdict {
   const t = text.trim();
-  const defects = DEFECT.test(t);
+  // The call sites listed under "Checked:" look like defect lines (path:line): they are not.
+  const lines = t.split('\n');
+  const checked = lines.findIndex((line) => /^[\s`*_]*Checked\s*:/.test(line));
+  const defects = DEFECT.test(checked >= 0 ? lines.slice(0, checked).join('\n') : t);
+  const incomplete = t.match(INCOMPLETE);
+  if (!defects && incomplete) return { status: 'incomplete', text: incomplete[1].trim().slice(0, 2000) };
   if (!defects && CLEAN.test(t)) return { status: 'clean' };
   if (!defects) return { status: 'inconclusive' };
   return { status: 'issues', text: t.length > 4000 ? `${t.slice(0, 4000)}\n[review cut]` : t };

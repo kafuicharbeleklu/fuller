@@ -518,7 +518,10 @@ export class AgentLoop {
     this.abortController = new AbortController();
     this.callbacks.onStatusChange('compacting');
     try {
-      const summary = await this.session.compactHistory(selected, undefined, this.abortController.signal);
+      // The prompts typed in the summarized part, from the transcript: the history also holds expanded
+      // @mentions and injected context (Codex, C009).
+      const typed = this.typedUserMessages(scope === 'from' ? this.messages.slice(checkpoint.messageIndex) : this.messages.slice(0, checkpoint.messageIndex));
+      const summary = await this.session.compactHistory(selected, undefined, this.abortController.signal, typed);
       const marker = [
         { role: 'user' as const, parts: [{ text: `[Conversation summary]\n${summary}` }] },
         { role: 'model' as const, parts: [{ text: 'I will continue from this summary.' }] },
@@ -603,8 +606,8 @@ export class AgentLoop {
 
   // ---------------------------------------------------------------- settings
   /** What the user typed in this conversation (not slash commands), oldest first: kept word for word. */
-  private typedUserMessages(): string[] {
-    return this.messages.filter((m) => m.role === 'user' && m.kind !== 'command').map((m) => m.content);
+  private typedUserMessages(messages: ChatMessage[] = this.messages): string[] {
+    return messages.filter((m) => m.role === 'user' && m.kind !== 'command').map((m) => m.content);
   }
 
   /** Where this session's plan is saved (exit_plan_mode), read by /plan. */
@@ -1288,6 +1291,11 @@ export class AgentLoop {
       });
       this.callbacks.onNotice(null);
       const review = parseReview(result.text);
+      // The reviewer could not check everything (call sites of a changed function, most often): the model checks them itself.
+      if (result.completed && review.status === 'incomplete') {
+        this.addSystemMessage(`⚠ Review incomplete: ${review.text.split('\n')[0].slice(0, 160)}`, 'notice');
+        return `[Independent review] Another agent read your changes but could not verify everything:\n\n${review.text}\n\nCheck these points yourself (search the references, read each call site), fix what is inconsistent and run the relevant checks again. Then give your final answer.`;
+      }
       if (!result.completed || review.status === 'inconclusive') {
         this.addSystemMessage('⚠ Review inconclusive: no complete, usable verdict returned; the changes are not independently validated', 'notice');
         return null;

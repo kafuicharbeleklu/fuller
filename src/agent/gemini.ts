@@ -723,51 +723,41 @@ export function extractUserMessagesFromHistory(history: Content[]): string[] {
   return result;
 }
 
+/** Room for the user's messages in a compacted context: about 10,000 tokens, 1 % of a Gemini window. */
+export const VERBATIM_MAX_CHARS = 40_000;
+/** A shortened message keeps at least this much of its beginning and end. */
+const VERBATIM_MIN_KEEP = 600;
+
 /**
- * Format user messages under '## User messages (verbatim)' with a 12,000 character cap.
- * Oldest messages are shortened first if over budget, but the latest user message is never shortened.
+ * The user's messages under "User messages (verbatim)", oldest first. The first message usually holds
+ * the task and its limits, the latest what to do now: both are always kept whole. Over the budget, the
+ * messages in between are shortened, longest first, keeping their beginning and end, and the section
+ * says so: it never presents a shortened message as complete (Codex, C009, 26/09).
  */
-export function formatUserMessagesVerbatim(messages: string[], maxChars = 12000): string {
+export function formatUserMessagesVerbatim(messages: string[], maxChars = VERBATIM_MAX_CHARS): string {
   const header = 'User messages (verbatim)';
-  if (messages.length === 0) {
-    return `${header}\n(no user messages)`;
-  }
-
-  const formatList = (items: string[]) => `${header}\n${items.map((m) => `- ${m}`).join('\n')}`;
-
-  const currentFormatted = formatList(messages);
-  if (currentFormatted.length <= maxChars) {
-    return currentFormatted;
-  }
-
-  // Over budget: shorten oldest first, latest is never shortened.
-  const shortened = [...messages];
-  const lastIndex = shortened.length - 1;
-
-  for (let i = 0; i < lastIndex; i++) {
-    const currentTotal = formatList(shortened).length;
-    if (currentTotal <= maxChars) break;
-
-    const excess = currentTotal - maxChars;
-    const orig = shortened[i];
-    // We want to reduce orig by at least excess chars.
-    // Ensure we keep some preview + truncation marker if possible, or truncate drastically if needed.
-    const targetLen = Math.max(0, orig.length - excess - 15);
-    if (targetLen <= 20) {
-      shortened[i] = orig.slice(0, 20) + '… [truncated]';
-    } else {
-      shortened[i] = orig.slice(0, targetLen) + '… [truncated]';
+  if (messages.length === 0) return `${header}\n(no user messages)`;
+  const notice = '(Messages between the first and the latest were shortened where marked "characters left out"; the first and the latest are complete.)';
+  const render = (items: string[], cut: boolean) => `${header}\n${cut ? `${notice}\n` : ''}${items.map((m) => `- ${m}`).join('\n')}`;
+  if (render(messages, false).length <= maxChars) return render(messages, false);
+  const out = [...messages];
+  const shorten = (text: string, keep: number) => {
+    const head = Math.ceil(keep / 2);
+    return `${text.slice(0, head)} … [${text.length - keep} characters left out] … ${text.slice(text.length - (keep - head))}`;
+  };
+  const original = [...messages];
+  for (;;) {
+    const excess = render(out, true).length - maxChars;
+    if (excess <= 0) break;
+    // The longest message in between that can still give room.
+    let pick = -1;
+    for (let i = 1; i < out.length - 1; i++) {
+      if (original[i].length > VERBATIM_MIN_KEEP + 60 && out[i].length > VERBATIM_MIN_KEEP + 60 && (pick < 0 || out[i].length > out[pick].length)) pick = i;
     }
+    if (pick < 0) break; // Only the first and the latest are left: they stay whole, over the budget if need be.
+    const keep = Math.max(VERBATIM_MIN_KEEP, out[pick].length - excess - 60);
+    out[pick] = shorten(original[pick], Math.min(keep, original[pick].length));
   }
-
-  // If still over budget and there are older messages, truncate them more aggressively
-  if (formatList(shortened).length > maxChars) {
-    for (let i = 0; i < lastIndex; i++) {
-      if (formatList(shortened).length <= maxChars) break;
-      shortened[i] = '… [truncated]';
-    }
-  }
-
-  return formatList(shortened);
+  return render(out, out.some((m, i) => m !== original[i]));
 }
 

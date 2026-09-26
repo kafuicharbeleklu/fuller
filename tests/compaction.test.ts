@@ -67,20 +67,28 @@ describe('compaction helper functions', () => {
     expect(formatted).toBe('User messages (verbatim)\n(no user messages)');
   });
 
-  it('caps at maxChars, shortening oldest messages first while never shortening the latest message', () => {
-    const msg1 = 'A'.repeat(500);
-    const msg2 = 'B'.repeat(500);
-    const latest = 'LATEST_INSTRUCTION_MUST_STAY_INTACT_' + 'C'.repeat(200);
+  it('keeps the first and the latest messages whole and shortens those in between, saying so (Codex, C009)', () => {
+    // Codex's reproduction: the task and its limits, then a long complement, then "continue".
+    const task = 'Clean up the temporary folders left by the tests.\n1. Find which tests leave folders in /tmp.\n2. Make them remove their folders.\n3. Do not touch src/ and do not delete the directories that already exist in /tmp.\n' + 'Context. '.repeat(150);
+    const messages = [task, 'Additional details. '.repeat(580), 'continue'];
+    // The default budget holds them all, word for word.
+    expect(formatUserMessagesVerbatim(messages)).toBe(`User messages (verbatim)\n${messages.map((m) => `- ${m}`).join('\n')}`);
+    const formatted = formatUserMessagesVerbatim(messages, 4000);
+    expect(formatted.length).toBeLessThanOrEqual(4000);
+    expect(formatted).toContain('do not delete the directories that already exist in /tmp');
+    expect(formatted).toContain(`- ${task}\n`);
+    expect(formatted.endsWith('- continue')).toBe(true);
+    expect(formatted).toContain('were shortened where marked "characters left out"');
+    expect(formatted).toMatch(/Additional details\. .* … \[\d+ characters left out\] … .*Additional details\./);
+  });
 
-    // Give a budget that cannot fit all three messages
-    const budget = 400;
-    const formatted = formatUserMessagesVerbatim([msg1, msg2, latest], budget);
-
-    expect(formatted.length).toBeLessThanOrEqual(budget);
-    // Latest message must be completely preserved word for word
-    expect(formatted).toContain(`- ${latest}`);
-    // Oldest messages must be truncated
-    expect(formatted).toContain('… [truncated]');
+  it('never cuts the first or the latest message, even over the budget', () => {
+    const first = 'F'.repeat(3000);
+    const latest = 'L'.repeat(3000);
+    const formatted = formatUserMessagesVerbatim([first, 'M'.repeat(3000), latest], 2000);
+    expect(formatted).toContain(first);
+    expect(formatted).toContain(latest);
+    expect(formatted).toContain('characters left out');
   });
 });
 

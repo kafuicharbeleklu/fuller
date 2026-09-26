@@ -332,3 +332,4 @@ Captures faites une à une (jamais deux `claude` en parallèle), `fullscreenAuto
   2. **Lectures en tranches** : 15 lectures d'environ 50 lignes pour un fichier de 665 lignes, alors qu'une lecture entière aurait suffi.
   3. **Recherches nombreuses** : 91 recherches, dont 21 sans résultat. Le point 9 du plan (une recherche à 3 résultats ou moins renvoie le code autour) a désormais un cas réel.
 - Tests : 577, typage, build. Rien de poussé depuis `aa2da9d`.
+- **Relecture de Codex (C009)**, trois points repris : la section mot pour mot garde le premier et le dernier message entiers (le premier porte souvent les limites de la tâche), budget 40 000 caractères, message explicite quand elle raccourcit ; `summarizeTurn` reçoit les messages tapés ; le relecteur doit lire les sites d'appel et répondre `INCOMPLETE:` quand il n'a pas pu, ce qui renvoie la vérification au modèle. Coût de la réflexion reformulé : 3 % des tokens, davantage en argent. Tests : 580.

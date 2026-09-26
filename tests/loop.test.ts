@@ -395,7 +395,13 @@ describe('AgentLoop', () => {
     history = [{ role: 'user', parts: [{ text: 'one' }] }, { role: 'model', parts: [{ text: 'first' }] }];
     await loop.handleUserInput('two');
     history = [...history, { role: 'user', parts: [{ text: 'two' }] }, { role: 'model', parts: [{ text: 'second' }] }];
+    // Newest first: [0] is the checkpoint of "two".
+    await loop.summarizeTurn(loop.getTurnCheckpoints()[0].id, 'upTo');
+    // The prompts typed in the summarized part, not the history's text (Codex, C009).
+    expect(calls.filter((c) => c.kind === 'compact').at(-1).args[3]).toEqual(['one']);
+    init.mockClear();
     await loop.summarizeTurn(loop.getTurnCheckpoints()[0].id, 'from');
+    expect(calls.filter((c) => c.kind === 'compact').at(-1).args[3]).toEqual(['two']);
     expect(init).toHaveBeenCalledWith([
       history[0], history[1],
       { role: 'user', parts: [{ text: '[Conversation summary]\nsummary' }] },
@@ -798,6 +804,23 @@ describe('AgentLoop', () => {
       await new AgentLoop(config, cb).handleUserInput('add x');
       expect(notices(items).some((n) => n.includes('Review inconclusive'))).toBe(true);
       expect(notices(items).some((n) => n.includes('no problem found'))).toBe(false);
+    });
+
+    it('turns an incomplete review into a request to check the call sites, never a green light (Codex, C009)', async () => {
+      script = [
+        { functionCalls: [{ name: 'write_file', args: { file_path: 'x.js', content: 'export const x = 1;\n' } }] },
+        { text: 'Done.' },
+        { text: 'INCOMPLETE: could not read the callers of x in src/y.js', finishReason: 'STOP' },
+        { text: 'Checked the callers: done.' },
+      ];
+      const { cb, items } = approveAll();
+      const config = getConfig({ workspaceDir: cwd, apiKey: 'x' });
+      config.settings.verifyWork = false;
+      config.settings.reviewChanges = 'always';
+      await new AgentLoop(config, cb).handleUserInput('add x');
+      expect(notices(items).some((n) => n.startsWith('⚠ Review incomplete: could not read the callers'))).toBe(true);
+      expect(notices(items).some((n) => n.includes('no problem found'))).toBe(false);
+      expect(calls.filter((c) => c.kind === 'user').at(-1).text).toMatch(/could not verify everything[\s\S]*read each call site/);
     });
 
     it('reports an explicit, completed clean review', async () => {
