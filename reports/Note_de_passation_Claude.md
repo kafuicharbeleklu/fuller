@@ -319,3 +319,16 @@ Captures faites une à une (jamais deux `claude` en parallèle), `fullscreenAuto
 - **En-tête collant et compteur** (chantier 10), d'après le binaire : en plein écran, quand on a remonté, le dernier prompt sorti par le haut reste épinglé sur la première ligne (fond du message utilisateur, un clic y ramène) ; la pastille du bas est centrée et dit « Jump to bottom (ctrl+end) ↓ » ou « N new messages (ctrl+end) ↓ », avec des formes plus courtes sur écran étroit ; un clic dessus redescend.
 - **Vérification réelle** : `/mcp` dans Fuller avec le serveur de test (liste, serveur, outils, détail, reconnexion), et trois vrais prompts de Gemini 3.6 Flash en plein écran, défilement pendant la troisième réponse : « ❯ List the numbers… » épinglé, « 3 new messages (ctrl+end) ↓ ».
 - Tests : 566, typage, build, fumée PTY 12/12. La liste de parité visuelle est vide. Prochaine étape convenue avec l'utilisateur : revenir à l'efficacité de l'agent (mesure du coût de la réflexion visible, puis tâche réelle en mode auto).
+
+## 24. Retour à l'efficacité de l'agent (26/09, fin de matinée)
+
+- **Réflexion visible mesurée** (détail : `reports/plan-efficacite-agent.md`, section du 26/09) : aucun coût au tour suivant (prompt moyen par appel identique), environ 140 tokens de réflexion de plus par appel, réussites identiques (11/11). Elle reste activée. Le banc a maintenant `--settings` et `--label` pour ce genre de comparaison, et compte les tokens de sortie et de réflexion.
+- **Tâche réelle en mode auto** : Fuller a amélioré sa propre compaction dans un worktree isolé (`reports/usage/2026-09-26-tache-compaction/`, pilote `pilote-auto.py` qui n'approuve que les commandes de test et de lecture, sans mode bypass).
+  - **Premier passage, arrêté** : 107 appels en 35 min sans aucune modification. Cause : `search_files` renvoyait toujours « 0 matches » quand son chemin désignait un fichier (sans ripgrep, la recherche listait les fichiers « sous » ce chemin). Le modèle relançait ses recherches. Corrigé (`d7e5bed`), test qui échoue sans la correction.
+  - **Second passage, réussi** : 145 appels, 27 min, 6,8 M tokens dont 86 % servis par le cache. Chaîne de repli sous charge : 3.8 Flash sans quota, 3.7 surchargé, 3.5 Flash surchargé, fin sur 3.5 Flash Lite. Une seule carte (`npm run typecheck`), due au contrôleur du mode auto sans réponse en 30 s pendant la surcharge.
+  - **Relu et corrigé avant fusion** (`b0aa871`) : la boucle passait encore l'historique en texte, et les lignes d'une sortie d'outil y passaient pour des messages de l'utilisateur. Elle transmet maintenant les messages vraiment tapés (même source que le contrôleur du mode auto).
+- **Trois constats pour la suite, tous tirés de cette session** :
+  1. **Faux « terminé »** : la tâche « Review loop.ts callers » a été cochée sans que `loop.ts` change, et le relecteur de Fuller a répondu « no problem found ».
+  2. **Lectures en tranches** : 15 lectures d'environ 50 lignes pour un fichier de 665 lignes, alors qu'une lecture entière aurait suffi.
+  3. **Recherches nombreuses** : 91 recherches, dont 21 sans résultat. Le point 9 du plan (une recherche à 3 résultats ou moins renvoie le code autour) a désormais un cas réel.
+- Tests : 577, typage, build. Rien de poussé depuis `aa2da9d`.

@@ -79,7 +79,7 @@ def main():
         sink.extend(read_for(fd, 1.5))
         os.write(fd, b'\x1b[B'); sink.extend(read_for(fd, 0.6))
         os.write(fd, b'\r'); log('folder trusted')
-        while b'shortcuts' not in sink[-4000:] and time.monotonic() - start < 60: sink.extend(read_for(fd, 0.5))
+        while not any(m in sink[-4000:] for m in IDLE_MARKS) and time.monotonic() - start < 60: sink.extend(read_for(fd, 0.5))
     sink.extend(read_for(fd, 3))
     log('task sent (auto mode)')
     os.write(fd, TASK.encode() + b'\r')

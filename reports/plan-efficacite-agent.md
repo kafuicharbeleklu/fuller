@@ -133,3 +133,14 @@ Question laissée ouverte le 25/09 : la réflexion visible (`showThinking`, rés
 - **Écart d'appels (105 contre 91)** : du bruit de chemin, dans les deux sens selon la tâche (`rename-function` : 16 contre 8 au premier essai, 10 contre 14 au second). Le temps plus long sans réflexion vient des attentes de débit juste avant l'épuisement du quota.
 - **Décision** : la réflexion visible reste activée par défaut.
 - **Limites** : 5 essais perdus (surcharge de Gemini 3.6 Flash, puis quota du jour épuisé), banc facile. Le banc affichait les essais perdus comme « PASS → FAIL » : corrigé, seuls les essais notés des deux côtés sont listés.
+
+## Tâche réelle en mode auto (26/09) — ce qu'elle apprend
+
+Fuller a modifié sa propre compaction, en mode auto, dans un worktree isolé (`reports/usage/2026-09-26-tache-compaction/`).
+
+- **Défaut d'outil trouvé** : `search_files` avec un chemin de fichier renvoyait toujours 0 résultat sans ripgrep. Il a causé un premier passage de 107 appels sans modification. Corrigé.
+- **Second passage** : tâche faite en 145 appels (91 recherches, 35 lectures), défaut d'intégration trouvé à la relecture. Le relecteur interne de Fuller ne l'avait pas vu, et une tâche de la liste avait été cochée sans être faite.
+- **Pistes, par ordre de gain probable** :
+  1. Lire les fichiers de taille moyenne en entier : 15 tranches de 50 lignes pour un fichier de 665 lignes.
+  2. Point 9 du plan : une recherche à 3 résultats ou moins renvoie le code autour.
+  3. Rendre le relecteur plus exigeant sur l'intégration : vérifier que les appelants des fonctions modifiées ont suivi.

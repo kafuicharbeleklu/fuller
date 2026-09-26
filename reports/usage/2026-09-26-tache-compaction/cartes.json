@@ -1,0 +1,8 @@
+[
+  {
+    "at": 1476,
+    "command": "npm run typecheck",
+    "approved": true,
+    "excerpt": "Bash command\n\n   npm run typecheck\n   Run typecheck\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for npm run commands in /tmp/fuller-task-compaction\n   3. No\n\n Esc to cancel · Tab to amend"
+  }
+]
