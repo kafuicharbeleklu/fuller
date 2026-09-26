@@ -140,29 +140,59 @@ function listMarker(ordered: boolean, index: number, start: number, depth: numbe
   return `${n}.`;
 }
 
+/** A table cell as text segments; inline code keeps its colour, as in Claude Code's tables. */
+type CellPart = { text: string; code?: boolean; bold?: boolean };
+function cellParts(cell: Tokens.TableCell): CellPart[] {
+  const walk = (tokens: Token[] | undefined, bold = false): CellPart[] => (tokens ?? []).flatMap((x: any) => {
+    if (x.type === 'codespan') return [{ text: decode(x.text), code: true }];
+    if (x.type === 'strong') return walk(x.tokens, true);
+    if (x.tokens) return walk(x.tokens, bold);
+    return [{ text: decode(x.text ?? x.raw ?? ''), bold }];
+  });
+  return walk(cell.tokens as Token[]);
+}
+
 function renderTable(t: Tokens.Table, theme: Theme, width: number, key: string): React.ReactNode {
-  const cellText = (cell: Tokens.TableCell) => decode(cell.tokens.map((x: any) => x.text ?? x.raw ?? '').join(''));
-  const header = t.header.map(cellText);
-  const rows = t.rows.map((r) => r.map(cellText));
+  const header = t.header.map(cellParts);
+  const rows = t.rows.map((r) => r.map(cellParts));
+  const plain = (parts: CellPart[]) => parts.map((p) => p.text).join('');
   const cols = header.length;
   const maxCol = Math.max(3, Math.floor((width - 1 - 3 * cols) / Math.max(1, cols)));
-  const widths = header.map((h, c) => Math.min(maxCol, Math.max(stringWidth(h), ...rows.map((r) => stringWidth(r[c] ?? '')))));
-  const fit = (s: string, w: number) => {
-    let out = s;
-    while (stringWidth(out) > w) out = out.slice(0, -1);
-    return out + ' '.repeat(Math.max(0, w - stringWidth(out)));
+  const widths = header.map((h, c) => Math.min(maxCol, Math.max(stringWidth(plain(h)), ...rows.map((r) => stringWidth(plain(r[c] ?? []))))));
+  // Cut to the column, then pad on the side the alignment asks for (Claude Code centres the header).
+  const cell = (parts: CellPart[], w: number, align: 'left' | 'center' | 'right') => {
+    const kept: CellPart[] = [];
+    let used = 0;
+    for (const part of parts) {
+      let text = part.text;
+      while (text && used + stringWidth(text) > w) text = text.slice(0, -1);
+      if (text) kept.push({ ...part, text });
+      used += stringWidth(text);
+      if (text !== part.text) break;
+    }
+    const gap = Math.max(0, w - used);
+    const left = align === 'center' ? Math.floor(gap / 2) : align === 'right' ? gap : 0;
+    return (
+      <>
+        {' '.repeat(left + 1)}
+        {kept.map((p, i) => <Text key={i} color={p.code ? theme.code : undefined} bold={p.bold}>{p.text}</Text>)}
+        {' '.repeat(gap - left + 1)}
+      </>
+    );
   };
-  // Claude Code draws tables with box-drawing borders and a rule between rows.
+  const alignOf = (c: number): 'left' | 'center' | 'right' => (t.align[c] === 'center' ? 'center' : t.align[c] === 'right' ? 'right' : 'left');
   const border = (left: string, mid: string, right: string) => left + widths.map((w) => '─'.repeat(w + 2)).join(mid) + right;
-  const line = (cells: string[]) => '│' + cells.map((c, i) => ` ${fit(c ?? '', widths[i])} `).join('│') + '│';
+  const line = (cells: CellPart[][], header: boolean) => (
+    <Text>│{cells.map((c, i) => <React.Fragment key={i}>{cell(c ?? [], widths[i], header ? 'center' : alignOf(i))}│</React.Fragment>)}</Text>
+  );
   return (
     <Box key={key} flexDirection="column" marginY={0}>
       <Text>{border('┌', '┬', '┐')}</Text>
-      <Text>{line(header)}</Text>
+      {line(header, true)}
       {rows.map((r, i) => (
         <React.Fragment key={i}>
           <Text>{border('├', '┼', '┤')}</Text>
-          <Text>{line(r)}</Text>
+          {line(r, false)}
         </React.Fragment>
       ))}
       <Text>{border('└', '┴', '┘')}</Text>
@@ -207,7 +237,8 @@ function renderBlocks(tokens: Token[], theme: Theme, width: number, depth = 0, k
       }
       case 'code': {
         const c = t as Tokens.Code;
-        const lines = (theme.syntaxHighlighting === false ? c.text : highlightCode(c.text, c.lang, syntaxPalette(theme.name))).split('\n');
+        // Claude Code colours code in answers with the terminal's colours (Monokai is for diffs only).
+        const lines = (theme.syntaxHighlighting === false ? c.text : highlightCode(c.text, c.lang)).split('\n');
         out.push(
           <Box key={key} flexDirection="column" marginTop={out.length ? 1 : 0}>
             {lines.map((l, li) => <Text key={li}>{l || ' '}</Text>)}
@@ -219,7 +250,7 @@ function renderBlocks(tokens: Token[], theme: Theme, width: number, depth = 0, k
         const inner = renderBlocks((t as Tokens.Blockquote).tokens, theme, width - 2, depth, key + '-');
         out.push(
           <Box key={key} marginTop={out.length ? 1 : 0}>
-            <Text color={theme.subtle}>▎ </Text>
+            <Text dimColor>▎ </Text>
             <Box flexDirection="column" flexGrow={1}>{inner}</Box>
           </Box>
         );
@@ -247,7 +278,8 @@ function renderBlocks(tokens: Token[], theme: Theme, width: number, depth = 0, k
         out.push(<Box key={key} marginTop={out.length ? 1 : 0}>{renderTable(t as Tokens.Table, theme, width, key + '-t')}</Box>);
         break;
       case 'hr':
-        out.push(<Text key={key} color={theme.subtle}>{'─'.repeat(Math.max(10, Math.min(width, 60)))}</Text>);
+        // Claude Code 2.1.283 prints the rule as written, a block of its own.
+        out.push(<Box key={key} marginTop={out.length ? 1 : 0}><Text>{(t as Tokens.Hr).raw.trim() || '---'}</Text></Box>);
         break;
       case 'html':
         out.push(<Text key={key}>{(t as Tokens.HTML).text}</Text>);

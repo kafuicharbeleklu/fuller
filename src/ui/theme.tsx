@@ -75,7 +75,8 @@ const dark: Theme = {
   bashBg: '#413c41',
   tool: '#ffffff',
   code: '#b1b9f9',
-  link: '#7aa2f7',
+  // Claude Code draws links in the terminal's bright blue, underlined.
+  link: 'blueBright',
 };
 
 const light: Theme = {
