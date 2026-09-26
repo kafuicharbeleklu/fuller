@@ -481,7 +481,15 @@ export class GeminiAgentSession {
     );
   }
 
-  public async compactHistory(historyText: string, focus?: string, signal?: AbortSignal): Promise<string> {
+  /**
+   * Compact a conversation: the model's summary, a second pass that adds what it left out, then the
+   * user's messages word for word, built in code. `userMessages`: what the user typed (the session's
+   * transcript); without it they are read from the history, which also holds injected context.
+   */
+  public async compactHistory(history: Content[], focus?: string, signal?: AbortSignal, userMessages?: string[]): Promise<string> {
+    const historyText = historyToText(history);
+    const verbatimSection = formatUserMessagesVerbatim(userMessages ?? extractUserMessagesFromHistory(history));
+
     const prompt = `You are compacting a coding-agent conversation so that work can continue seamlessly with a smaller context.
 Write a dense summary (Markdown, max ~600 words) with these sections:
 1. Task and user intent (what the user asked, constraints, preferences).
@@ -496,7 +504,36 @@ ${historyText}`;
       () => this.ai.models.generateContent({ model: this.config.model, contents: prompt, config: { abortSignal: signal } }),
       { signal, recover: this.makeRecover(signal) }
     );
-    return res.text || 'Context compacted.';
+    let summary = res.text || 'Context compacted.';
+
+    // Second pass: compare summary with conversation and append missing critical details if any
+    try {
+      const checkPrompt = `Compare this summary of a coding-agent conversation with the full conversation history.
+Identify any critical omissions: open errors, unfinished steps, file paths touched or referenced, key architectural/design decisions, or explicit user constraints that were omitted from the summary.
+
+If the summary is complete and has no critical omissions, respond with exactly: NONE
+
+Otherwise, concisely list ONLY the missing points (open errors, unfinished steps, file paths, decisions). Do not repeat what is already in the summary.
+
+Summary:
+${summary}
+
+Full conversation:
+${historyText}`;
+
+      const checkRes = await withRetry(
+        () => this.ai.models.generateContent({ model: this.config.model, contents: checkPrompt, config: { abortSignal: signal } }),
+        { signal, recover: this.makeRecover(signal) }
+      );
+      const addition = (checkRes.text || '').trim();
+      if (addition && !/^NONE\.?$/i.test(addition)) {
+        summary = `${summary}\n\n### Additional context (omissions check)\n${addition}`;
+      }
+    } catch {
+      // If the omission check pass fails, keep the summary without it.
+    }
+
+    return `${summary}\n\n${verbatimSection}`;
   }
 
   /** A question answered once, outside the conversation; `withHistory` gives it the session's context (/btw). */
@@ -663,3 +700,74 @@ export function stripThoughtSummaries(history: Content[]): Content[] {
     .map((c) => (c.role === 'model' && (c.parts ?? []).some(isThoughtSummary) ? { ...c, parts: (c.parts ?? []).filter((p) => !isThoughtSummary(p)) } : c))
     .filter((c) => (c.parts ?? []).length > 0);
 }
+
+/**
+ * Extract typed user messages from Content[] history.
+ * Excludes tool responses (functionResponse parts) and injected system notices / internal markers.
+ */
+export function extractUserMessagesFromHistory(history: Content[]): string[] {
+  const result: string[] = [];
+  for (const item of history) {
+    if (item.role !== 'user') continue;
+    const parts = item.parts ?? [];
+    // Tool results are user turns with functionResponse parts
+    if (parts.some((p) => p.functionResponse)) continue;
+    const textParts = parts.map((p) => p.text).filter((t): t is string => typeof t === 'string' && t.length > 0);
+    if (!textParts.length) continue;
+    const combined = textParts.join('\n').trim();
+    if (!combined) continue;
+    // Exclude synthetic compaction / system marker messages
+    if (combined.startsWith('[Conversation summary') || combined.startsWith('[Stop hook feedback]')) continue;
+    result.push(combined);
+  }
+  return result;
+}
+
+/**
+ * Format user messages under '## User messages (verbatim)' with a 12,000 character cap.
+ * Oldest messages are shortened first if over budget, but the latest user message is never shortened.
+ */
+export function formatUserMessagesVerbatim(messages: string[], maxChars = 12000): string {
+  const header = 'User messages (verbatim)';
+  if (messages.length === 0) {
+    return `${header}\n(no user messages)`;
+  }
+
+  const formatList = (items: string[]) => `${header}\n${items.map((m) => `- ${m}`).join('\n')}`;
+
+  const currentFormatted = formatList(messages);
+  if (currentFormatted.length <= maxChars) {
+    return currentFormatted;
+  }
+
+  // Over budget: shorten oldest first, latest is never shortened.
+  const shortened = [...messages];
+  const lastIndex = shortened.length - 1;
+
+  for (let i = 0; i < lastIndex; i++) {
+    const currentTotal = formatList(shortened).length;
+    if (currentTotal <= maxChars) break;
+
+    const excess = currentTotal - maxChars;
+    const orig = shortened[i];
+    // We want to reduce orig by at least excess chars.
+    // Ensure we keep some preview + truncation marker if possible, or truncate drastically if needed.
+    const targetLen = Math.max(0, orig.length - excess - 15);
+    if (targetLen <= 20) {
+      shortened[i] = orig.slice(0, 20) + '… [truncated]';
+    } else {
+      shortened[i] = orig.slice(0, targetLen) + '… [truncated]';
+    }
+  }
+
+  // If still over budget and there are older messages, truncate them more aggressively
+  if (formatList(shortened).length > maxChars) {
+    for (let i = 0; i < lastIndex; i++) {
+      if (formatList(shortened).length <= maxChars) break;
+      shortened[i] = '… [truncated]';
+    }
+  }
+
+  return formatList(shortened);
+}
+

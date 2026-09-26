@@ -7,6 +7,7 @@ const calls: any[] = [];
 let oneShotReply = '';
 let refreshes = 0;
 let script: Array<{ text?: string; functionCalls?: any[]; finishReason?: string; error?: Error; retry?: boolean; thoughts?: string }> = [];
+let fakeHistory: any[] = [];
 
 vi.mock('../src/agent/gemini.js', () => {
   class GeminiAgentSession {
@@ -19,7 +20,7 @@ vi.mock('../src/agent/gemini.js', () => {
     setSubagents() {}
     initChat() {}
     refresh() { refreshes++; }
-    getHistory() { return []; }
+    getHistory() { return fakeHistory; }
     repairHistory() { calls.push({ kind: 'repair' }); }
     pruneHistory() { return { pruned: 0, chars: 0 }; }
     resetWithSummary() {}
@@ -42,7 +43,7 @@ vi.mock('../src/agent/gemini.js', () => {
       if (step.error) throw step.error;
       return { text: step.text ?? '', functionCalls: step.functionCalls ?? [], finishReason: step.finishReason, thoughts: step.thoughts, usage: { promptTokens: 10, responseTokens: 5, totalTokens: 15, thoughtsTokens: 0 } };
     }
-    async compactHistory() { return 'summary'; }
+    async compactHistory(...args: any[]) { calls.push({ kind: 'compact', args }); return 'summary'; }
     async oneShot(question: string) { calls.push({ kind: 'oneShot', text: question }); return oneShotReply; }
   }
   class QuotaExhaustedError extends Error {}
@@ -951,6 +952,23 @@ describe('AgentLoop', () => {
       expect(userCalls[1].text).toMatch(/run the tests first/);
       expect(items.filter((i) => i.kind === 'text').map((i) => i.content)).toEqual(['first answer', 'second answer']);
     });
+  });
+
+  it('/compact keeps the messages the user typed, word for word, apart from the model summary', async () => {
+    script = [{ text: 'first answer' }, { text: 'second answer' }];
+    const { cb } = makeCallbacks();
+    const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x' }), cb);
+    await loop.handleUserInput('do not touch tests/');
+    await loop.handleUserInput('now fix the parser');
+    fakeHistory = [{ role: 'user', parts: [{ text: 'x' }] }, { role: 'model', parts: [{ text: 'y' }] }];
+    try {
+      await loop.compact('parser');
+    } finally {
+      fakeHistory = [];
+    }
+    const call = calls.find((c) => c.kind === 'compact');
+    expect(call.args[1]).toBe('parser');
+    expect(call.args[3]).toEqual(['do not touch tests/', 'now fix the parser']);
   });
 
   describe('plan mode', () => {

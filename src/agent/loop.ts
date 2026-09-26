@@ -1,5 +1,5 @@
 import { QuotaExhaustedError, BLOCKED_FINISH_REASONS, type FallbackRequest, type FallbackChoice, type ModelChangeReason } from './gemini.js';
-import { GeminiAgentSession, historyToText, type ToolResponsePayload, type TurnUsage } from './gemini.js';
+import { GeminiAgentSession, type ToolResponsePayload, type TurnUsage } from './gemini.js';
 import { dispatchTool, previewTool, toolLabel } from '../tools/registry.js';
 import { evaluatePermission, type Evaluation } from '../permissions/rules.js';
 import { addPermissionRule, type AppConfig } from '../config.js';
@@ -518,7 +518,7 @@ export class AgentLoop {
     this.abortController = new AbortController();
     this.callbacks.onStatusChange('compacting');
     try {
-      const summary = await this.session.compactHistory(historyToText(selected), undefined, this.abortController.signal);
+      const summary = await this.session.compactHistory(selected, undefined, this.abortController.signal);
       const marker = [
         { role: 'user' as const, parts: [{ text: `[Conversation summary]\n${summary}` }] },
         { role: 'model' as const, parts: [{ text: 'I will continue from this summary.' }] },
@@ -602,6 +602,11 @@ export class AgentLoop {
   }
 
   // ---------------------------------------------------------------- settings
+  /** What the user typed in this conversation (not slash commands), oldest first: kept word for word. */
+  private typedUserMessages(): string[] {
+    return this.messages.filter((m) => m.role === 'user' && m.kind !== 'command').map((m) => m.content);
+  }
+
   /** Where this session's plan is saved (exit_plan_mode), read by /plan. */
   public get planFilePath(): string {
     return path.join(os.homedir(), CONFIG_DIR_NAME, 'plans', `${this.sessionId}.md`);
@@ -1439,7 +1444,7 @@ export class AgentLoop {
     if (evaluation.risk === 'danger') verdict = { decision: 'deny', reason: `Hard deny: ${evaluation.reason}` };
     else {
       try {
-        const userRequests = this.messages.filter((m) => m.role === 'user' && m.kind !== 'command').map((m) => m.content);
+        const userRequests = this.typedUserMessages();
         // A slow classifier (retries on an overloaded API) must not stall the turn: after 30 s the user decides.
         const limit = new AbortController();
         const timer = setTimeout(() => limit.abort(), AUTO_MODE_TIMEOUT_MS);
@@ -1716,8 +1721,9 @@ export class AgentLoop {
     this.abortController = new AbortController();
     this.callbacks.onStatusChange('compacting');
     try {
-      const text = historyToText(history);
-      const summary = await this.session.compactHistory(text, focus, this.abortController.signal);
+      // The user's own words survive compaction verbatim: an instruction such as "do not touch tests/"
+      // must not depend on the model's paraphrase.
+      const summary = await this.session.compactHistory(history, focus, this.abortController.signal, this.typedUserMessages());
       this.session.resetWithSummary(summary);
       const msg: ChatMessage = { id: uid(), role: 'system', kind: 'compact', content: summary, timestamp: Date.now() };
       this.messages.push(msg);
