@@ -3,6 +3,7 @@
  * Fuller's benchmark: run the agent on the tasks in evals/tasks and check the result.
  *
  *   node scripts/eval.mjs [--model gemini-3.6-flash] [--only name,name] [--repeat N] [--compare evals/results/<file>.json]
+ *                         [--settings '{"showThinking":false}'] [--label name]   # A/B of a setting, results named after the label
  *   node scripts/eval.mjs --baseline          # checks only, no agent: every task must fail
  *   node scripts/eval.mjs --verify-solutions  # each task's solution.patch applied: every task must pass
  *
@@ -37,6 +38,9 @@ const model = option('--model', process.env.GEMINI_MODEL || 'gemini-3.6-flash');
 const only = option('--only', '')?.split(',').filter(Boolean) ?? [];
 const repeat = Math.max(1, Number(option('--repeat', '1')) || 1);
 const compareFile = option('--compare', '');
+// Extra Fuller settings for this passage (an A/B of one setting), and a label for its results file.
+const extraSettings = JSON.parse(option('--settings', '{}') || '{}');
+const label = (option('--label', '') ?? '').replace(/[^\w.-]/g, '');
 
 /** GEMINI_API_KEY and GEMINI_API_KEYS from the environment, the project .env or ~/.fuller/.env. */
 function loadKeys() {
@@ -55,7 +59,7 @@ function prepare(taskDir) {
   const home = path.join(work, 'home');
   fs.mkdirSync(path.join(home, '.fuller'), { recursive: true });
   // No model reply after `!` (unused here) and the default permission rules only.
-  fs.writeFileSync(path.join(home, '.fuller', 'settings.json'), JSON.stringify({ notifications: 'off' }));
+  fs.writeFileSync(path.join(home, '.fuller', 'settings.json'), JSON.stringify({ notifications: 'off', ...extraSettings }));
   return { work, repo, home, answer: path.join(work, 'answer.txt') };
 }
 
@@ -121,7 +125,7 @@ if (!noAgent && !key) { console.error('GEMINI_API_KEY is required (environment o
 if (!noAgent && !fs.existsSync(path.join(ROOT, 'dist', 'index.js'))) { console.error('Build first: npm run build'); process.exit(2); }
 
 const rows = [];
-const runId = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + `-${model}`;
+const runId = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + `-${model}${label ? `-${label}` : ''}`;
 for (const name of names) {
   const task = JSON.parse(fs.readFileSync(path.join(TASKS, name, 'task.json'), 'utf8'));
   for (let run = 1; run <= repeat; run++) {
@@ -149,6 +153,9 @@ for (const name of names) {
       tokens: agent.result?.usage?.total_tokens ?? null,
       promptTokens: agent.result?.usage?.prompt_tokens ?? null,
       cachedTokens: agent.result?.usage?.cached_tokens ?? null,
+      outputTokens: agent.result?.usage?.output_tokens ?? null,
+      thoughtsTokens: agent.result?.usage?.thoughts_tokens ?? null,
+      apiCalls: agent.result?.usage?.api_calls ?? null,
       toolCalls: agent.result?.num_tool_calls ?? null,
       agentError: scrub(agent.result?.is_error ? String(agent.result?.error || agent.result?.result || '').slice(0, 300) : agent.code && !agent.result ? agent.stderr.slice(-300) : '') || undefined,
       // What Fuller asked of the model before it concluded (checks, task list, review, no progress).
@@ -173,7 +180,7 @@ const passed = rows.filter((r) => r.status === 'pass').length;
 const scored = rows.filter((r) => r.status !== 'api-error');
 const apiErrors = rows.length - scored.length;
 const total = (key) => scored.reduce((s, r) => s + (r[key] ?? 0), 0);
-const summary = { model, date: new Date().toISOString(), passed, runs: scored.length, apiErrors, rate: scored.length ? passed / scored.length : 0, tokens: total('tokens'), promptTokens: total('promptTokens'), cachedTokens: total('cachedTokens'), durationMs: total('durationMs'), toolCalls: total('toolCalls') };
+const summary = { model, date: new Date().toISOString(), passed, runs: scored.length, apiErrors, rate: scored.length ? passed / scored.length : 0, tokens: total('tokens'), promptTokens: total('promptTokens'), cachedTokens: total('cachedTokens'), outputTokens: total('outputTokens'), thoughtsTokens: total('thoughtsTokens'), apiCalls: total('apiCalls'), settings: extraSettings, durationMs: total('durationMs'), toolCalls: total('toolCalls') };
 if (repeat > 1) {
   // Regularity: a task that passes 3 times out of 3 is not the same as 1 out of 3.
   for (const name of names) {
@@ -199,7 +206,7 @@ if (compareFile) {
   const sum = (list, key) => list.reduce((t, r) => t + (r[key] ?? 0), 0);
   const olds = pairs.map(([b]) => b);
   const news = pairs.map(([, r]) => r);
-  console.log(`  on the ${pairs.length} run${pairs.length === 1 ? '' : 's'} scored in both: passed ${olds.filter((r) => r.pass).length} → ${news.filter((r) => r.pass).length} · tokens ${delta(sum(olds, 'tokens'), sum(news, 'tokens'))} · tool calls ${delta(sum(olds, 'toolCalls'), sum(news, 'toolCalls'))} · time ${delta(Math.round(sum(olds, 'durationMs') / 1000), Math.round(sum(news, 'durationMs') / 1000))}s`);
+  console.log(`  on the ${pairs.length} run${pairs.length === 1 ? '' : 's'} scored in both: passed ${olds.filter((r) => r.pass).length} → ${news.filter((r) => r.pass).length} · tokens ${delta(sum(olds, 'tokens'), sum(news, 'tokens'))} (prompt ${delta(sum(olds, 'promptTokens'), sum(news, 'promptTokens'))}, output ${delta(sum(olds, 'outputTokens'), sum(news, 'outputTokens'))}, thinking ${delta(sum(olds, 'thoughtsTokens'), sum(news, 'thoughtsTokens'))}) · API calls ${delta(sum(olds, 'apiCalls'), sum(news, 'apiCalls'))} · tool calls ${delta(sum(olds, 'toolCalls'), sum(news, 'toolCalls'))} · time ${delta(Math.round(sum(olds, 'durationMs') / 1000), Math.round(sum(news, 'durationMs') / 1000))}s`);
   const left = rows.filter((r) => !pairs.some(([, n]) => n === r)).map((r) => r.task);
   if (left.length) console.log(`  not compared (API error on one side): ${[...new Set(left)].join(', ')}`);
   for (const r of rows) {

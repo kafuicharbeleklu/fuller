@@ -780,6 +780,9 @@ export class AgentLoop {
     // Implicit cache: how much of the prompt Gemini served from its cache (cheaper, faster).
     this.usage.cumulativePromptTokens = (this.usage.cumulativePromptTokens ?? 0) + u.promptTokens;
     this.usage.cumulativeCachedTokens = (this.usage.cumulativeCachedTokens ?? 0) + (u.cachedTokens ?? 0);
+    // Written by the model: its answers and tool calls, and its thinking (billed as output).
+    this.usage.cumulativeResponseTokens = (this.usage.cumulativeResponseTokens ?? 0) + u.responseTokens;
+    this.usage.cumulativeThoughtsTokens = (this.usage.cumulativeThoughtsTokens ?? 0) + u.thoughtsTokens;
     this.callbacks.onUsage({ ...this.usage });
   }
 

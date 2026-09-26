@@ -129,6 +129,8 @@ export interface UsageInfo {
   /** Prompt tokens sent over the session, and how many of them Gemini's cache served. */
   cumulativePromptTokens?: number;
   cumulativeCachedTokens?: number;
+  cumulativeResponseTokens?: number;
+  cumulativeThoughtsTokens?: number;
   /** Prompt tokens at which the conversation is compacted automatically; absent when auto-compact is off. */
   compactAt?: number;
   /** Old tool outputs cleared from the conversation this session, and the characters they weighed. */
