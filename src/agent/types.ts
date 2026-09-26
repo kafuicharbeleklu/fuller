@@ -30,12 +30,15 @@ export interface ToolCallState {
   summary?: string;
   /** 'user' for a command typed with "!": shown as the user's own, never folded into a tool summary. */
   origin?: 'user';
+  /** exit_plan_mode through the plan dialog: where the plan was saved ('' if it could not be). */
+  planFile?: string;
   startTime?: number;
   endTime?: number;
 }
 
 export type MessagePart =
-  | { type: 'text'; id: string; content: string }
+  /** `model`: the model that wrote it, shown with the time in the detailed view (Ctrl+O). */
+  | { type: 'text'; id: string; content: string; model?: string }
   /** Gemini's thought summary for this step, shown folded as "✻ Thinking…" (Ctrl+O shows it). */
   | { type: 'thinking'; id: string; content: string }
   | { type: 'tool'; id: string; toolCall: ToolCallState };
@@ -82,10 +85,11 @@ export type AgentStatus =
   | 'awaiting_permission'
   | 'compacting';
 
+/** `plan` is the plan text after the user edited it in the approval dialog (Ctrl+G). */
 export type PermissionDecision =
-  | { kind: 'yes'; feedback?: string }
-  | { kind: 'always'; rule: string; rules?: string[] }
-  | { kind: 'no'; feedback?: string };
+  | { kind: 'yes'; feedback?: string; plan?: string }
+  | { kind: 'always'; rule: string; rules?: string[]; feedback?: string; plan?: string }
+  | { kind: 'no'; feedback?: string; plan?: string };
 
 export interface PermissionOption {
   value: 'yes' | 'always' | 'no';
@@ -107,6 +111,8 @@ export interface PendingConfirmation {
   danger?: string;
   /** A plain line above the question ("This command requires approval"). */
   note?: string;
+  /** exit_plan_mode: the plan shown in the approval dialog, and the file it was saved to. */
+  plan?: { text: string; file?: string };
   onDecide: (decision: PermissionDecision) => void;
 }
 
@@ -132,7 +138,7 @@ export type TranscriptItem =
   | { key: string; kind: 'banner' }
   | { key: string; kind: 'user'; message: ChatMessage }
   | { key: string; kind: 'system'; message: ChatMessage }
-  | { key: string; kind: 'text'; messageId: string; content: string; timestamp: number }
+  | { key: string; kind: 'text'; messageId: string; content: string; timestamp: number; model?: string }
   | { key: string; kind: 'thinking'; messageId: string; content: string; timestamp: number }
   | { key: string; kind: 'tool'; messageId: string; toolCall: ToolCallState }
   | { key: string; kind: 'turn_end'; messageId: string; durationMs: number; toolCount: number; timestamp: number };

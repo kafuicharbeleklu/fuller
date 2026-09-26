@@ -26,9 +26,8 @@ function boldFile(title: string, file: string): React.ReactNode {
 }
 
 /** Placeholder shown after "Yes, " or "No, " while the comment field is open (Tab to amend). */
-function amendPlaceholder(toolName: string, option: PermissionOption): string {
-  if (option.value === 'yes') return 'and tell Fuller what to do next';
-  return toolName === 'exit_plan_mode' ? 'and tell Fuller what to change' : 'and tell Fuller what to do differently';
+function amendPlaceholder(option: PermissionOption): string {
+  return option.value === 'yes' ? 'and tell Fuller what to do next' : 'and tell Fuller what to do differently';
 }
 
 export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDiffLines = 40 }) => {
@@ -48,7 +47,6 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
   const canAmend = (i: number) => {
     const option = options[i];
     if (!option || toolCall.name === 'web_fetch') return false;
-    if (toolCall.name === 'exit_plan_mode') return option.value === 'no';
     return option.value === 'no' || (option.value === 'yes' && !option.switchMode);
   };
 
@@ -58,7 +56,6 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
     const comment = comments[i]?.trim() || undefined;
     if (opt.value === 'yes') onDecide({ kind: 'yes', ...(comment ? { feedback: comment } : {}) });
     else if (opt.value === 'always') onDecide({ kind: 'always', rule: opt.rule ?? '', ...(opt.rules ? { rules: opt.rules } : {}) });
-    else if (toolCall.name === 'exit_plan_mode' && !amending && !comment) { setIndex(i); setAmending(true); }
     else onDecide({ kind: 'no', ...(comment ? { feedback: comment } : {}) });
   };
 
@@ -97,8 +94,7 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
     : toolCall.name === 'web_fetch' ? 'Fetch'
     : toolCall.name === 'read_file' || toolCall.name === 'outline_file' ? 'Read file'
     : toolCall.name === 'list_directory' ? 'List directory'
-    : toolCall.name === 'search_files' || toolCall.name === 'glob' ? 'Search'
-    : toolCall.name === 'exit_plan_mode' ? 'Ready to code?' : 'Tool use';
+    : toolCall.name === 'search_files' || toolCall.name === 'glob' ? 'Search' : 'Tool use';
   const gap = !compact ? <Text> </Text> : null;
   const fileDiff = (toolCall.name === 'edit_file' || toolCall.name === 'write_file') && toolCall.diff ? toolCall.diff : undefined;
   const footer = amending || !canAmend(index) ? 'Esc to cancel' : 'Esc to cancel · Tab to amend';
@@ -146,7 +142,7 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
               <Box flexShrink={1}>
                 {amendThis ? (
                   <Text color={theme.permission}>
-                    {o.label.split(',')[0]}, {comment ? <Text color={theme.text}>{comment}</Text> : <Text dimColor>{amendPlaceholder(toolCall.name, o)}</Text>}<Text inverse> </Text>
+                    {o.label.split(',')[0]}, {comment ? <Text color={theme.text}>{comment}</Text> : <Text dimColor>{amendPlaceholder(o)}</Text>}<Text inverse> </Text>
                   </Text>
                 ) : (
                   <Text color={selected ? theme.permission : theme.text} wrap="wrap">
@@ -172,10 +168,6 @@ export const PermissionPrompt: React.FC<Props> = ({ confirmation, verbose, maxDi
           {!tiny && args.description ? <Text color={theme.subtle}>{String(args.description)}</Text> : null}
         </>
       );
-    }
-    if (name === 'exit_plan_mode') {
-      const lines = String(args.plan ?? '').split('\n').length;
-      return <Text color={theme.subtle}>Fuller's plan ({lines} lines) is shown above. Approving leaves plan mode.</Text>;
     }
     if ((name === 'edit_file' || name === 'write_file') && toolCall.diff) {
       return (

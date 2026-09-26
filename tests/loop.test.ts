@@ -954,7 +954,7 @@ describe('AgentLoop', () => {
   });
 
   describe('plan mode', () => {
-    it('exit_plan_mode shows the plan, asks for approval and switches the mode', async () => {
+    it('exit_plan_mode saves the plan, asks for approval in the plan dialog and switches the mode', async () => {
       script = [{ functionCalls: [{ name: 'exit_plan_mode', args: { plan: '1. Do a\n2. Do b' } }] }, { text: 'implementing' }];
       let seen: any = null;
       const modes: string[] = [];
@@ -964,12 +964,44 @@ describe('AgentLoop', () => {
       });
       const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'plan' }), cb);
       await loop.handleUserInput('plan it');
-      expect(seen.title).toBe('Would you like to proceed?');
-      expect(seen.options.map((o: any) => o.label)).toEqual(['Yes, and auto-accept edits', 'Yes, manually approve edits', 'No, keep planning']);
+      // Claude Code 2.1.283 (capture 4.6).
+      expect(seen.title).toBe('Fuller has written up a plan and is ready to execute. Would you like to proceed?');
+      expect(seen.options.map((o: any) => o.label)).toEqual(['Yes, auto-accept edits', 'Yes, manually approve edits', 'No, keep planning']);
+      expect(seen.plan.text).toBe('1. Do a\n2. Do b');
+      expect(fs.readFileSync(seen.plan.file, 'utf8')).toBe('1. Do a\n2. Do b\n');
+      expect(seen.plan.file).toBe(loop.planFilePath);
       expect(modes).toEqual(['acceptEdits']);
       expect(loop.permissionMode).toBe('acceptEdits');
-      expect(items.some((i) => i.kind === 'text' && /\*\*Plan\*\*[\s\S]*Do b/.test(i.content))).toBe(true);
+      // The plan is shown by the dialog and the tool row, not as an assistant message.
+      expect(items.some((i) => i.kind === 'text' && /Do b/.test(i.content))).toBe(false);
+      const tool = items.find((i) => i.kind === 'tool' && i.toolCall.name === 'exit_plan_mode').toolCall;
+      expect(tool).toMatchObject({ status: 'completed', result: '1. Do a\n2. Do b', planFile: seen.plan.file });
       expect(calls[1].responses[0].output).toMatch(/approved the plan.*acceptEdits/);
+    });
+
+    it('offers auto mode back when the session was in auto mode before planning', async () => {
+      script = [{ functionCalls: [{ name: 'exit_plan_mode', args: { plan: 'x' } }] }, { text: 'implementing' }];
+      let seen: any = null;
+      const { cb } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) { seen = c; c.onDecide({ kind: 'yes', feedback: 'start with the tests' }); } } });
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'auto' }), cb);
+      loop.setPermissionMode('plan');
+      await loop.handleUserInput('plan it');
+      expect(seen.options[0]).toMatchObject({ label: 'Yes, and use auto mode', switchMode: 'auto' });
+      expect(loop.permissionMode).toBe('auto');
+      // Shift+Tab: approved with the comment typed in the dialog.
+      expect(calls[1].responses[0].output).toMatch(/User comment on this approval\]\nstart with the tests/);
+    });
+
+    it('uses the plan the user edited in the dialog', async () => {
+      script = [{ functionCalls: [{ name: 'exit_plan_mode', args: { plan: 'old plan' } }] }, { text: 'implementing' }];
+      let file = '';
+      const { cb, items } = makeCallbacks({ onRequestConfirmation: (c) => { if (c) { file = c.plan!.file!; c.onDecide({ kind: 'always', rule: '', plan: 'new plan' }); } } });
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'plan' }), cb);
+      await loop.handleUserInput('plan it');
+      expect(loop.permissionMode).toBe('default');
+      expect(fs.readFileSync(file, 'utf8')).toBe('new plan\n');
+      expect(calls[1].responses[0].output).toMatch(/edited the plan[\s\S]*new plan/);
+      expect(items.find((i) => i.kind === 'tool').toolCall.result).toBe('new plan');
     });
 
     it('a rejected plan keeps plan mode and forwards the feedback', async () => {
@@ -979,6 +1011,18 @@ describe('AgentLoop', () => {
       await loop.handleUserInput('plan it');
       expect(loop.permissionMode).toBe('plan');
       expect(calls[1].responses[0].output).toMatch(/did not approve the plan: "add tests"/);
+    });
+
+    it('Esc rejects the plan and ends the turn without asking what to do instead', async () => {
+      script = [{ functionCalls: [{ name: 'exit_plan_mode', args: { plan: 'x' } }] }, { text: 'should not run' }];
+      const { cb, items } = makeCallbacks({ onRequestConfirmation: (c) => c?.onDecide({ kind: 'no' }) });
+      const loop = new AgentLoop(getConfig({ workspaceDir: cwd, apiKey: 'x', permissionMode: 'plan' }), cb);
+      await loop.handleUserInput('plan it');
+      expect(loop.permissionMode).toBe('plan');
+      expect(calls.filter((c) => c.kind === 'tools')).toHaveLength(0);
+      expect(items.find((i) => i.kind === 'tool').toolCall.status).toBe('rejected');
+      expect(items.some((i) => i.kind === 'system' && /What should Fuller do instead/.test(i.message.content))).toBe(false);
+      expect(items.at(-1)).toMatchObject({ kind: 'turn_end', toolCount: 1 });
     });
 
     it('outside plan mode the tool is a no-op', async () => {

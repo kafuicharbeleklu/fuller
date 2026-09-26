@@ -10,6 +10,7 @@ import { TranscriptItemView } from './Transcript.js';
 import { LiveArea } from './LiveArea.js';
 import { SpinnerLine, useSpinnerFrame } from './Spinner.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
+import { PlanApproval } from './PlanApproval.js';
 import { RewindMenu } from './RewindMenu.js';
 import { ModelPicker } from './ModelPicker.js';
 import { ThemePicker, themeLabel } from './ThemePicker.js';
@@ -788,7 +789,9 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
           <TodoPanel todos={todos} frame={frame} maxItems={Math.max(3, Math.min(5, rows - 18))} />
         ) : null}
         {modelSwitch && !confirmation ? <QuotaDialog request={modelSwitch} /> : null}
-        {confirmation ? <PermissionPrompt key={confirmation.toolCall.id} confirmation={confirmation} verbose={verbose} maxDiffLines={Math.max(8, rows - 14)} /> : null}
+        {confirmation ? (confirmation.toolCall.name === 'exit_plan_mode'
+          ? <PlanApproval key={confirmation.toolCall.id} confirmation={confirmation} maxPlanLines={Math.max(4, rows - 24)} onClearScreen={clearScreen} />
+          : <PermissionPrompt key={confirmation.toolCall.id} confirmation={confirmation} verbose={verbose} maxDiffLines={Math.max(8, rows - 14)} />) : null}
         {modelPickerOpen && !confirmation ? (
           <ModelPicker
             apiKey={config.apiKey}

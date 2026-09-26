@@ -75,6 +75,11 @@ export function wrapUserLines(content: string, width: number): { prefix: string;
   return rows;
 }
 
+/** "07:48 AM", as Claude Code times answers in the detailed view. */
+export function messageTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
 export const TranscriptItemView: React.FC<Props> = React.memo(({ item, verbose, banner }) => {
   const theme = useTheme();
   const { stdout } = useStdout();
@@ -122,15 +127,28 @@ export const TranscriptItemView: React.FC<Props> = React.memo(({ item, verbose, 
       );
     }
 
-    case 'text':
-      return (
-        <Box marginTop={1}>
+    case 'text': {
+      const body = (
+        <Box marginTop={verbose && item.model ? 0 : 1}>
           <Text color={theme.text}>{TEXT_BULLET} </Text>
           <Box flexDirection="column" flexGrow={1}>
             <Markdown content={item.content} />
           </Box>
         </Box>
       );
+      if (!verbose || !item.model) return body;
+      // Claude Code's detailed view (Ctrl+O): the time and the model above each answer, on the right,
+      // the model in a column 8 wider than its name ("07:48 AM claude-haiku-4-5-20251001").
+      return (
+        <Box flexDirection="column">
+          <Box flexDirection="row" justifyContent="flex-end" gap={1} marginTop={1}>
+            <Text color={theme.subtle}>{messageTime(item.timestamp)}</Text>
+            <Box minWidth={stringWidth(item.model) + 8}><Text color={theme.subtle}>{item.model}</Text></Box>
+          </Box>
+          {body}
+        </Box>
+      );
+    }
 
     case 'thinking': {
       // Claude Code: "✻ Thinking…" folded, dim and italic; the summary itself in the detailed view (Ctrl+O).

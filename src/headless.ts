@@ -39,6 +39,14 @@ export async function runHeadless(config: AppConfig, prompt: string, format: Out
     },
     onRequestConfirmation: (c) => {
       if (!c) return;
+      // Plan mode without a user: print the plan and stop, instead of asking the model to revise it forever.
+      if (c.plan) {
+        texts.push(c.plan.text);
+        if (format === 'text') process.stdout.write(c.plan.text + '\n');
+        if (format === 'stream-json') emit({ type: 'plan', text: c.plan.text, file: c.plan.file });
+        c.onDecide({ kind: 'no' });
+        return;
+      }
       c.onDecide({
         kind: 'no',
         feedback: 'Non-interactive mode: this action needs permission. Re-run with --permission-mode acceptEdits, --dangerously-skip-permissions, or add an allow rule (e.g. --allowedTools "Bash(npm test:*)").',

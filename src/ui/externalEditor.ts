@@ -22,14 +22,24 @@ export function editPromptExternally(text: string): string {
   const file = path.join(directory, 'prompt.md');
   fs.writeFileSync(file, text, { encoding: 'utf8', mode: 0o600 });
   try {
-    const editor = resolveEditor();
-    const parts = editor.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((part) => part.replace(/^(["'])(.*)\1$/, '$2')) ?? [];
-    if (parts.length === 0) throw new Error('No editor configured. Set VISUAL or EDITOR.');
-    const result = spawnSync(parts[0], [...parts.slice(1), file], { stdio: 'inherit' });
-    if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(`Editor exited with status ${result.status}`);
+    editFileExternally(file);
     return fs.readFileSync(file, 'utf8').replace(/\n$/, '');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+}
+
+/** Open an existing file in $VISUAL or $EDITOR and wait for the editor to exit (the plan file with Ctrl+G). */
+export function editFileExternally(file: string): void {
+  const editor = resolveEditor();
+  const parts = editor.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((part) => part.replace(/^(["'])(.*)\1$/, '$2')) ?? [];
+  if (parts.length === 0) throw new Error('No editor configured. Set VISUAL or EDITOR.');
+  const result = spawnSync(parts[0], [...parts.slice(1), file], { stdio: 'inherit' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`Editor exited with status ${result.status}`);
+}
+
+/** A path with the home directory written as "~", as Claude Code shows plan files. */
+export function tildePath(file: string, home = os.homedir()): string {
+  return home && (file === home || file.startsWith(home + path.sep)) ? `~${file.slice(home.length)}` : file;
 }

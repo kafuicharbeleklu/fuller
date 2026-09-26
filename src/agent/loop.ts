@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { gzipSync, gunzipSync } from 'node:zlib';
-import { CONFIG_DIR_NAME } from '../branding.js';
+import { APP_NAME, CONFIG_DIR_NAME } from '../branding.js';
 import { McpManager, type McpServerStatus } from '../mcp/manager.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { isApproved, mcpApproval } from '../mcp/approval.js';
@@ -44,6 +44,7 @@ import type {
   PendingConfirmation,
   PermissionDecision,
   PermissionMode,
+  PermissionOption,
   TranscriptItem,
   LiveTurn,
   UsageInfo,
@@ -153,6 +154,9 @@ export class AgentLoop {
   private callbacks: AgentCallbacks;
   private processing = false;
   private stoppedByPermission = false;
+  /** Esc in the plan dialog: the rejected plan is the last word, no "What should Fuller do instead?". */
+  private stoppedByPlanRejection = false;
+  private prePlanMode: PermissionMode | null = null;
   private moveBashToBackground: (() => string | undefined) | undefined;
   private abortController: AbortController | null = null;
   private saveTimer: NodeJS.Timeout | null = null;
@@ -493,6 +497,7 @@ export class AgentLoop {
     if (!selected.length) { this.addSystemMessage('Nothing to summarize at this point.', 'notice'); return; }
     this.processing = true;
     this.stoppedByPermission = false;
+    this.stoppedByPlanRejection = false;
     this.abortController = new AbortController();
     this.callbacks.onStatusChange('compacting');
     try {
@@ -580,8 +585,15 @@ export class AgentLoop {
   }
 
   // ---------------------------------------------------------------- settings
+  /** Where this session's plan is saved (exit_plan_mode), read by /plan. */
+  public get planFilePath(): string {
+    return path.join(os.homedir(), CONFIG_DIR_NAME, 'plans', `${this.sessionId}.md`);
+  }
+
   public setPermissionMode(mode: PermissionMode) {
     if (this.config.permissionMode === mode) return;
+    // The plan dialog offers to go back to auto mode when the session was in it before planning.
+    if (mode === 'plan') this.prePlanMode = this.config.permissionMode;
     this.config.permissionMode = mode;
     // Entering auto mode again resumes it after a pause, with fresh counters.
     if (mode === 'auto') { this.autoPaused = false; this.autoDenialStreak = 0; this.autoDenialTotal = 0; }
@@ -756,6 +768,7 @@ export class AgentLoop {
   private async runTurn(input: string, kind: MessageKind = 'normal', options: TurnOptions = {}): Promise<void> {
     this.processing = true;
     this.stoppedByPermission = false;
+    this.stoppedByPlanRejection = false;
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
     const started = Date.now();
@@ -839,9 +852,9 @@ export class AgentLoop {
 
     const commitText = (content: string) => {
       if (!content) return;
-      const part = { type: 'text' as const, id: uid(), content };
+      const part = { type: 'text' as const, id: uid(), content, model: this.session.model };
       assistant.parts!.push(part);
-      this.callbacks.onCommit({ key: part.id, kind: 'text', messageId: assistant.id, content, timestamp: Date.now() });
+      this.callbacks.onCommit({ key: part.id, kind: 'text', messageId: assistant.id, content, timestamp: Date.now(), model: part.model });
       liveText = '';
     };
 
@@ -1004,7 +1017,9 @@ export class AgentLoop {
       this.callbacks.onStatusChange('idle');
       commitText(liveText);
       if (err?.message === 'Interrupted' || signal.aborted) {
-        this.addSystemMessage(this.stoppedByPermission ? 'Permission denied · What should Fuller do instead?' : 'Interrupted · What should Fuller do instead?', 'notice');
+        if (!this.stoppedByPlanRejection) this.addSystemMessage(this.stoppedByPermission ? 'Permission denied · What should Fuller do instead?' : 'Interrupted · What should Fuller do instead?', 'notice');
+        // A rejected plan ends the turn normally for the user: Claude Code closes it with "✻ … for 12s · done".
+        else this.callbacks.onCommit({ key: `${assistant.id}-end`, kind: 'turn_end', messageId: assistant.id, durationMs: Date.now() - started, toolCount, timestamp: Date.now() });
         this.session.repairHistory();
       } else {
         if (err instanceof QuotaExhaustedError) {
@@ -1319,25 +1334,30 @@ export class AgentLoop {
     }
   }
 
-  /** Plan mode: show the plan, ask the user to approve it, and switch modes accordingly. */
+  /**
+   * Plan mode: save the plan, ask the user to approve it in the plan dialog and switch modes accordingly.
+   * Claude Code 2.1.283 (capture 4.6): approve with auto-accept edits (or auto mode when the session was
+   * in auto mode before planning), approve with manual edits, or tell the model what to change. Esc
+   * rejects the plan and ends the turn. The user may edit the plan first (Ctrl+G): that version is the plan.
+   */
   private async handleExitPlanMode(state: ToolCallState, update: (patch: Partial<ToolCallState>) => void): Promise<string> {
     const plan = String(state.args.plan ?? '').trim();
     if (!plan) {
       update({ status: 'failed', error: 'plan is required', endTime: Date.now() });
       return 'Error: provide the plan text.';
     }
-    // The plan itself goes into the transcript so the user can read it in full.
-    this.callbacks.onCommit({ key: `${state.id}-plan`, kind: 'text', messageId: state.id, content: `**Plan**\n\n${plan}`, timestamp: Date.now() });
-    let planFile = '';
+    let planFile = this.planFilePath;
     try {
-      const dir = path.join(os.homedir(), CONFIG_DIR_NAME, 'plans');
-      fs.mkdirSync(dir, { recursive: true });
-      planFile = path.join(dir, `${this.sessionId}.md`);
+      fs.mkdirSync(path.dirname(planFile), { recursive: true });
       fs.writeFileSync(planFile, `${plan}\n`, 'utf8');
-    } catch {}
-    update({ status: 'confirming' });
+    } catch { planFile = ''; }
+    // planFile ('' when it could not be saved) marks the call as the plan dialog's, for its transcript rows.
+    update({ status: 'confirming', result: plan, planFile });
     this.callbacks.onStatusChange('awaiting_permission');
     this.callbacks.onNotify?.('permission');
+    const approve: PermissionOption = this.prePlanMode === 'auto'
+      ? { value: 'yes', label: 'Yes, and use auto mode', switchMode: 'auto' }
+      : { value: 'yes', label: 'Yes, auto-accept edits', switchMode: 'acceptEdits' };
     const decision = await new Promise<PermissionDecision>((resolve, reject) => {
       this.rejectConfirmation = () => {
         this.rejectConfirmation = null;
@@ -1346,12 +1366,13 @@ export class AgentLoop {
       };
       this.callbacks.onRequestConfirmation({
         toolCall: state,
-        title: 'Would you like to proceed?',
+        title: `${APP_NAME} has written up a plan and is ready to execute. Would you like to proceed?`,
         options: [
-          { value: 'yes', label: 'Yes, and auto-accept edits', switchMode: 'acceptEdits' },
+          approve,
           { value: 'always', label: 'Yes, manually approve edits', switchMode: 'default' },
           { value: 'no', label: 'No, keep planning' },
         ],
+        plan: { text: plan, ...(planFile ? { file: planFile } : {}) },
         onDecide: (d) => {
           this.rejectConfirmation = null;
           this.callbacks.onRequestConfirmation(null);
@@ -1359,14 +1380,28 @@ export class AgentLoop {
         },
       });
     });
+    const finalPlan = decision.plan?.trim() || plan;
+    const edited = finalPlan !== plan;
+    if (edited && planFile) try { fs.writeFileSync(planFile, `${finalPlan}\n`, 'utf8'); } catch {}
+    const editedNote = edited ? `\n\nThe user edited the plan in the dialog. This is the plan now:\n${finalPlan}` : '';
     if (decision.kind === 'no') {
-      update({ status: 'rejected', error: decision.feedback ? `Keep planning · ${decision.feedback}` : 'Keep planning', endTime: Date.now() });
-      return `The user did not approve the plan${decision.feedback ? `: "${decision.feedback}"` : ''}. Stay in plan mode, revise the plan accordingly and call exit_plan_mode again.`;
+      const feedback = decision.feedback?.trim();
+      update({ status: 'rejected', result: finalPlan, error: feedback || undefined, endTime: Date.now() });
+      // Esc: the plan is rejected and the turn ends, without "What should Fuller do instead?".
+      if (!feedback) {
+        this.stoppedByPlanRejection = true;
+        this.interrupt();
+        return `The user rejected the plan and stopped. Stay in plan mode and wait for their instructions.${editedNote}`;
+      }
+      return `The user did not approve the plan: "${feedback}". Stay in plan mode, revise the plan accordingly and call exit_plan_mode again.${editedNote}`;
     }
-    const mode: PermissionMode = decision.kind === 'yes' ? 'acceptEdits' : 'default';
+    const mode: PermissionMode = decision.kind === 'yes' ? approve.switchMode ?? 'acceptEdits' : 'default';
     this.setPermissionMode(mode);
-    update({ status: 'completed', summary: `approved · ${mode}`, result: `Plan approved (${mode})${planFile ? ` · ${planFile}` : ''}`, endTime: Date.now() });
-    return `The user approved the plan. Plan mode is off (permission mode: ${mode}${mode === 'acceptEdits' ? ', file edits are auto-accepted' : ', edits need approval'}). Implement the plan now, step by step.`;
+    update({ status: 'completed', summary: `approved · ${mode}`, result: finalPlan, endTime: Date.now() });
+    const effect = mode === 'acceptEdits' ? ', file edits are auto-accepted' : mode === 'auto' ? ', actions are approved by the auto-mode classifier' : ', edits need approval';
+    let output = `The user approved the plan. Plan mode is off (permission mode: ${mode}${effect}). Implement the plan now, step by step.${editedNote}`;
+    if (decision.feedback?.trim()) output += `\n\n[User comment on this approval]\n${decision.feedback.trim()}`;
+    return output;
   }
 
   /**
@@ -1453,6 +1488,7 @@ export class AgentLoop {
     }
     this.processing = true;
     this.stoppedByPermission = false;
+    this.stoppedByPlanRejection = false;
     this.abortController = new AbortController();
     const userMsg: ChatMessage = { id: uid(), role: 'user', content: command, kind: 'bash', timestamp: Date.now() };
     this.messages.push(userMsg);
@@ -1603,6 +1639,7 @@ export class AgentLoop {
     }
     this.processing = true;
     this.stoppedByPermission = false;
+    this.stoppedByPlanRejection = false;
     this.abortController = new AbortController();
     const userMsg: ChatMessage = { id: uid(), role: 'user', content: `/btw ${question}`, kind: 'command', timestamp: Date.now() };
     this.messages.push(userMsg);
@@ -1653,6 +1690,7 @@ export class AgentLoop {
     }
     this.processing = true;
     this.stoppedByPermission = false;
+    this.stoppedByPlanRejection = false;
     this.abortController = new AbortController();
     this.callbacks.onStatusChange('compacting');
     try {

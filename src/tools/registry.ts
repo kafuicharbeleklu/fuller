@@ -183,7 +183,7 @@ export const geminiToolDeclarations: FunctionDeclaration[] = [
   },
   {
     name: 'exit_plan_mode',
-    description: 'Plan mode only: present your plan to the user and ask to leave plan mode so you can implement it. Call it once the plan is complete; the user approves or asks for changes.',
+    description: 'Plan mode only: present your plan to the user and ask to leave plan mode so you can implement it. Call it once the plan is complete; the user approves, edits it or asks for changes. Once approved, implement the plan and do not call this tool again.',
     parameters: {
       type: Type.OBJECT,
       properties: {

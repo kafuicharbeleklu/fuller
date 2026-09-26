@@ -22,6 +22,7 @@ Fuller uses an isolated config root and a dummy API key (PARITY_KEEP_KEY=1 keeps
 the real one, for model listing): no model request.
 Render the result with: node scripts/parity-render.mjs <out.json> <snap> [--color]
 """
+import codecs
 import fcntl
 import json
 import os
@@ -82,6 +83,8 @@ def main() -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
     chunks: list[str] = []
     events: list[dict] = []
+    # One decoder for the whole stream: a character split across two reads stays whole.
+    decoder = codecs.getincrementaldecoder('utf-8')('replace')
     size_now = [cols, rows]
 
     def pump(seconds: float) -> None:
@@ -95,7 +98,7 @@ def main() -> None:
                 return
             if b'\x1b[6n' in data:
                 os.write(fd, f'\x1b[{size_now[1]};1R'.encode())
-            chunks.append(data.decode('utf-8', 'replace'))
+            chunks.append(decoder.decode(data))
 
     pump(1.0)
     for step in steps:

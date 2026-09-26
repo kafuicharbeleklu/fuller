@@ -6,6 +6,9 @@ import { toolLabel, toolArgSummary } from '../tools/registry.js';
 import { BULLET, BULLET_GAP } from './glyphs.js';
 import type { ToolCallState, TodoItem } from '../agent/types.js';
 import { todoGlyph } from './TodoPanel.js';
+import { Markdown } from './Markdown.js';
+import { tildePath } from './externalEditor.js';
+import { APP_NAME } from '../branding.js';
 
 interface ToolRowProps {
   toolCall: ToolCallState;
@@ -47,6 +50,8 @@ export const ToolRow: React.FC<ToolRowProps> = ({ toolCall, verbose, frame, elap
 
   // A command typed with "!": Claude Code shows only its output under the user's line.
   if (toolCall.origin === 'user') return <Box flexDirection="column">{body}</Box>;
+  // Only a plan that went through the dialog: outside plan mode the tool is a plain no-op row.
+  if (name === 'exit_plan_mode' && toolCall.planFile !== undefined && (status === 'confirming' || status === 'completed' || status === 'rejected')) return planRow();
 
   return (
     <Box flexDirection="column">
@@ -62,6 +67,46 @@ export const ToolRow: React.FC<ToolRowProps> = ({ toolCall, verbose, frame, elap
       {body}
     </Box>
   );
+
+  /**
+   * Claude Code 2.1.283: "● Updated plan ⎿ /plan to preview" while the plan waits for approval, then
+   * "● User approved Claude's plan ⎿ Plan saved to: … · /plan to edit" with the plan, or
+   * "⎿ User rejected Claude's plan:" with the plan in a rounded box (capture 4.6).
+   */
+  function planRow(): React.ReactElement {
+    const plan = toolCall.result || String(args.plan ?? '');
+    const width = Math.max(20, columns - 9);
+    if (status === 'completed') {
+      return (
+        <Box flexDirection="column">
+          <Text><Text color={theme.planMode}>{BULLET}{BULLET_GAP}</Text><Text color={theme.text}>User approved {APP_NAME}'s plan</Text></Text>
+          {lines([
+            <Box key="p" flexDirection="column">
+              {toolCall.planFile ? <Text color={theme.subtle}>Plan saved to: {tildePath(toolCall.planFile)} · /plan to edit</Text> : null}
+              <Markdown content={plan} width={width} />
+            </Box>,
+          ])}
+        </Box>
+      );
+    }
+    const header = <Text><Text color={status === 'rejected' ? theme.success : iconColor}>{icon}{iconGap}</Text><Text bold color={theme.text}>Updated plan</Text></Text>;
+    if (status !== 'rejected') return <Box flexDirection="column">{header}{lines([<Text key="p" color={theme.subtle}>/plan to preview</Text>])}</Box>;
+    return (
+      <Box flexDirection="column">
+        {header}
+        {lines([<Text key="p" color={theme.subtle}>/plan to preview</Text>])}
+        {lines([
+          <Box key="r" flexDirection="column">
+            <Text color={theme.subtle}>User rejected {APP_NAME}'s plan:</Text>
+            <Box borderStyle="round" borderColor={theme.planMode} paddingX={1} overflow="hidden" width={width + 4}>
+              <Markdown content={plan} width={width} />
+            </Box>
+          </Box>,
+        ])}
+        {toolCall.error ? lines([<Text key="f" color={theme.text}>{toolCall.error}</Text>]) : null}
+      </Box>
+    );
+  }
 
   function lines(items: React.ReactNode[]) {
     return (

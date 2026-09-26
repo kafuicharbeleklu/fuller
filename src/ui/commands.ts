@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { editorName, tildePath } from './externalEditor.js';
 import path from 'node:path';
 import { marked } from 'marked';
 import os from 'node:os';
@@ -565,12 +566,32 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    // Claude Code 2.1.283: /plan enables plan mode (a description is sent as the first request), then shows
+    // the session's plan; /plan open edits it. Shift+Tab leaves plan mode.
     name: '/plan',
-    description: 'Enter plan mode directly from the prompt',
-    run: (ctx) => {
+    description: 'Enable plan mode or view the current session plan',
+    usage: '[open|<description>]',
+    takesArg: true,
+    run: (ctx, arg) => {
+      const request = arg.trim();
       const entering = ctx.config.permissionMode !== 'plan';
-      ctx.setMode(entering ? 'plan' : 'default');
-      ctx.addSystem(entering ? 'Enabled plan mode' : 'Disabled plan mode');
+      if (entering) ctx.setMode('plan');
+      const file = ctx.agent.planFilePath;
+      let plan = '';
+      try { plan = fs.readFileSync(file, 'utf8').trim(); } catch {}
+      if (request === 'open') {
+        if (!plan) { ctx.addSystem(entering ? 'Enabled plan mode · No plan written yet.' : 'Already in plan mode. No plan written yet.'); return; }
+        ctx.editFile(file);
+        ctx.addSystem(`Opened plan in editor: ${tildePath(file)}`);
+        return;
+      }
+      if (request) {
+        if (entering) ctx.addSystem('Enabled plan mode');
+        void ctx.agent.handleUserInput(request);
+        return;
+      }
+      if (!plan) { ctx.addSystem(entering ? 'Enabled plan mode' : 'Already in plan mode. No plan written yet.'); return; }
+      ctx.addSystem(`${entering ? 'Enabled plan mode\n\n' : ''}**Current Plan** · ${tildePath(file)}\n\n${plan}\n\n"/plan open" to edit this plan in **${editorName()}**`);
     },
   },
   {

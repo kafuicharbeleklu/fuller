@@ -10,7 +10,7 @@ export function messagesToTranscript(messages: ChatMessage[]): TranscriptItem[] 
       items.push({ key: m.id, kind: 'system', message: m });
     } else if (m.parts && m.parts.length > 0) {
       for (const p of m.parts) {
-        if (p.type === 'text') items.push({ key: p.id, kind: 'text', messageId: m.id, content: p.content, timestamp: m.timestamp });
+        if (p.type === 'text') items.push({ key: p.id, kind: 'text', messageId: m.id, content: p.content, timestamp: m.timestamp, ...(p.model ? { model: p.model } : {}) });
         else if (p.type === 'thinking') items.push({ key: p.id, kind: 'thinking', messageId: m.id, content: p.content, timestamp: m.timestamp });
         else items.push({ key: p.id, kind: 'tool', messageId: m.id, toolCall: p.toolCall });
       }

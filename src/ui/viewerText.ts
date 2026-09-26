@@ -1,4 +1,4 @@
-import { SPINNER_PAST_VERBS } from '../branding.js';
+import { APP_NAME, SPINNER_PAST_VERBS } from '../branding.js';
 import fs from 'node:fs';
 import stripAnsi from 'strip-ansi';
 import type { TranscriptItem, ToolCallState } from '../agent/types.js';
@@ -41,6 +41,19 @@ export function transcriptLines(items: TranscriptItem[], detailed: boolean): str
     else if (item.kind === 'thinking') lines.push('✻ Thinking…', ...safeText(item.content.replace(/\*\*/g, '')).split('\n').map((line) => `  ${line}`), '');
     else if (item.kind === 'system' && item.message.kind === 'context') lines.push('  ⎿ Context Usage (see /context)', '');
     else if (item.kind === 'system') lines.push(`${item.message.kind === 'notice' ? '  ⎿' : '※'} ${safeText(stripSegments(item.message.content))}`, '');
+    else if (item.kind === 'tool' && item.toolCall.name === 'exit_plan_mode' && item.toolCall.planFile !== undefined && (item.toolCall.status === 'completed' || item.toolCall.status === 'rejected')) {
+      const tool = item.toolCall;
+      const plan = safeText(tool.result || String(tool.args.plan ?? '')).split('\n');
+      if (tool.status === 'completed') {
+        lines.push(`● User approved ${APP_NAME}'s plan`);
+        if (tool.planFile) lines.push(`  ⎿ Plan saved to: ${tool.planFile} · /plan to edit`);
+        lines.push(...plan.map((row) => `    ${row}`), '');
+      } else {
+        lines.push('● Updated plan', `  ⎿ User rejected ${APP_NAME}'s plan:`, ...plan.map((row) => `    │ ${row}`));
+        if (tool.error) lines.push(`  ⎿ ${safeText(tool.error)}`);
+        lines.push('');
+      }
+    }
     else if (item.kind === 'tool') {
       const tool = item.toolCall;
       const label = toolLabel(tool.name);
