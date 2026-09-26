@@ -129,6 +129,15 @@ export type InfoDialog =
   | { kind: 'mcp'; api: McpApi }
   | { kind: 'permissions'; allow: string[]; ask: string[]; deny: string[]; directories: string[]; denials: Denial[]; autoRules: string[]; disabledBuiltin: Array<'softAllow' | 'softDeny'>; onAddRule: (kind: 'allow' | 'ask' | 'deny', rule: string) => void; onRemoveRule: (rule: string) => void; onAddAutoRule: (rule: string) => void; onRemoveAutoRule: (rule: string) => void; onToggleBuiltin: (group: 'softAllow' | 'softDeny') => void; onAddDirectory: () => void };
 
+/** "2 connected, 1 failed · /mcp", as Claude Code's /status counts the servers. */
+export function mcpSummary(statuses: Array<{ status: string }>): string | undefined {
+  if (!statuses.length) return undefined;
+  const count = (status: string) => statuses.filter((s) => s.status === status).length;
+  const parts = [[count('connected'), 'connected'], [count('connecting'), 'connecting'], [count('failed'), 'failed'], [count('disabled'), 'disabled']]
+    .filter(([n]) => (n as number) > 0).map(([n, label]) => `${n} ${label}`);
+  return `${parts.join(', ')} · /mcp`;
+}
+
 /** /permissions dialog data; its actions update the settings and reopen it. */
 function permissionsDialog(ctx: CommandContext): InfoDialog {
   const perms = ctx.config.settings.permissions ?? {};
@@ -317,10 +326,12 @@ function settingsRows(ctx: CommandContext): { status: InfoRow[]; usage: InfoRow[
       { label: 'Session name', value: ctx.agent.sessionName, placeholder: '/rename to add a name' },
       { label: 'Session ID', value: ctx.agent.sessionId },
       { label: 'cwd', value: `${ctx.config.workspaceDir}${ctx.config.additionalDirectories.length ? ` (+ ${ctx.config.additionalDirectories.join(', ')})` : ''}` },
-      { label: 'Model', value: `${modelLabel(ctx.config.model)} (${contextLabel(ctx.config.contextWindow)})${ctx.agent.preferredModel && ctx.agent.preferredModel !== ctx.config.model ? ` · fallback for ${modelLabel(ctx.agent.preferredModel)}` : ''}` },
+      { label: 'Git', value: ctx.gitInfo?.isGit ? `${ctx.gitInfo.branch}${ctx.gitInfo.isDirty ? ' (dirty)' : ' (clean)'}` : undefined, placeholder: 'not a git repository' },
+      // Claude Code's second group: the model and what the session is configured with.
+      { label: 'Model', gapBefore: true, value: `${modelLabel(ctx.config.model)} (${contextLabel(ctx.config.contextWindow)})${ctx.agent.preferredModel && ctx.agent.preferredModel !== ctx.config.model ? ` · fallback for ${modelLabel(ctx.agent.preferredModel)}` : ''}` },
       // One bar for the model in use, summed over every key (keys themselves are never listed).
       { label: 'Quota', value: `${quotaBar(ctx.agent.quotaUsage().usedFraction)} ${usageSummary(ctx.agent.quotaUsage())}` },
-      { label: 'Git', value: ctx.gitInfo?.isGit ? `${ctx.gitInfo.branch}${ctx.gitInfo.isDirty ? ' (dirty)' : ' (clean)'}` : undefined, placeholder: 'not a git repository' },
+      { label: 'MCP servers', value: mcpSummary(ctx.agent.mcpStatuses()), placeholder: 'none · /mcp' },
       { label: 'Permission mode', value: `${ctx.config.permissionMode} · ${allow.length} allow · ${deny.length} deny rules` },
       { label: 'Theme', value: ctx.theme.name },
       { label: 'Memory files', value: memory.map((m) => m.path).join(', ') || undefined, placeholder: `none · /init to create ${MEMORY_FILE}` },

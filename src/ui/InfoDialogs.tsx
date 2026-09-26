@@ -15,6 +15,8 @@ export interface InfoRow {
   value?: string;
   /** Shown in grey when there is no value, e.g. "/rename to add a name". */
   placeholder?: string;
+  /** Starts a new group, after a blank row (Claude Code's /status: the session, then the model and settings). */
+  gapBefore?: boolean;
 }
 
 export interface CommandEntry {
@@ -52,7 +54,7 @@ export const HelpDialog: React.FC<{ commands: CommandEntry[]; custom: CommandEnt
               <Text>{APP_NAME} understands your codebase, makes edits with your permission, and executes commands — right from your terminal.</Text>
               <Text bold>Shortcuts</Text>
               <Box marginLeft={-2}><ShortcutsHelp color={theme.text} /></Box>
-              <Text>For more help: <Text underline>README.md</Text></Text>
+              <Box marginTop={1}><Text>For more help: <Text underline>README.md</Text></Text></Box>
             </Box>
           ),
         },
@@ -179,7 +181,7 @@ export const SettingsDialog: React.FC<{ status: InfoRow[]; usage: InfoRow[]; con
     if (entries.length <= linesPage) {
       return (
         <Box flexDirection="column">
-          {entries.map((row) => <KeyValue key={row.label} label={row.label} value={row.value} placeholder={row.placeholder} />)}
+          {entries.map((row) => <Box key={row.label} marginTop={row.gapBefore ? 1 : 0}><KeyValue label={row.label} value={row.value} placeholder={row.placeholder} /></Box>)}
         </Box>
       );
     }
@@ -240,11 +242,15 @@ export interface ListItem {
 export const ListDialog: React.FC<{ title: string; header?: string[]; items: ListItem[]; empty?: string; footer?: string; numbered?: boolean; hint?: string; shortcutKey?: string; onClose: () => void; ruleLabel?: string }> = ({ title, header = [], items, empty, footer, numbered = true, hint, shortcutKey, onClose, ruleLabel }) => {
   const theme = useTheme();
   const { stdout } = useStdout();
-  const labelWidth = Math.min(32, Math.max(10, ...items.map((item) => item.label.length + (item.glyph ? 2 : 0) + 3)));
+  // Wide enough for the longest label and a gap ("Learned memory, all projects (0)" ran into its hint).
+  const labelWidth = Math.min(44, Math.max(10, ...items.map((item) => item.label.length + (item.glyph ? 2 : 0) + 3)));
+  // Claude Code's blank rows: after the lines above the list, and before the note under it.
+  const spaced = (stdout.rows || 24) >= 16;
   return (
     <OverlayFrameList title={title} hint={hint ?? (items.length ? '↑/↓ to navigate · Enter to confirm · Esc to cancel' : 'Esc to cancel')} ruleLabel={ruleLabel} onClose={onClose} itemsEmpty={items.length === 0}>
       {header.map((line, i) => <Text key={i} color={i === 0 ? theme.text : theme.subtle} wrap="wrap">{line}</Text>)}
       {items.length === 0 && empty ? <Text color={theme.subtle}>{empty}</Text> : null}
+      {items.length && header.length && spaced ? <Box marginTop={1} /> : null}
       {items.length ? (
         <Select
           items={items.map((item, i) => ({
@@ -261,7 +267,7 @@ export const ListDialog: React.FC<{ title: string; header?: string[]; items: Lis
           onCancel={onClose}
         />
       ) : null}
-      {footer ? <Text color={theme.subtle} wrap="wrap">{footer}</Text> : null}
+      {footer ? <Box marginTop={spaced ? 1 : 0}><Text color={theme.subtle} wrap="wrap">{footer}</Text></Box> : null}
     </OverlayFrameList>
   );
 };

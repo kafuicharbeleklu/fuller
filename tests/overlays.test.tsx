@@ -33,11 +33,19 @@ describe('picker overlays', () => {
     const frame = screen.lastFrame() || '';
     expect(frame).toMatchSnapshot();
     expect(frame).toContain('6. Gemini 2.5 Pro ✔');
-    // Claude Code 2.1.281 layout: rule, title, description, list, key hint, no blank lines.
-    const panel = frame.trimStart().split('\n');
+    // Claude Code's dialog layout (2.1.283 binary and captures): rule, title and description, a blank
+    // line, the list, a blank line before the effort row, a blank line, the key hint.
+    const panel = frame.trimStart().split('\n').map((row) => row.trimEnd());
     expect(panel[0]).toMatch(/^▔+$/);
     expect(panel[1]).toBe('   Select model');
-    expect(frame.trimStart()).not.toMatch(/\n\s*\n/);
+    expect(panel[2]).toMatch(/^   Switch between Gemini models/);
+    const list = panel.findIndex((row) => row.includes('1. Gemini'));
+    expect(panel[list - 1]).toBe('');
+    // Gemini 2.5 Pro has no effort levels: said one blank line under the list, as Claude Code does for Haiku.
+    expect(panel.at(-4)).toBe('');
+    expect(panel.at(-3)).toBe('   ○ Effort not supported for Gemini 2.5 Pro');
+    expect(panel.at(-2)).toBe('');
+    expect(panel.at(-1)).toBe('   Enter to set as default · s to use this session only · Esc to cancel');
     expect(frame).not.toContain('PgUp');
     expect(frame).toContain('Enter to set as default · s to use this session only');
     expect(frame).not.toMatch(/[╭╮╰╯]/);

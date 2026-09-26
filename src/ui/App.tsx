@@ -740,7 +740,9 @@ export const App: React.FC<AppProps> = ({ config, initialPrompt, restoredSession
       </Static> : null}
       {/* Fullscreen fills the terminal (one row short, or Ink clears the screen on every
           frame) so the prompt sits at the bottom, as in Claude Code. */}
-      <Box flexDirection="column" height={welcome || (fullscreen && !viewer) ? rows - 1 : undefined} overflow={fullscreen && !viewer ? 'hidden' : undefined}>
+      {/* Fullscreen uses every row, the last one included, as Claude Code does: the frame writer
+          repaints a full-height frame in place. The classic welcome screen keeps a free row. */}
+      <Box flexDirection="column" height={fullscreen && !viewer ? rows : welcome ? rows - 1 : undefined} overflow={fullscreen && !viewer ? 'hidden' : undefined}>
         {fullscreen && welcome ? <Banner {...bannerProps} /> : null}
         {agentReport ? <Pager title={`Agent · ${agentReport.title}`} lines={(agentReport.report ?? '(no report yet)').split('\n')} onClose={() => setAgentReport(null)} /> : null}
         {agentsOpen && !agentReport && !confirmation ? (

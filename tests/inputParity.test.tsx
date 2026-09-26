@@ -460,3 +460,22 @@ describe('ctrl+s stash and ctrl+z', () => {
     screen.unmount();
   });
 });
+
+describe('Ctrl+Y tip after Ctrl+U (Claude Code 2.1.283, read in its binary)', () => {
+  it('says "Ctrl+Y to paste deleted text" for 5 s after Ctrl+U deleted 3 characters or more, even once the input is empty', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const states: Array<{ killed?: boolean; empty: boolean }> = [];
+      const screen = await input({ onStateChange: (s: any) => states.push(s) });
+      await screen.keys('hi', '\x15');
+      expect(states.at(-1)).toMatchObject({ empty: true });
+      expect(states.at(-1)?.killed).toBeFalsy();
+      await screen.keys('hello', '\x15');
+      await vi.waitFor(() => expect(states.at(-1)).toMatchObject({ empty: true, killed: true }));
+      vi.advanceTimersByTime(5100);
+      await vi.waitFor(() => expect(states.at(-1)?.killed).toBe(false));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

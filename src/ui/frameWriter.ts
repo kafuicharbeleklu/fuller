@@ -28,6 +28,23 @@ const CURSOR_UP = '\x1b[1A';
 const CURSOR_LEFT = '\x1b[G';
 const ERASE_RE = /^(?:\x1b\[2K(?:\x1b\[1A)?)+\x1b\[G/;
 const CLEAR_SCREEN = '\x1b[2J';
+/** Ink's answer to a frame as tall as the terminal: erase the screen and the scrollback, cursor home. */
+const INK_CLEAR_TERMINAL = /^\x1b\[2J(?:\x1b\[3J\x1b\[H|\x1b\[0f)/;
+
+/**
+ * A full-screen frame written row by row with absolute positions, each row cleared to its end: no
+ * screen erase, so nothing flickers, and the frame can use the last row as Claude Code's does.
+ */
+export function inPlaceFrame(lines: string[], rows: number, columns = Infinity): string {
+  let out = '';
+  for (let r = 0; r < rows; r++) {
+    const line = lines[r] ?? '';
+    // A row filled to the last column leaves the cursor pending a wrap on that column: erasing to the
+    // end of the line then would erase its last character. Such a row needs no erase anyway.
+    out += `\x1b[${r + 1};1H${line}${stringWidth(stripAnsi(line)) < columns ? '\x1b[K' : ''}`;
+  }
+  return out;
+}
 
 export function eraseLines(count: number): string {
   if (count <= 0) return '';
@@ -52,12 +69,22 @@ export function physicalRows(lines: string[], columns: number, reflow = true): n
 export interface FrameWriterState {
   lastFrame: string[];
   expectStatic: boolean;
+  /** Alternate screen: a frame as tall as the terminal is repainted in place (see transformChunk). */
+  fullscreen?: boolean;
   /** True when the last erase had to cover more rows than lines (the previous frame had wrapped). */
   lastEraseWrapped?: boolean;
 }
 
 /** Pure transformation of one stdout chunk; exported for tests. */
-export function transformChunk(chunk: string, state: FrameWriterState, columns: number, reflow: boolean): string {
+export function transformChunk(chunk: string, state: FrameWriterState, columns: number, reflow: boolean, rows = Infinity): string {
+  // Fullscreen: Ink erases the whole screen (and the scrollback) before a frame as tall as the terminal.
+  const full = state.fullscreen && Number.isFinite(rows) ? chunk.match(INK_CLEAR_TERMINAL) : null;
+  if (full) {
+    const lines = chunk.slice(full[0].length).replace(/\n$/, '').split('\n').slice(0, rows);
+    state.lastFrame = lines;
+    state.expectStatic = false;
+    return inPlaceFrame(lines, rows, columns);
+  }
   // log-update's clear() with a zero count writes an empty string: the next chunk is static output.
   if (chunk === '') {
     state.expectStatic = true;
@@ -154,6 +181,8 @@ export interface FrameWriter {
   needsRepaint: () => boolean;
   /** Write transcript text that must not be tracked as a frame. */
   writeStatic: (text: string) => void;
+  /** The alternate screen is on: full-height frames are repainted in place. */
+  setFullscreen: (on: boolean) => void;
 }
 
 /** Cut `text` to `width` columns. */
@@ -202,7 +231,7 @@ export function installFrameWriter(stdout: NodeJS.WriteStream, options: { reflow
     }
     if (typeof chunk !== 'string') return original(chunk, ...rest);
     const before = { frame: state.lastFrame.length, expectStatic: state.expectStatic };
-    const out = transformChunk(chunk, state, stdout.columns || 80, reflow);
+    const out = transformChunk(chunk, state, stdout.columns || 80, reflow, stdout.rows || Infinity);
     if (DEBUG_FILE) {
       const m = chunk.match(ERASE_RE);
       const inkCount = m ? (m[0].match(/\x1b\[2K/g) ?? []).length : 0;
@@ -265,5 +294,6 @@ export function installFrameWriter(stdout: NodeJS.WriteStream, options: { reflow
       state.expectStatic = false;
       emit(text);
     },
+    setFullscreen: (on) => { state.fullscreen = on; },
   };
 }

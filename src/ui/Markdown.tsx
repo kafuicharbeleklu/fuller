@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { marked, type Token, type Tokens } from 'marked';
 import { highlight, supportsLanguage } from 'cli-highlight';
+import chalk from 'chalk';
 import stringWidth from 'string-width';
 import { useTheme, type Theme } from './theme.js';
 
@@ -14,14 +15,72 @@ const decode = (s: string) => s.replace(/&(#x?[0-9a-f]+|[a-z]+|#39);/gi, (m, e: 
 
 const highlightCache = new Map<string, string>();
 
-export function highlightCode(code: string, lang?: string): string {
-  const key = `${lang ?? ''}\u0000${code}`;
+/** Words Monokai colours as storage (cyan), other keywords being control flow (pink). */
+const STORAGE = new Set(['function', 'const', 'let', 'var', 'class', 'def', 'fn', 'func', 'struct', 'enum', 'interface', 'type', 'async', 'static', 'public', 'private', 'protected', 'readonly', 'extends', 'implements', 'new', 'lambda']);
+const hex = (color: string) => (text: string) => chalk.hex(color)(text);
+
+/**
+ * Claude Code's syntax theme on dark backgrounds, "Monokai Extended" (2.1.283: /theme says so, and its
+ * captures show `function` #66d9ef, names #a6e22e, strings #e6db74, text #f8f8f2).
+ */
+const MONOKAI_EXTENDED = {
+  keyword: (text: string) => chalk.hex(STORAGE.has(text) ? '#66d9ef' : '#f92672')(text),
+  built_in: hex('#ffffff'),
+  type: hex('#66d9ef'),
+  literal: hex('#be84ff'),
+  number: hex('#be84ff'),
+  regexp: hex('#e6db74'),
+  string: hex('#e6db74'),
+  subst: hex('#f8f8f2'),
+  symbol: hex('#be84ff'),
+  class: hex('#a6e22e'),
+  function: hex('#f8f8f2'),
+  title: hex('#a6e22e'),
+  params: hex('#fd971f'),
+  comment: hex('#75715e'),
+  doctag: hex('#75715e'),
+  meta: hex('#f92672'),
+  'meta-keyword': hex('#f92672'),
+  'meta-string': hex('#e6db74'),
+  section: hex('#a6e22e'),
+  tag: hex('#f92672'),
+  name: hex('#f92672'),
+  'builtin-name': hex('#66d9ef'),
+  attr: hex('#a6e22e'),
+  attribute: hex('#a6e22e'),
+  variable: hex('#f8f8f2'),
+  bullet: hex('#f92672'),
+  code: hex('#e6db74'),
+  emphasis: (text: string) => chalk.italic(text),
+  strong: (text: string) => chalk.bold(text),
+  formula: hex('#f8f8f2'),
+  link: hex('#66d9ef'),
+  quote: hex('#75715e'),
+  'selector-tag': hex('#f92672'),
+  'selector-id': hex('#a6e22e'),
+  'selector-class': hex('#a6e22e'),
+  'selector-attr': hex('#a6e22e'),
+  'selector-pseudo': hex('#a6e22e'),
+  'template-tag': hex('#f92672'),
+  'template-variable': hex('#f8f8f2'),
+  addition: hex('#a6e22e'),
+  deletion: hex('#f92672'),
+  default: hex('#f8f8f2'),
+};
+
+/** Monokai Extended for dark themes, as Claude Code; light and ANSI themes keep the terminal's colours. */
+export function syntaxPalette(themeName: string): 'monokai' | 'terminal' {
+  return themeName.startsWith('light') || themeName.endsWith('-ansi') ? 'terminal' : 'monokai';
+}
+
+export function highlightCode(code: string, lang?: string, palette: 'monokai' | 'terminal' = 'terminal'): string {
+  const key = `${palette}\u0000${lang ?? ''}\u0000${code}`;
   const cached = highlightCache.get(key);
   if (cached) return cached;
   let out = code;
   try {
     const language = lang && supportsLanguage(lang) ? lang : undefined;
-    out = highlight(code, { language, ignoreIllegals: true });
+    out = highlight(code, { language, ignoreIllegals: true, ...(palette === 'monokai' ? { theme: MONOKAI_EXTENDED } : {}) });
   } catch {
     out = code;
   }
@@ -148,7 +207,7 @@ function renderBlocks(tokens: Token[], theme: Theme, width: number, depth = 0, k
       }
       case 'code': {
         const c = t as Tokens.Code;
-        const lines = (theme.syntaxHighlighting === false ? c.text : highlightCode(c.text, c.lang)).split('\n');
+        const lines = (theme.syntaxHighlighting === false ? c.text : highlightCode(c.text, c.lang, syntaxPalette(theme.name))).split('\n');
         out.push(
           <Box key={key} flexDirection="column" marginTop={out.length ? 1 : 0}>
             {lines.map((l, li) => <Text key={li}>{l || ' '}</Text>)}

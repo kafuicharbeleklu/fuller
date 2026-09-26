@@ -1,4 +1,5 @@
 import React from 'react';
+import stripAnsi from 'strip-ansi';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'ink-testing-library';
 import { ThemeProvider, loadTheme } from '../src/ui/theme.js';
@@ -23,7 +24,8 @@ describe('syntax highlighting setting', () => {
 
   it('highlights diff lines only when a language is given and highlighting is enabled', () => {
     const diff = '--- a/x.js\n+++ b/x.js\n@@ -1 +1 @@\n-let a = 1;\n+let a = 2;';
-    expect(render(withSyntax(true, <DiffView diff={diff} language="javascript" />)).lastFrame()).toContain('«let a = 2;»');
+    // The changed word gets its own background: compare the visible text.
+    expect(stripAnsi(render(withSyntax(true, <DiffView diff={diff} language="javascript" />)).lastFrame() ?? '')).toContain('«let a = 2;»');
     expect(render(withSyntax(false, <DiffView diff={diff} language="javascript" />)).lastFrame()).not.toContain('«');
     expect(render(withSyntax(true, <DiffView diff={diff} />)).lastFrame()).not.toContain('«');
   });

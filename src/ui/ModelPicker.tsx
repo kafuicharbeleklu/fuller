@@ -136,12 +136,17 @@ export const ModelPicker: React.FC<Props> = ({ apiKey, current, thinkingLevel, o
             onCancel={onCancel}
           />
         ) : null}
-        {shownEffort && supportedThinkingLevels(highlighted).length ? (
-          <Text>
-            <Text color={theme.accent}>{EFFORT_GLYPHS[shownEffort] ?? '◐'} </Text>
-            <Text color={theme.subtle}>{effortName(shownEffort)} effort{shownEffort === defaultThinkingLevel(highlighted) ? ' (default)' : ''} </Text>
-            <Text color={theme.subtle} dimColor>←/→ to adjust</Text>
-          </Text>
+        {/* Claude Code: the effort row sits one blank line under the list, or says the model has none. */}
+        {models && models.length > 0 ? (
+          <Box marginTop={(stdout?.rows ?? 24) < 16 ? 0 : 1}>
+            {shownEffort && supportedThinkingLevels(highlighted).length ? (
+              <Text>
+                <Text color={theme.accent}>{EFFORT_GLYPHS[shownEffort] ?? '◐'} </Text>
+                <Text color={theme.subtle}>{effortName(shownEffort)} effort{shownEffort === defaultThinkingLevel(highlighted) ? ' (default)' : ''} </Text>
+                <Text color={theme.subtle} dimColor>←/→ to adjust</Text>
+              </Text>
+            ) : <Text color={theme.subtle}>○ Effort not supported for {modelLabel(highlighted)}</Text>}
+          </Box>
         ) : null}
       </Box>
     </OverlayFrame>

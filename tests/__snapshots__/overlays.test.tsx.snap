@@ -21,11 +21,15 @@ exports[`picker overlays > shows the current model inside an open, numbered pane
    Select model
    Switch between Gemini models. Your pick becomes the default for new sessions. Press a for all
    models, or use /model <name>.
+
      1. Gemini 3.8 Flash       1M context · Best for complex coding tasks
      2. Gemini 3.7 Flash       1M context
      3. Gemini 3.6 Flash       1M context
      4. Gemini 3.5 Flash       1M context
      5. Gemini 3.5 Flash Lite  1M context
    ❯ 6. Gemini 2.5 Pro ✔       1M context
+
+   ○ Effort not supported for Gemini 2.5 Pro
+
    Enter to set as default · s to use this session only · Esc to cancel"
 `;

@@ -49,6 +49,8 @@ async function terminalApp(columns: number, rows: number, fullscreen = false) {
   });
   const stdin = Object.assign(new PassThrough(), { isTTY: true, setRawMode() {}, ref() {}, unref() {} });
   const writer = installFrameWriter(stdout as any, { syncOutput: false });
+  // As src/index.tsx: in fullscreen a full-height frame is repainted in place, never with ESC[2J.
+  writer.setFullscreen(fullscreen);
   const config = getConfig({ apiKey: 'test-only', workspaceDir: '/tmp/fuller-terminal-fixture' });
   config.notifications = 'off';
   config.permissionMode = 'default';

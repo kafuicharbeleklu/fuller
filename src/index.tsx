@@ -226,15 +226,17 @@ program
     // Frame writer: exact erase counts after a resize + synchronized output (DEC 2026).
     const reflow = process.env.FULLER_NO_REFLOW === '1' ? false : (process.env.FULLER_REFLOW ? process.env.FULLER_REFLOW === '1' : true);
     const frameWriter = installFrameWriter(stdout, { reflow });
+    frameWriter.setFullscreen(fullscreen);
     // Bracketed paste so multi-line pastes arrive as one event.
     originalWrite('\x1b[?2004h');
 
-    // Lay out one column narrower than the terminal so that no line ever ends in the
-    // last column (the "pending wrap" state confuses some terminals' reflow).
+    // The classic renderer lays out one column narrower than the terminal so that no line ever ends
+    // in the last column (the "pending wrap" state confuses some terminals' reflow). Fullscreen
+    // repaints every row in place, without reflow: it uses the full width, as Claude Code does.
     const LAYOUT_MARGIN = 1;
     const inkStdout = new Proxy(stdout, {
       get(target, prop, receiver) {
-        if (prop === 'columns') return Math.max(20, (target.columns || 80) - LAYOUT_MARGIN);
+        if (prop === 'columns') return Math.max(20, (target.columns || 80) - (fullscreen ? 0 : LAYOUT_MARGIN));
         const value = Reflect.get(target, prop, receiver);
         return typeof value === 'function' ? value.bind(target) : value;
       },
@@ -281,6 +283,7 @@ program
       leaveRenderer(fullscreen);
       fullscreen = switched.mode === 'fullscreen';
       enterRenderer(fullscreen);
+      frameWriter.setFullscreen(fullscreen);
       session = switched.session;
       picker = false;
       prompt = undefined;

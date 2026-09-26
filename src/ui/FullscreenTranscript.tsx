@@ -181,12 +181,16 @@ export const FullscreenTranscript: React.FC<Props> = ({ lines, height, scrollReq
     if (owner) onToggleItem?.(owner);
   }, [clickRequest?.id]);
   const pill = pillLabel(unseen, width);
+  // The height is measured one render late: when a dialog grows meanwhile, the rows must be clipped,
+  // never shrunk by the layout, which drew two rows on one ("⎿  Context Usage Gemini…", 26/09).
   return (
-    <Box flexDirection="column" height={height}>
-      {headerRows && sticky ? <Text color={theme.subtle} backgroundColor={theme.userBg} wrap="truncate-end">{fit(`❯ ${sticky.text}`, width - 1)} </Text> : null}
-      {rows.slice(top, top + page).map((line, index) => <Text key={`${top}-${index}`} wrap="truncate-end">{line || ' '}</Text>)}
+    <Box flexDirection="column" height={height} overflow="hidden">
+      {headerRows && sticky ? <Box flexShrink={0}><Text color={theme.subtle} backgroundColor={theme.userBg} wrap="truncate-end">{fit(`❯ ${sticky.text}`, width - 1)} </Text></Box> : null}
+      <Box flexDirection="column" flexShrink={0}>
+        {rows.slice(top, top + page).map((line, index) => <Text key={`${top}-${index}`} wrap="truncate-end">{line || ' '}</Text>)}
+      </Box>
       {following ? null : (
-        <Box width={width} justifyContent="center">
+        <Box width={width} justifyContent="center" flexShrink={0}>
           <Text color={theme.userBg ? theme.text : theme.subtle} backgroundColor={theme.userBg}> {pill} </Text>
         </Box>
       )}

@@ -14,6 +14,22 @@ import { getFileIndex, fuzzyFilter } from '../utils/fileIndex.js';
 import { readClipboardImage, attachmentFromFile, type ImageAttachment } from '../utils/imageClipboard.js';
 import type { SlashCommand } from './commands.js';
 
+/**
+ * Claude Code's order for a typed command (2.1.283 binary): the exact name, then the names that start
+ * with it, shortest first (/co → /copy, /color, /config, /compact), then the other matches; ties go to
+ * the commands used most and most recently, then to the alphabet.
+ */
+export function compareCommands(a: string, b: string, token: string, usage: CommandUsage = {}): number {
+  // A bare "/" is no search: the commands used most and most recently, then the alphabet.
+  if (token.length <= 1) return usageScore(usage, b) - usageScore(usage, a) || a.localeCompare(b);
+  const exact = Number(b === token) - Number(a === token);
+  if (exact) return exact;
+  const pa = a.startsWith(token), pb = b.startsWith(token);
+  if (pa !== pb) return pa ? -1 : 1;
+  if (pa && pb && a.length !== b.length) return a.length - b.length;
+  return usageScore(usage, b) - usageScore(usage, a) || a.localeCompare(b);
+}
+
 export interface InputBoxProps {
   isActive: boolean;
   busy: boolean;
@@ -142,11 +158,20 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   /** ctrl+s: prompt put aside with its cursor, pastes and images (Claude Code "stash"). */
   const stash = useRef<{ text: string; cursor: number; pastes: Map<number, string>; images: ImageAttachment[]; bashMode: boolean } | null>(null);
   const [stashed, setStashed] = useState(false);
-  const remember = (deleted: string) => {
+  const killedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * `hint`: Claude Code 2.1.283 says "Ctrl+Y to paste deleted text" for 5 s after Ctrl+U deleted at
+   * least 3 characters, even when the input is now empty (read in its binary, 26/09).
+   */
+  const remember = (deleted: string, hint = false) => {
     if (!deleted) return;
     killRing.current = [...killRing.current.slice(-9), deleted];
+    if (!hint || deleted.length < 3) return;
     setKilled(true);
+    if (killedTimer.current) clearTimeout(killedTimer.current);
+    killedTimer.current = setTimeout(() => setKilled(false), 5000);
   };
+  useEffect(() => () => { if (killedTimer.current) clearTimeout(killedTimer.current); }, []);
   /** A key that starts a bound chord, waiting for the second key (3 s, as Claude Code). */
   const pendingUserChord = useRef<{ key: string; at: number } | null>(null);
 
@@ -159,8 +184,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const slashActive = !bashMode && !search && !menuDismissed && !!slashToken;
   const slashMatches = slashActive
     ? commands.filter((c) => c.name.startsWith(slashToken!) || (midSlash ? c.name.split(':').at(-1)?.startsWith(slashToken!.slice(1)) : slashToken!.length > 1 && c.name.includes(slashToken!.slice(1))))
-      // Claude Code puts the commands used most, and most recently, first (/co → /copy).
-      .sort((a, b) => Number(b.name.startsWith(slashToken!)) - Number(a.name.startsWith(slashToken!)) || usageScore(commandUsage, b.name) - usageScore(commandUsage, a.name) || a.name.localeCompare(b.name))
+      .sort((a, b) => compareCommands(a.name, b.name, slashToken!, commandUsage))
     : [];
   const slashListVisible = slashMatches.length > 0 && (!midSlash || fullscreen || midSlashOpen);
 
@@ -183,12 +207,12 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
   const menuLength = slashMatches.length || atMatches.length;
   const safeMenuIndex = Math.min(menuIndex, Math.max(0, menuLength - 1));
 
-  useEffect(() => { if (empty) setKilled(false); }, [empty]);
+
 
   const multiline = text.includes('\n');
   const inputHint = exitHint ?? (pasteHint ? 'paste again to expand' : undefined);
   useEffect(() => {
-    onStateChange?.({ empty, bashMode, menuOpen, hint: inputHint, multiline, killed: killed && !empty, stashed, searching: !!search && fullscreen });
+    onStateChange?.({ empty, bashMode, menuOpen, hint: inputHint, multiline, killed, stashed, searching: !!search && fullscreen });
   }, [empty, bashMode, menuOpen, onStateChange, inputHint, multiline, killed, stashed, !!search && fullscreen]);
 
   // ------------------------------------------------------------ editor helpers
@@ -279,7 +303,7 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
     const { start } = lineBounds(t, c);
     if (start === c) return;
     snapshot();
-    remember(t.slice(start, c));
+    remember(t.slice(start, c), true);
     set(t.slice(0, start) + t.slice(c), start);
   };
   const yank = () => {
@@ -874,7 +898,8 @@ export const InputBox: React.FC<InputBoxProps> = (props) => {
 
       {search && fullscreen ? <HistorySearch query={search.query} scope={search.scope} matches={searchMatches(search.query)} index={search.index} timeOf={(entry) => promptTimes.current?.get(entry)} /> : null}
       <Box display={search && fullscreen ? 'none' : 'flex'} borderStyle="single" borderColor={borderColor} borderTop borderBottom borderLeft={false} borderRight={false} paddingRight={1} flexDirection="row">
-        <Text color={bashMode ? theme.bashBorder : busy ? theme.subtle : theme.text}>{promptChar} </Text>
+        {/* Claude Code draws the idle ❯ in the terminal's own colour (2.1.283 capture), grey while busy. */}
+        <Text color={bashMode ? theme.bashBorder : busy ? theme.subtle : undefined}>{promptChar} </Text>
         <Box flexDirection="column" flexGrow={1}>
           {search ? (
             <Text>

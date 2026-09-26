@@ -217,16 +217,19 @@ export const PermissionsDialog: React.FC<Props> = ({ allow, ask, deny, directori
           <Text key={dir} wrap="truncate-end">  -  {dir}{i === 0 ? <Text color={theme.subtle}> (Original working directory)</Text> : null}</Text>
         )) : null}
         {confirm !== null ? <Text color={theme.warning}>Delete rule {confirm}?</Text> : null}
-        {rows.map((row, i) => {
-          const selected = focus === 'list' && i === safe && confirm === null;
-          return (
-            <Text key={`${i}-${row.label}`} wrap="truncate-end">
-              <Text color={theme.permission}>{selected ? '❯ ' : '  '}</Text>
-              <Text color={theme.subtle}>{i + 1}. </Text>
-              {row.node ?? <Text color={selected ? theme.permission : undefined}>{row.label}</Text>}
-            </Text>
-          );
-        })}
+        {/* Claude Code: a blank row between the search field and the rules (2.1.283 capture). */}
+        <Box flexDirection="column" marginTop={rows.length && (stdout.rows || 24) >= 16 ? 1 : 0}>
+          {rows.map((row, i) => {
+            const selected = focus === 'list' && i === safe && confirm === null;
+            return (
+              <Text key={`${i}-${row.label}`} wrap="truncate-end">
+                <Text color={theme.permission}>{selected ? '❯ ' : '  '}</Text>
+                <Text color={theme.subtle}>{i + 1}. </Text>
+                {row.node ?? <Text color={selected ? theme.permission : undefined}>{row.label}</Text>}
+              </Text>
+            );
+          })}
+        </Box>
       </Box>
     </OverlayFrame>
   );

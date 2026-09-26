@@ -77,7 +77,9 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
   const safe = Math.max(0, Math.min(index, filtered.length - 1));
   const chosen = filtered[safe];
   const rows = stdout.rows || 24;
-  const page = Math.max(1, Math.min(8, Math.floor((rows - 12) / 2)));
+  // Claude Code: each session takes two rows plus the blank row before it.
+  const page = Math.max(1, Math.min(8, Math.floor((rows - 12) / 3)));
+  const spaced = rows >= 16;
   // Ink's columns are one short of the terminal (LayoutMargin); Claude Code's field is terminal − 6 wide.
   const width = Math.max(20, (stdout.columns || 80) - 5);
   const project = sessions[0] ? path.basename(sessions[0].workspaceDir) : '';
@@ -180,7 +182,7 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
   );
 
   return (
-    <OverlayFrame title="Resume session" header={header} ruleLabel={ruleLabel}>
+    <OverlayFrame title="Resume session" header={header} ruleLabel={ruleLabel} gap={false}>
       <Box borderStyle="round" borderColor={query ? theme.permission : undefined} borderDimColor={!query} width={width} paddingX={1}>
         {query ? <Text>⌕ {query}</Text> : <Text color={theme.subtle}>⌕ Search…</Text>}
       </Box>
@@ -202,20 +204,25 @@ export const SessionPicker: React.FC<Props> = ({ sessions, allSessions, onSelect
           </>
         ) : (
           <>
-            {filtered.length === 0 ? <Text color={theme.subtle}>{everywhere ? 'No conversations found.' : 'No conversations found in this project.'}</Text> : null}
+            {filtered.length === 0 ? (
+              <Box flexDirection="column" marginTop={spaced ? 1 : 0}>
+                <Text color={theme.subtle}>{everywhere ? 'No conversations found.' : 'No conversations found in this project.'}</Text>
+                {allSessions && !everywhere ? <Text color={theme.subtle}>Ctrl+A to show all projects</Text> : null}
+              </Box>
+            ) : null}
             {visible.map((s, vi) => {
               const selected = offset + vi === safe && !query;
               const marker = selected ? '❯ ' : vi === 0 && offset > 0 ? '↑ ' : vi === visible.length - 1 && offset + page < filtered.length ? '↓ ' : '  ';
               const details = [timeAgo(s.updatedAt), s.gitBranch, formatSize(s.sizeBytes), everywhere ? tildify(s.workspaceDir) : undefined].filter(Boolean).join(' · ');
               return (
-                <Box key={`${s.workspaceDir}/${s.id}`} flexDirection="column" marginLeft={-2}>
+                <Box key={`${s.workspaceDir}/${s.id}`} flexDirection="column" marginLeft={-2} marginTop={spaced ? 1 : 0}>
                   <Text wrap="truncate-end"><Text color={selected ? theme.permission : theme.subtle}>{marker}</Text><Text color={selected ? theme.permission : theme.text}>{s.title || s.id}</Text></Text>
                   <Text color={theme.subtle} wrap="truncate-end">  {details}</Text>
                 </Box>
               );
             })}
             {status ? <Text color={theme.subtle}>{status}</Text> : null}
-            <Text color={theme.subtle} wrap="wrap">{hint}</Text>
+            <Box marginTop={spaced ? 1 : 0}><Text color={theme.subtle} italic wrap="wrap">{hint}</Text></Box>
           </>
         )}
       </Box>

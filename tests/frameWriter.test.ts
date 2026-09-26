@@ -81,3 +81,25 @@ describe('frameWriter', () => {
     expect(out).toBe('\x1b[1;1H\x1b[K\x1b[2;1H\x1b[K\x1b[3;1H\x1b[K\x1b[1;1Hl1\x1b[2;1Hl2\x1b[3;1Hl3');
   });
 });
+
+describe('fullscreen frames as tall as the terminal (26/09)', () => {
+  it('repaints them in place, every row, without erasing the screen or the scrollback', async () => {
+    const { transformChunk, inPlaceFrame } = await import('../src/ui/frameWriter.js');
+    const state = { lastFrame: [] as string[], expectStatic: false, fullscreen: true };
+    const frame = ['top', 'middle', '─'.repeat(10)].join('\n') + '\n';
+    const out = transformChunk('\x1b[2J\x1b[3J\x1b[H' + frame, state, 10, true, 3);
+    expect(out).not.toContain('\x1b[2J');
+    expect(out).not.toContain('\x1b[3J');
+    // Short rows are cleared to their end; the full-width rule is not (erasing there would take its last cell).
+    expect(out).toBe('\x1b[1;1Htop\x1b[K\x1b[2;1Hmiddle\x1b[K\x1b[3;1H──────────');
+    expect(state.lastFrame).toEqual(['top', 'middle', '─'.repeat(10)]);
+    expect(inPlaceFrame(['a'], 2, 5)).toBe('\x1b[1;1Ha\x1b[K\x1b[2;1H\x1b[K');
+  });
+
+  it('leaves Ink\'s clear alone outside fullscreen', async () => {
+    const { transformChunk } = await import('../src/ui/frameWriter.js');
+    const state = { lastFrame: [] as string[], expectStatic: false, fullscreen: false };
+    const chunk = '\x1b[2J\x1b[3J\x1b[Hframe\n';
+    expect(transformChunk(chunk, state, 10, true, 3)).toBe(chunk);
+  });
+});
